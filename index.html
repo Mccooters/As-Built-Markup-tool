@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AirMark — As-Built Markup for Compressed Air Piping</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128295;</text></svg>">
+</head>
+<body>
+
+<!-- ======================= TOP TOOLBAR ======================= -->
+<header id="toolbar">
+  <div class="tb-group brand">
+    <span class="logo">Air<b>Mark</b></span>
+  </div>
+
+  <div class="tb-group">
+    <button id="btnOpen" class="tb-btn" title="Open PDF drawing (Ctrl+O)">
+      <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2H3z"/><path d="M3 8v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V10"/></svg>
+      <span>Open</span>
+    </button>
+    <button id="btnSample" class="tb-btn" title="Load a sample plant floor plan to try the tool">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="1"/><path d="M3 14h5v4M12 4v6h9M8 18v-4"/></svg>
+      <span>Sample</span>
+    </button>
+    <button id="btnSaveProject" class="tb-btn" title="Save project — markups + drawing (Ctrl+S)">
+      <svg viewBox="0 0 24 24"><path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v5h7V3M7 21v-7h10v7"/></svg>
+      <span>Save</span>
+    </button>
+    <button id="btnOpenProject" class="tb-btn" title="Open a saved .airmark project file">
+      <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2H3z"/><path d="M3 8v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V10"/><path d="M12 12v6m0-6-2.5 2.5M12 12l2.5 2.5"/></svg>
+      <span>Load</span>
+    </button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button id="btnUndo" class="tb-btn icon-only" title="Undo (Ctrl+Z)" disabled>
+      <svg viewBox="0 0 24 24"><path d="M8 5 3 10l5 5"/><path d="M3 10h11a6 6 0 0 1 6 6v3"/></svg>
+    </button>
+    <button id="btnRedo" class="tb-btn icon-only" title="Redo (Ctrl+Y)" disabled>
+      <svg viewBox="0 0 24 24"><path d="m16 5 5 5-5 5"/><path d="M21 10H10a6 6 0 0 0-6 6v3"/></svg>
+    </button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button id="btnZoomOut" class="tb-btn icon-only" title="Zoom out (-)">
+      <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7"/><path d="m21 21-5-5M7.5 10.5h6"/></svg>
+    </button>
+    <span id="zoomLabel" class="tb-label" title="Current zoom">100%</span>
+    <button id="btnZoomIn" class="tb-btn icon-only" title="Zoom in (+)">
+      <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="7"/><path d="m21 21-5-5M7.5 10.5h6M10.5 7.5v6"/></svg>
+    </button>
+    <button id="btnFitPage" class="tb-btn icon-only" title="Fit page (0)">
+      <svg viewBox="0 0 24 24"><path d="M8 3H4a1 1 0 0 0-1 1v4M16 3h4a1 1 0 0 1 1 1v4M8 21H4a1 1 0 0 1-1-1v-4M16 21h4a1 1 0 0 0 1-1v-4"/></svg>
+    </button>
+    <button id="btnFitWidth" class="tb-btn icon-only" title="Fit width">
+      <svg viewBox="0 0 24 24"><path d="M3 5v14M21 5v14M7 12h10M7 12l3-3m-3 3 3 3m7-3-3-3m3 3-3 3"/></svg>
+    </button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button id="btnThumbs" class="tb-btn icon-only" title="Toggle page thumbnails">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="7" rx="1"/><rect x="3" y="14" width="6" height="7" rx="1"/><path d="M12 6h9M12 9h6M12 16h9M12 19h6"/></svg>
+    </button>
+    <button id="btnPrevPage" class="tb-btn icon-only" title="Previous page (PgUp)">
+      <svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></svg>
+    </button>
+    <span class="tb-label"><input id="pageInput" type="text" value="1" title="Current page"> / <span id="pageCount">0</span></span>
+    <button id="btnNextPage" class="tb-btn icon-only" title="Next page (PgDn)">
+      <svg viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></svg>
+    </button>
+  </div>
+
+  <div class="tb-flex"></div>
+
+  <div class="tb-group">
+    <span id="docName" class="doc-name" title=""></span>
+  </div>
+
+  <div class="tb-flex"></div>
+
+  <div class="tb-group">
+    <select id="unitFormat" class="tb-select" title="Measurement display units">
+      <option value="ftin">ft-in (12'-6")</option>
+      <option value="ft">decimal feet</option>
+      <option value="m">meters</option>
+    </select>
+    <button id="btnExportPdf" class="tb-btn" title="Export flattened PDF with all markups burned in">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10m0 0 4-4m-4 4L8 9"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+      <span>Export&nbsp;PDF</span>
+    </button>
+    <button id="btnExportCsv" class="tb-btn" title="Export markup list + pipe takeoff as CSV">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M3 14h18M9 4v16M15 4v16"/></svg>
+      <span>CSV</span>
+    </button>
+    <button id="btnHelp" class="tb-btn icon-only" title="Help &amp; keyboard shortcuts (?)">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.8 2.1c-.8.5-1.3 1-1.3 1.9v.5"/><circle cx="12" cy="17" r=".5"/></svg>
+    </button>
+    <button id="btnAuthor" class="tb-btn icon-only" title="Set author name for markups">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ======================= MAIN AREA ======================= -->
+<div id="main">
+
+  <!-- Left tool rail -->
+  <nav id="toolRail">
+    <button class="tool-btn active" data-tool="select" title="Select / edit markups (V) — click to select, drag to move, Shift-click for multiple, drag on empty space for marquee">
+      <svg viewBox="0 0 24 24"><path d="M6 3l12 10.5-5.6.6 2.6 6-2.4 1-2.5-6.1L6 19z" fill="currentColor" stroke="none"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="pan" title="Pan (H) — or hold Space / middle mouse with any tool">
+      <svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M12 2 9.5 4.5M12 2l2.5 2.5M12 22l-2.5-2.5m2.5 2.5 2.5-2.5M2 12l2.5-2.5M2 12l2.5 2.5M22 12l-2.5-2.5m2.5 2.5-2.5 2.5"/></svg>
+    </button>
+
+    <div class="rail-sep"></div>
+    <div class="rail-cap">PIPE</div>
+
+    <button class="tool-btn accent" data-tool="pipe" title="Pipe run (P) — click points along the route, double-click / Enter to finish. Shift = free angle (ortho is on by default). Snaps to ends of other runs. Color-coded by pipe size, length labeled automatically.">
+      <svg viewBox="0 0 24 24"><path d="M4 21v-9a4 4 0 0 1 4-4h5v8h7"/><path d="M2 21h4M11 6v4M18 14v4" stroke-width="2.4"/></svg>
+    </button>
+
+    <div class="rail-sep"></div>
+    <div class="rail-cap">MEASURE</div>
+
+    <button class="tool-btn" data-tool="calibrate" title="Calibrate scale — click two points a known distance apart, then enter the real-world distance. Or pick a preset drawing scale.">
+      <svg viewBox="0 0 24 24"><path d="M4 4v16M20 4v16M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5m2.5 2.5-2.5 2.5"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="mlength" title="Length measurement (L) — drag between two points">
+      <svg viewBox="0 0 24 24"><path d="M3 17.5 17.5 3 21 6.5 6.5 21 3 17.5z"/><path d="m7 14 1.8 1.8M10 11l1.8 1.8M13 8l1.8 1.8"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="mpoly" title="Polylength measurement — multi-segment run, double-click to finish">
+      <svg viewBox="0 0 24 24"><path d="M3 19 9 12l4.5 3L21 5"/><circle cx="3" cy="19" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="13.5" cy="15" r="1.6"/><circle cx="21" cy="5" r="1.6"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="marea" title="Area measurement (A) — click polygon corners, double-click to close">
+      <svg viewBox="0 0 24 24"><path d="M12 3l9 6.5-3.5 10.5h-11L3 9.5z" stroke-dasharray="3 2.4"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="count" title="Count (C) — click to place count marks; totals appear in the Takeoff tab. Pick or create the count group in the panel on the right.">
+      <svg viewBox="0 0 24 24"><path d="M9 3 7 21M17 3l-2 18M4 8h17M3 15h17"/></svg>
+    </button>
+
+    <div class="rail-sep"></div>
+    <div class="rail-cap">MARK&nbsp;UP</div>
+
+    <button class="tool-btn" data-tool="line" title="Line — hold Shift to constrain to 45° steps">
+      <svg viewBox="0 0 24 24"><path d="M4 20 20 4"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="arrow" title="Arrow — points at where you release">
+      <svg viewBox="0 0 24 24"><path d="M4 20 18 6M18 6h-6.5M18 6v6.5"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="polyline" title="Polyline — click points, double-click to finish">
+      <svg viewBox="0 0 24 24"><path d="M3 18 8.5 8l5.5 6L20 4"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="rect" title="Rectangle (R)">
+      <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="ellipse" title="Ellipse (E)">
+      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="cloud" title="Revision cloud — drag a box; classic Bluebeam-style scalloped cloud">
+      <svg viewBox="0 0 24 24"><path d="M6.5 18h11a3.6 3.6 0 0 0 .9-7.1A5.4 5.4 0 0 0 8 9.2 4.4 4.4 0 0 0 6.5 18z"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="pen" title="Pen — freehand sketch">
+      <svg viewBox="0 0 24 24"><path d="m4 20 1.5-5L17 3.5 20.5 7 9 18.5 4 20z"/><path d="m14.5 6 3.5 3.5"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="highlight" title="Highlighter — wide translucent stroke">
+      <svg viewBox="0 0 24 24"><path d="m5 17 9.5-9.5 3 3L8 20H5v-3z"/><path d="M13 6.5 16.5 3l2.9 2.9-3.4 3.6M3 22h13" /></svg>
+    </button>
+    <button class="tool-btn" data-tool="text" title="Text (T) — click or drag a box, then type">
+      <svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16m-3 0h6"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="callout" title="Callout (Q) — drag from the arrow point to where the note box goes, then type">
+      <svg viewBox="0 0 24 24"><rect x="10" y="3" width="11" height="8" rx="1"/><path d="M10 8 3.5 20.5M3.5 20.5l1-4.3m-1 4.3 4.3-1"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="symbol" title="Symbols &amp; stamps — valves, drops, FRL, drains, AS-BUILT stamps… pick one in the panel on the right, then click the drawing to place. R rotates.">
+      <svg viewBox="0 0 24 24"><circle cx="7.5" cy="7.5" r="3.5"/><rect x="14.5" y="4" width="7" height="7" rx="1"/><path d="M7.5 14.5v7M4 18h7"/><path d="m15.5 15 5 5m0-5-5 5"/></svg>
+    </button>
+  </nav>
+
+  <!-- Thumbnails -->
+  <aside id="thumbPanel" class="hidden">
+    <div class="panel-title">Pages</div>
+    <div id="thumbList"></div>
+  </aside>
+
+  <!-- Canvas / viewport -->
+  <div id="viewportWrap">
+    <div id="viewport">
+      <div id="pageWrap" class="hidden">
+        <canvas id="pdfCanvas"></canvas>
+        <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+        <svg id="previewLayer" xmlns="http://www.w3.org/2000/svg"></svg>
+        <svg id="selLayer" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="editLayer"></div>
+      </div>
+    </div>
+    <div id="dropHint">
+      <div class="drop-inner">
+        <svg viewBox="0 0 24 24" class="drop-icon"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        <h2>Drop a PDF drawing here</h2>
+        <p>or use <b>Open</b> — or try the <b>Sample</b> plant floor plan</p>
+        <p class="drop-sub">Everything runs in your browser. Drawings never leave this computer.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <aside id="rightPanel">
+    <div class="tabs">
+      <button class="tab active" data-tab="props">Properties</button>
+      <button class="tab" data-tab="symbols">Symbols</button>
+      <button class="tab" data-tab="takeoff">Takeoff</button>
+    </div>
+    <div id="tab-props" class="tab-page active"></div>
+    <div id="tab-symbols" class="tab-page"></div>
+    <div id="tab-takeoff" class="tab-page"></div>
+  </aside>
+</div>
+
+<!-- ======================= MARKUPS LIST ======================= -->
+<section id="listPanel">
+  <div id="listHeader">
+    <button id="listToggle" title="Collapse / expand markups list">
+      <svg viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></svg>
+    </button>
+    <span class="panel-title">Markups List&nbsp;<span id="listCount">(0)</span></span>
+    <input id="listSearch" type="text" placeholder="Filter…" title="Filter markups by any text">
+    <select id="listTypeFilter" title="Filter by markup type">
+      <option value="">All types</option>
+    </select>
+    <label class="chk"><input type="checkbox" id="listPageOnly"> This page only</label>
+    <div class="tb-flex"></div>
+    <button id="btnDeleteSel" class="mini-btn danger" title="Delete selected markups (Del)">Delete selected</button>
+  </div>
+  <div id="listBody">
+    <table id="listTable">
+      <thead>
+        <tr>
+          <th data-k="idx">#</th>
+          <th data-k="page">Pg</th>
+          <th data-k="subject">Subject</th>
+          <th data-k="label">Label / Comments</th>
+          <th data-k="measure">Measurement</th>
+          <th data-k="color">Color</th>
+          <th data-k="author">Author</th>
+          <th data-k="date">Date</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="listRows"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ======================= STATUS BAR ======================= -->
+<footer id="statusBar">
+  <span id="statusHint">Open a PDF drawing to begin.</span>
+  <div class="tb-flex"></div>
+  <button id="statusScale" title="Page scale — click to calibrate">Scale: not set</button>
+  <span id="statusSave" title="Markups are autosaved in this browser and restored when you re-open the same PDF"></span>
+</footer>
+
+<!-- ======================= MODAL / TOAST ROOTS ======================= -->
+<div id="modalRoot" class="hidden">
+  <div id="modalBackdrop"></div>
+  <div id="modalBox" role="dialog"></div>
+</div>
+<div id="toastRoot"></div>
+
+<input type="file" id="filePdf" accept="application/pdf,.pdf" class="hidden">
+<input type="file" id="fileProject" accept=".airmark,.json" class="hidden">
+
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="js/geometry.js"></script>
+<script src="js/units.js"></script>
+<script src="js/symbols.js"></script>
+<script src="js/state.js"></script>
+<script src="js/viewer.js"></script>
+<script src="js/render.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/props.js"></script>
+<script src="js/markuplist.js"></script>
+<script src="js/project.js"></script>
+<script src="js/export.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
