@@ -127,5 +127,8 @@ const Units = (() => {
     return `${sqft >= 100 ? Math.round(sqft).toLocaleString() : sqft.toFixed(1)} sq ft`;
   }
 
-  return { SCALE_PRESETS, presetFtPerUnit, describeScale, parseDistance, fmtLen, fmtArea, FT_PER_M };
+  /** Display label for a page-scale object — user-chosen label wins over the derived one. */
+  const scaleLabel = sc => sc ? (sc.label || describeScale(sc.ftPerUnit)) : null;
+
+  return { SCALE_PRESETS, presetFtPerUnit, describeScale, scaleLabel, parseDistance, fmtLen, fmtArea, FT_PER_M };
 })();

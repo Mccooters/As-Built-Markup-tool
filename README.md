@@ -24,8 +24,8 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 ## The field workflow
 
 1. **Open** the drawing (PDF, any page size, multi-page sets supported).
-2. **Calibrate** the sheet — click two points a known distance apart and type the real distance (`25'`, `12'6"`, `7.6m`), or pick a preset scale (1/8", 1/4", 1"=20', 1:100 …). Per-page or all-pages.
-3. **Draw pipe runs** (`P`) — click along the route, double-click to finish. Runs are **color-coded by pipe size**, labeled with size + length automatically, and snap to the ends of other runs so headers and branches connect cleanly. Ortho drawing is on by default (hold `Shift` for free angles).
+2. **Set the scale** — click the Scale button in the status bar and type the sheet's stated scale directly: a standard preset (1/8", 1/4", 1"=20', 1:100 …), any **custom ratio** (`1 : 75`), or a custom pairing (`1 in = 15 ft`, `1 mm = 50 mm`) — no reference dimension needed. If the sheet has a trustworthy dimension (or was replotted at an odd size), **calibrate** instead: click two points a known distance apart and type the real distance (`25'`, `12'6"`, `7.6m`). Per-page or all-pages.
+3. **Draw pipe runs** (`P`) — click along the route, double-click to finish. Runs are **color-coded by pipe size**, drawn at their **true OD line width at the sheet scale** (a 2" header is visibly twice as wide as a 1" branch — IPS ODs for steel, +1/8" for copper, tube OD for aluminum), labeled with size + length automatically, and snap to the ends of other runs so headers and branches connect cleanly. Ortho drawing is on by default (hold `Shift` for free angles).
 4. **Drop symbols** — ball valves, shut-off/check valves, regulators, filter/lubricator/FRL sets, air drops, auto drains, quick couplers, unions, gauges, flow meters, compressors, receivers, dryers, elbows, tees, reducers — plus **AS-BUILT / INSTALLED / REMOVED / RELOCATED / FIELD VERIFY** stamps.
 5. **Count** (`C`) — create count groups (drops, couplers, elbow fittings…) and click to place marks.
 6. Add **clouds, callouts, text, arrows, highlights** for revision notes.
@@ -37,7 +37,8 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 | Bluebeam | AirMark |
 |---|---|
 | Markup tools (line, arrow, box, ellipse, cloud, pen, highlighter, text, callout) | ✔ All included; revision clouds with adjustable scallops |
-| Measurement tools (calibrate, length, polylength, area, count) | ✔ Included, with preset sheet scales and ft-in / decimal-ft / metric display |
+| Measurement tools (calibrate, length, polylength, area, count) | ✔ Included, with preset sheet scales, direct ratio entry (1:n / custom pairs) and ft-in / decimal-ft / metric display |
+| — | ✔ Pipe runs render at their **actual OD width** for the sheet scale (toggleable per run) |
 | Tool Chest custom symbols | ✔ Built-in compressed-air symbol library + stamps |
 | Markups List panel | ✔ Sortable/filterable list with subject, comments, measurement, author, date; CSV export |
 | Quantity takeoff | ✔ Live pipe takeoff by size & material + fitting/count schedules |

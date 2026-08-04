@@ -11,7 +11,7 @@ const Tools = (() => {
     select: 'Click to select · drag to move · Shift-click adds · drag empty space for marquee · double-click text to edit · Del deletes',
     pan: 'Drag to pan. Mouse wheel zooms.',
     pipe: 'Click points along the pipe route · double-click or Enter finishes · Shift = free angle · Backspace removes last point · Esc cancels',
-    calibrate: 'Click two points a known distance apart (a door, grid line, or dimension string works well).',
+    calibrate: 'Click two points a known distance apart — or click the Scale button in the status bar to type the sheet\'s stated ratio directly (1:100, 1/4" = 1\'-0"…).',
     mlength: 'Drag from one point to another to measure.',
     mpoly: 'Click points along the route · double-click or Enter finishes.',
     marea: 'Click corners of the area · double-click or Enter closes the shape.',
@@ -208,7 +208,8 @@ const Tools = (() => {
         Object.assign(base, {
           type: 'pipe',
           color: d.colorBySize ? (Symbols.PIPE_COLORS[d.pipeSize] || d.color) : d.color,
-          lineWidth: Math.max(d.lineWidth, 3),
+          lineWidth: Math.max(d.lineWidth, 3),          // fallback when uncalibrated / fixed mode
+          widthMode: d.pipeWidthMode || 'scale',        // 'scale' = draw at true OD width
           pipeSize: d.pipeSize, material: d.material, system: d.system,
           showLabel: d.showLabel, subject: `Pipe ${d.pipeSize}`,
         });

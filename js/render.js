@@ -13,8 +13,8 @@ const Render = (() => {
     return n;
   };
 
-  function dashArray(m) {
-    const lw = m.lineWidth || 2;
+  function dashArray(m, lw) {
+    lw = lw || m.lineWidth || 2;
     if (m.lineStyle === 'dash') return `${lw * 3.2} ${lw * 2.2}`;
     if (m.lineStyle === 'dot') return `0.1 ${lw * 2.4}`;
     return null;
@@ -155,23 +155,32 @@ const Render = (() => {
     },
 
     pipe(g, m) {
-      // white casing under colored line = classic pipe look, reads over dense linework
+      // stroke width = true pipe OD at the sheet scale (see State.pipeDisplayWidth)
+      const w = State.pipeDisplayWidth(m);
+      const d = Geo.polyPath(m.pts);
+      // white casing under the colored line = classic pipe look, reads over dense linework
       g.appendChild(svg('path', {
-        d: Geo.polyPath(m.pts), fill: 'none', stroke: '#ffffff',
-        'stroke-width': m.lineWidth * 1.9, 'stroke-opacity': 0.65,
+        d, fill: 'none', stroke: '#ffffff',
+        'stroke-width': w + Math.max(1.5, w * 0.7), 'stroke-opacity': 0.65,
         'stroke-linecap': 'round', 'stroke-linejoin': 'round',
       }));
-      g.appendChild(buildStrokePath(m, Geo.polyPath(m.pts)));
-      // vertex ticks
+      const stroke = svg('path', {
+        d, fill: 'none', stroke: m.color, 'stroke-width': w,
+        'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+      });
+      const da = dashArray(m, w);
+      if (da) stroke.setAttribute('stroke-dasharray', da);
+      g.appendChild(stroke);
+      // end markers
       for (const p of [m.pts[0], m.pts[m.pts.length - 1]]) {
-        g.appendChild(svg('circle', { cx: p.x, cy: p.y, r: m.lineWidth * 0.9, fill: m.color, stroke: 'none' }));
+        g.appendChild(svg('circle', { cx: p.x, cy: p.y, r: Math.max(1.2, w * 0.75), fill: m.color, stroke: 'none' }));
       }
       if (m.showLabel !== false) {
         const seg = Geo.longestSegment(m.pts);
         const len = measureLabel(m);
         const str = len ? `${m.pipeSize} – ${len}` : (m.pipeSize || '');
         if (str) {
-          const off = (m.lineWidth || 3) + (m.fontSize || 12) * 0.55;
+          const off = w / 2 + (m.fontSize || 12) * 0.62;
           g.appendChild(labelEl(seg.mid.x, seg.mid.y - off, str, m, { rotate: seg.angle, bold: true }));
         }
       }

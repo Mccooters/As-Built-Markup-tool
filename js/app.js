@@ -93,6 +93,105 @@ const App = (() => {
     });
   }
 
+  /**
+   * Direct scale entry — for sheets with no reference dimension to click.
+   * Three ways in: standard preset, ratio 1:n, or custom "paper = real".
+   */
+  function scaleDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first.', 'warn'); return; }
+    const sc = State.scaleForPage(State.S.page);
+    modal(`
+      <h3>Set sheet scale</h3>
+      <p class="muted">Type the drawing's stated scale — no reference dimension needed. Check the title block (e.g. <b>SCALE: 1/4" = 1'-0"</b> or <b>1:100</b>).${sc ? `<br>Current: <b>${Units.scaleLabel(sc)}</b>` : ''}</p>
+
+      <div class="form-row" style="display:flex;align-items:center;gap:8px">
+        <label class="chk" style="flex:0 0 110px"><input type="radio" name="sc-mode" value="preset" checked> Standard</label>
+        <select id="sc-preset" style="flex:1">${Units.SCALE_PRESETS.map(p => `<option value="${p.id}">${p.label.replace(/"/g, '&quot;')}</option>`).join('')}</select>
+      </div>
+
+      <div class="form-row" style="display:flex;align-items:center;gap:8px">
+        <label class="chk" style="flex:0 0 110px"><input type="radio" name="sc-mode" value="ratio"> Ratio</label>
+        <span>1 :</span>
+        <input type="text" id="sc-ratio" placeholder="e.g. 100" style="width:90px" inputmode="decimal">
+        <span class="muted" style="font-size:12px;color:var(--txt-dim)">same units both sides</span>
+      </div>
+
+      <div class="form-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <label class="chk" style="flex:0 0 110px"><input type="radio" name="sc-mode" value="custom"> Custom</label>
+        <input type="text" id="sc-paper" value="1" style="width:52px" inputmode="decimal">
+        <select id="sc-punit" style="width:64px"><option value="in">in</option><option value="mm">mm</option></select>
+        <span>=</span>
+        <input type="text" id="sc-real" placeholder="10" style="width:64px" inputmode="decimal">
+        <select id="sc-runit" style="width:64px"><option value="ft">ft</option><option value="in">in</option><option value="m">m</option><option value="mm">mm</option></select>
+      </div>
+
+      <div class="form-row"><label class="chk"><input type="checkbox" id="sc-all" checked> Apply to all pages</label></div>
+      <p class="muted" id="sc-out" style="min-height:18px"></p>
+      <p class="muted" style="font-size:11.5px">⚠ If the PDF was replotted at a different sheet size (half-size sets are common), the stated scale will be wrong — use <b>Measure two points</b> against a known dimension instead.</p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="sc-measure" title="Click two points a known distance apart">Measure two points…</button>
+        <div class="tb-flex"></div>
+        <button class="mini-btn" id="sc-cancel">Cancel</button>
+        <button class="mini-btn primary" id="sc-ok">Set scale</button>
+      </div>`, (box, close) => {
+
+      const mode = () => box.querySelector('input[name="sc-mode"]:checked').value;
+      const pick = v => { box.querySelector(`input[name="sc-mode"][value="${v}"]`).checked = true; compute(); };
+      // focusing an input selects its mode
+      $('sc-preset').addEventListener('focus', () => pick('preset'));
+      $('sc-ratio').addEventListener('focus', () => pick('ratio'));
+      for (const id of ['sc-paper', 'sc-punit', 'sc-real', 'sc-runit']) $(id).addEventListener('focus', () => pick('custom'));
+
+      const IN_PER = { in: 1, mm: 1 / 25.4, ft: 12, m: 1000 / 25.4 };
+      /** → { fpu, label } or null */
+      const compute = () => {
+        let fpu = null, label = '';
+        if (mode() === 'preset') {
+          const p = Units.SCALE_PRESETS.find(x => x.id === $('sc-preset').value);
+          if (p) { fpu = Units.presetFtPerUnit(p); label = p.label; }
+        } else if (mode() === 'ratio') {
+          const n = parseFloat($('sc-ratio').value);
+          if (n > 0) { fpu = n / 864; label = `1 : ${n}`; }   // 1 pt paper = n pt real; 864 pt per real ft
+        } else {
+          const pv = parseFloat($('sc-paper').value), rv = parseFloat($('sc-real').value);
+          const pu = $('sc-punit').value, ru = $('sc-runit').value;
+          if (pv > 0 && rv > 0) {
+            const paperPts = pv * IN_PER[pu] * 72;
+            const realFt = rv * IN_PER[ru] / 12;
+            fpu = realFt / paperPts;
+            label = `${pv} ${pu} = ${rv} ${ru}`;
+          }
+        }
+        const out = $('sc-out');
+        if (out) out.innerHTML = fpu ? `→ <b>${Units.describeScale(fpu)}</b> &nbsp;(${(fpu * 72).toFixed(3)} ft per paper inch)` : '';
+        return fpu ? { fpu, label } : null;
+      };
+      for (const el of box.querySelectorAll('input, select')) {
+        el.addEventListener('input', compute);
+        el.addEventListener('change', compute);
+        // listeners live on the dialog's own inputs — #modalBox itself is reused across dialogs
+        el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('sc-ok').click(); } });
+      }
+      compute();
+
+      $('sc-ok').onclick = () => {
+        const r = compute();
+        if (!r) { toast('Enter a valid scale value first.', 'warn'); return; }
+        const allPages = $('sc-all').checked;   // read before close() destroys the dialog
+        State.setScale(State.S.page, r.fpu, allPages, r.label);
+        close();
+        toast(`Scale set: ${r.label}${allPages ? ' (all pages)' : ` (page ${State.S.page})`}`, 'ok');
+      };
+      $('sc-cancel').onclick = close;
+      $('sc-measure').onclick = () => {
+        close();
+        State.setTool('calibrate');
+        Props.showTab('props');
+        toast('Click two points a known distance apart, then type the real distance.', 'info', 6000);
+      };
+    });
+  }
+
   function countGroupDialog() {
     const used = State.S.countGroups.length;
     const color = Symbols.COLORS[used % (Symbols.COLORS.length - 1)];
@@ -126,7 +225,7 @@ const App = (() => {
     modal(`
       <h3>AirMark — quick reference</h3>
       <p class="muted">A Bluebeam-style markup + measurement tool for compressed-air pipe work. Everything stays in your browser — drawings are never uploaded.</p>
-      <p class="muted"><b>Field workflow:</b> ① Open the drawing → ② <b>Calibrate</b> the sheet (or pick a preset scale) → ③ draw <b>Pipe runs</b> sized &amp; color-coded → ④ drop <b>Symbols</b> (valves, drops, FRL…) and <b>Counts</b> → ⑤ check the <b>Takeoff</b> tab → ⑥ <b>Export PDF</b> or CSV.</p>
+      <p class="muted"><b>Field workflow:</b> ① Open the drawing → ② set the <b>scale</b> — click the Scale button and type the sheet's stated ratio (1:100, 1/4"=1'-0"…), or calibrate from two points of a known distance → ③ draw <b>Pipe runs</b>, color-coded and drawn at their true OD width → ④ drop <b>Symbols</b> (valves, drops, FRL…) and <b>Counts</b> → ⑤ check the <b>Takeoff</b> tab → ⑥ <b>Export PDF</b> or CSV.</p>
       <dl class="help-grid">
         <dt><kbd>V</kbd></dt><dd>Select</dd>
         <dt><kbd>H</kbd></dt><dd>Pan (or hold <kbd>Space</kbd>, or middle mouse)</dd>
@@ -176,13 +275,13 @@ const App = (() => {
     const btn = $('statusScale');
     const sc = State.scaleForPage(State.S.page);
     if (sc) {
-      btn.textContent = 'Scale: ' + Units.describeScale(sc.ftPerUnit);
+      btn.textContent = 'Scale: ' + Units.scaleLabel(sc);
       btn.classList.remove('warn');
-      btn.title = 'Page scale — click to recalibrate';
+      btn.title = 'Page scale — click to change (type a ratio or measure two points)';
     } else {
-      btn.textContent = State.S.pdf ? '⚠ Scale not set — click to calibrate' : 'Scale: not set';
+      btn.textContent = State.S.pdf ? '⚠ Scale not set — click to set' : 'Scale: not set';
       btn.classList.add('warn');
-      btn.title = 'Measurements need a scale. Click, then mark a known distance.';
+      btn.title = "Measurements need a scale. Click to type the sheet's stated scale (1:100, 1/4\"=1'-0\"…) or measure two points.";
     }
   }
 
@@ -288,8 +387,7 @@ const App = (() => {
 
     $('statusScale').onclick = () => {
       if (!State.S.pdf) return;
-      State.setTool('calibrate');
-      Props.showTab('props');
+      scaleDialog();
     };
 
     // tool rail
@@ -389,7 +487,7 @@ const App = (() => {
   document.addEventListener('DOMContentLoaded', init);
 
   return {
-    toast, modal, progress, calibrateDialog, countGroupDialog, helpDialog,
+    toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
     download, savedIndicator, showTab: (...a) => Props.showTab(...a),
   };
 })();

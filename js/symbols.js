@@ -166,6 +166,35 @@ const Symbols = (() => {
 
   /* ---- pipe presets ---- */
   const PIPE_SIZES = ['1/4"', '3/8"', '1/2"', '3/4"', '1"', '1-1/4"', '1-1/2"', '2"', '2-1/2"', '3"', '4"', '6"'];
+
+  /** Nominal size (inches) per size label. */
+  const PIPE_NOMINAL = {
+    '1/4"': 0.25, '3/8"': 0.375, '1/2"': 0.5, '3/4"': 0.75, '1"': 1,
+    '1-1/4"': 1.25, '1-1/2"': 1.5, '2"': 2, '2-1/2"': 2.5, '3"': 3, '4"': 4, '6"': 6,
+  };
+  /** Iron-pipe-size (schedule steel) outside diameters, inches. */
+  const IPS_OD = {
+    '1/4"': 0.540, '3/8"': 0.675, '1/2"': 0.840, '3/4"': 1.050, '1"': 1.315,
+    '1-1/4"': 1.660, '1-1/2"': 1.900, '2"': 2.375, '2-1/2"': 2.875,
+    '3"': 3.500, '4"': 4.500, '6"': 6.625,
+  };
+
+  /**
+   * Actual outside diameter (inches) for a nominal size + material, used to
+   * draw pipe runs at true scale:
+   *  - Aluminum tube systems (Transair/RapidAir style): OD ≈ nominal (25 mm ≈ 1")
+   *  - Copper CTS: OD = nominal + 1/8"
+   *  - Steel / galvanized / stainless / poly: IPS schedule OD
+   *  - Rubber hose: rough OD with wall
+   */
+  function pipeOdInches(size, material) {
+    const nom = PIPE_NOMINAL[size];
+    if (nom == null) return IPS_OD[size] || 1;
+    if (material === 'Aluminum') return nom;
+    if (material === 'Copper L') return nom + 0.125;
+    if (material === 'Rubber Hose') return nom + 0.25;
+    return IPS_OD[size] || nom;
+  }
   const PIPE_COLORS = {
     '1/4"': '#8d6e63', '3/8"': '#c2185b', '1/2"': '#e53935', '3/4"': '#f57c00',
     '1"': '#c9a212', '1-1/4"': '#43a047', '1-1/2"': '#00897b', '2"': '#1e88e5',
@@ -191,5 +220,5 @@ const Symbols = (() => {
     }
   }
 
-  return { SYMBOLS, STAMPS, byId, stampById, PIPE_SIZES, PIPE_COLORS, MATERIALS, SYSTEMS, COLORS, COUNT_SHAPES, countShapeSvg };
+  return { SYMBOLS, STAMPS, byId, stampById, PIPE_SIZES, PIPE_NOMINAL, pipeOdInches, PIPE_COLORS, MATERIALS, SYSTEMS, COLORS, COUNT_SHAPES, countShapeSvg };
 })();

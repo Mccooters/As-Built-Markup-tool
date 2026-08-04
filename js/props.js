@@ -66,7 +66,7 @@ const Props = (() => {
       h += `<div class="prop-section"><div class="prop-cap">Color</div>${swatchesHtml(o.color)}</div>`;
     }
     if (!opts.noStroke) {
-      h += `<div class="prop-row"><label>Line width</label><input type="range" id="p-lw" min="0.5" max="10" step="0.5" value="${o.lineWidth ?? 2.5}"><span class="val" id="p-lw-v">${o.lineWidth ?? 2.5}</span></div>`;
+      if (!opts.noWidth) h += `<div class="prop-row"><label>Line width</label><input type="range" id="p-lw" min="0.5" max="10" step="0.5" value="${o.lineWidth ?? 2.5}"><span class="val" id="p-lw-v">${o.lineWidth ?? 2.5}</span></div>`;
       h += `<div class="prop-row"><label>Opacity</label><input type="range" id="p-op" min="0.15" max="1" step="0.05" value="${o.opacity ?? 1}"><span class="val" id="p-op-v">${o.opacity ?? 1}</span></div>`;
       h += `<div class="prop-row"><label>Line style</label><select id="p-ls">
         <option value="solid"${o.lineStyle === 'dash' || o.lineStyle === 'dot' ? '' : ' selected'}>Solid</option>
@@ -76,11 +76,25 @@ const Props = (() => {
     return h;
   }
 
+  /** True-scale width state for a markup-or-defaults object ('scale' unless explicitly fixed). */
+  const pipeScaleMode = o => (o.widthMode || D().pipeWidthMode || 'scale') !== 'fixed';
+
+  function pipeWidthInfo(o) {
+    const od = Symbols.pipeOdInches(o.pipeSize || D().pipeSize, o.material || D().material);
+    const sc = State.scaleForPage(S().page);
+    if (!pipeScaleMode(o)) return `Fixed width — un-tick to draw at the true ${od}" OD.`;
+    if (!sc) return `⚠ OD ${od}" — set the sheet scale and this pipe will draw at its true width (fixed width until then).`;
+    const units = (od / 12) / sc.ftPerUnit;
+    return `OD ${od}" → ${units.toFixed(1)} pt line at ${Units.scaleLabel(sc)}.`;
+  }
+
   function pipeRows(o) {
     return `<div class="prop-section"><div class="prop-cap">Pipe</div>
       <div class="prop-row"><label>Size</label><select id="p-psize">${Symbols.PIPE_SIZES.map(s => `<option${s === o.pipeSize ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       <div class="prop-row"><label>Material</label><select id="p-pmat">${Symbols.MATERIALS.map(s => `<option${s === o.material ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       <div class="prop-row"><label>System</label><select id="p-psys">${Symbols.SYSTEMS.map(s => `<option${s === o.system ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
+      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pscalew"${pipeScaleMode(o) ? ' checked' : ''}> True-scale line width (actual OD)</label></div>
+      <p class="prop-note" id="p-podinfo">${esc(pipeWidthInfo(o))}</p>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pcolor"${D().colorBySize ? ' checked' : ''}> Color by pipe size</label></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-portho"${D().orthoPipe !== false ? ' checked' : ''}> Ortho drawing (Shift = free)</label></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-plabel"${o.showLabel !== false ? ' checked' : ''}> Show size &amp; length label</label></div>
@@ -93,12 +107,13 @@ const Props = (() => {
     let h = `<div class="prop-cap">Tool defaults — ${esc(toolName(t))}</div>`;
 
     if (t === 'pipe') {
-      h += pipeRows(d) + commonRows(d, { noColor: d.colorBySize });
+      h += pipeRows(d) + commonRows(d, { noColor: d.colorBySize, noWidth: pipeScaleMode(d) });
       if (d.colorBySize) h += `<p class="prop-note">Color follows pipe size (see legend in Takeoff tab). Un-tick “Color by pipe size” to pick your own.</p>`;
     } else if (t === 'count') {
       h += countGroupsHtml();
     } else if (t === 'calibrate') {
-      h += `<p class="prop-note">Click two points a known distance apart, then type the real distance (e.g. <b>25'</b> or <b>7.6m</b>).<br><br>Or apply a preset sheet scale:</p>
+      h += `<p class="prop-note">Click two points a known distance apart, then type the real distance (e.g. <b>25'</b> or <b>7.6m</b>).<br><br>No reference dimension on the sheet? Type the drawing's stated scale instead:</p>
+        <div style="margin:6px 0 10px"><button class="mini-btn primary" id="p-scaledlg">Enter scale ratio…</button></div>
         <div class="prop-row"><label>Preset</label><select id="p-preset"><option value="">choose…</option>${Units.SCALE_PRESETS.map(p => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select></div>
         <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-preset-all" checked> Apply to all pages</label></div>`;
     } else if (t === 'text' || t === 'callout') {
@@ -155,7 +170,7 @@ const Props = (() => {
       if (types.has('symbol')) h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-slabel"${first.showLabel !== false ? ' checked' : ''}> Show label</label></div>`;
     }
 
-    h += commonRows(first, { noColor: hasPipe && D().colorBySize });
+    h += commonRows(first, { noColor: hasPipe && D().colorBySize, noWidth: hasPipe && pipeScaleMode(first) });
 
     const closed = ['rect', 'ellipse', 'cloud', 'marea'].some(t => types.has(t));
     if (closed) h += fillRows(first);
@@ -217,6 +232,13 @@ const Props = (() => {
     if (has('#p-psize')) has('#p-psize').addEventListener('change', e => pipePatch({ pipeSize: e.target.value }));
     if (has('#p-pmat')) has('#p-pmat').addEventListener('change', e => pipePatch({ material: e.target.value }));
     if (has('#p-psys')) has('#p-psys').addEventListener('change', e => pipePatch({ system: e.target.value }));
+    if (has('#p-pscalew')) has('#p-pscalew').addEventListener('change', e => {
+      const wm = e.target.checked ? 'scale' : 'fixed';
+      D().pipeWidthMode = wm;
+      const sels = [...S().selection];
+      if (sels.length) State.updateMarkups(sels, m => m.type === 'pipe' ? { widthMode: wm } : {});
+      renderProps();
+    });
     if (has('#p-pcolor')) has('#p-pcolor').addEventListener('change', e => {
       D().colorBySize = e.target.checked;
       if (e.target.checked) pipePatch({ pipeSize: has('#p-psize') ? has('#p-psize').value : D().pipeSize });
@@ -232,11 +254,12 @@ const Props = (() => {
     });
     if (has('#p-fop')) bindLive(has('#p-fop'), has('#p-fop-v'), v => apply({ fillOpacity: v }));
 
+    if (has('#p-scaledlg')) has('#p-scaledlg').addEventListener('click', () => App.scaleDialog());
     if (has('#p-preset')) has('#p-preset').addEventListener('change', e => {
       const p = Units.SCALE_PRESETS.find(x => x.id === e.target.value);
       if (!p) return;
       const all = has('#p-preset-all') ? has('#p-preset-all').checked : true;
-      State.setScale(S().page, Units.presetFtPerUnit(p), all);
+      State.setScale(S().page, Units.presetFtPerUnit(p), all, p.label);
       App.toast(`Scale set to ${p.label}${all ? ' (all pages)' : ''}`, 'ok');
       State.setTool('select');
     });
@@ -340,8 +363,8 @@ const Props = (() => {
 
     const sc = State.scaleForPage(S().page);
     h += `<p class="prop-note" style="margin-top:8px">${sc
-      ? `Sheet scale: <b>${esc(Units.describeScale(sc.ftPerUnit))}</b>`
-      : `⚠ Sheet not calibrated — lengths unavailable. Use the <b>Calibrate</b> tool.`}</p>`;
+      ? `Sheet scale: <b>${esc(Units.scaleLabel(sc))}</b>`
+      : `⚠ Sheet scale not set — lengths unavailable. Click the scale button in the status bar to type a ratio, or use the <b>Calibrate</b> tool.`}</p>`;
     h += `<div style="margin-top:8px"><button class="mini-btn" id="to-csv">Export takeoff CSV</button></div>`;
 
     takeoffRoot.innerHTML = h;

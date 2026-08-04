@@ -52,6 +52,7 @@ const State = (() => {
     pipeSize: '1"',
     material: 'Aluminum',
     system: 'Main Header',
+    pipeWidthMode: 'scale',   // 'scale' = line width is the true OD at sheet scale
     colorBySize: true,
     showLabel: true,
     highlightColor: '#ffe419',
@@ -170,17 +171,33 @@ const State = (() => {
   function scaleForPage(page) {
     return S.pageScales[page] || S.defaultScale || null;
   }
-  function setScale(page, ftPerUnit, allPages) {
+  function setScale(page, ftPerUnit, allPages, label) {
     pushUndo();
+    const sc = label ? { ftPerUnit, label } : { ftPerUnit };
     if (allPages) {
-      S.defaultScale = { ftPerUnit };
+      S.defaultScale = sc;
       S.pageScales = {};
     } else {
-      S.pageScales[page] = { ftPerUnit };
+      S.pageScales[page] = sc;
     }
     emit('scale');
     emit('markups'); // labels change
     touch();
+  }
+
+  /**
+   * Stroke width (page units) a pipe run renders at. In 'scale' mode (default)
+   * this is the pipe's true outside diameter mapped through the sheet scale, so
+   * a 2" header draws twice as wide as a 1" branch — accurate on screen and in
+   * exports. Falls back to the fixed lineWidth when the page isn't calibrated
+   * or the markup opts out with widthMode: 'fixed'.
+   */
+  function pipeDisplayWidth(m) {
+    if (m.type !== 'pipe') return m.lineWidth || 2;
+    const sc = scaleForPage(m.page);
+    if (!sc || m.widthMode === 'fixed') return m.lineWidth || 3;
+    const odIn = Symbols.pipeOdInches(m.pipeSize, m.material);
+    return Math.max((odIn / 12) / sc.ftPerUnit, 0.35);
   }
 
   /** Length of a markup in feet (null if page not calibrated or not a length markup). */
@@ -225,7 +242,7 @@ const State = (() => {
     pushUndo, undo, redo, canUndo, canRedo, clearHistory,
     addMarkup, updateMarkups, deleteMarkups, getMarkup, pageMarkups,
     select, clearSelection, selectedMarkups, setTool,
-    scaleForPage, setScale, lengthFt, areaFt,
+    scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
     resetDoc, newId, touch,
   };

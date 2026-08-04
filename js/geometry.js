@@ -137,8 +137,14 @@ const Geo = (() => {
   /** Hit-test: distance from p to a markup's stroke geometry (rough, page units). */
   function markupBounds(m) {
     switch (m.type) {
+      case 'pipe': {
+        // true-scale pipes can be much wider than their nominal lineWidth
+        const lw = (typeof State !== 'undefined' && State.pipeDisplayWidth)
+          ? State.pipeDisplayWidth(m) : (m.lineWidth || 2);
+        return inflate(boundsOfPts(m.pts), lw / 2 + 5);
+      }
       case 'line': case 'arrow': case 'polyline': case 'pen': case 'highlight':
-      case 'pipe': case 'mlength': case 'mpoly': case 'marea':
+      case 'mlength': case 'mpoly': case 'marea':
         return inflate(boundsOfPts(m.pts), (m.lineWidth || 2) + 4);
       case 'rect': case 'ellipse': case 'cloud': case 'text':
         return inflate({ x: m.x, y: m.y, w: m.w, h: m.h }, (m.lineWidth || 2) + 4);
