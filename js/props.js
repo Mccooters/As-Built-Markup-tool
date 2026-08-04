@@ -105,7 +105,7 @@ const Props = (() => {
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pscalew"${pipeScaleMode(o) ? ' checked' : ''}> True-scale line width (actual OD)</label></div>
       <p class="prop-note" id="p-podinfo">${esc(pipeWidthInfo(o))}</p>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pcolor"${D().colorBySize ? ' checked' : ''}> Color by pipe size</label></div>
-      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-portho"${D().orthoPipe !== false ? ' checked' : ''}> Ortho drawing (Shift = free)</label></div>
+      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-portho"${D().orthoPipe ? ' checked' : ''}> Snap to 45° angles (Shift inverts)</label></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-plabel"${o.showLabel !== false ? ' checked' : ''}> Show size &amp; length label</label></div>
     </div>`;
   }

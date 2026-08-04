@@ -53,6 +53,7 @@ const State = (() => {
     material: 'Aluminum',
     system: 'Main Header',
     pipeWidthMode: 'scale',   // 'scale' = line width is the true OD at sheet scale
+    orthoPipe: false,         // false = route at any angle; Shift snaps to 45°. true inverts.
     colorBySize: true,
     showLabel: true,
     highlightColor: '#ffe419',

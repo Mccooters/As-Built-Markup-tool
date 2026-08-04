@@ -5,13 +5,19 @@ const Geo = (() => {
 
   const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 
-  /** Constrain point p relative to origin o to the nearest `stepDeg` angle. */
-  function constrainAngle(o, p, stepDeg = 45) {
+  /**
+   * Constrain point p relative to origin o to the nearest `stepDeg` angle.
+   * `baseDeg` rotates the snap grid — pass the previous segment's bearing to
+   * snap relative to it (straight on / 45° / square off the run) instead of
+   * to the sheet's horizontal.
+   */
+  function constrainAngle(o, p, stepDeg = 45, baseDeg = 0) {
     const dx = p.x - o.x, dy = p.y - o.y;
     const len = Math.hypot(dx, dy);
     if (len < 1e-9) return { x: p.x, y: p.y };
     const step = stepDeg * Math.PI / 180;
-    const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+    const base = baseDeg * Math.PI / 180;
+    const ang = base + Math.round((Math.atan2(dy, dx) - base) / step) * step;
     return { x: o.x + len * Math.cos(ang), y: o.y + len * Math.sin(ang) };
   }
 

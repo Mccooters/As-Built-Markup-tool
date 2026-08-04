@@ -10,7 +10,7 @@ const Tools = (() => {
   const TOOL_HINTS = {
     select: 'Click to select · drag to move · Shift-click adds · drag empty space for marquee · double-click text to edit · Del deletes',
     pan: 'Drag to pan. Mouse wheel zooms.',
-    pipe: 'Click points along the pipe route · double-click or Enter finishes · Shift = free angle · Backspace removes last point · Esc cancels',
+    pipe: 'Click points along the route — any angle · hold Shift to snap 45°/90° off the previous leg · double-click or Enter finishes · Backspace removes last point · Esc cancels',
     calibrate: 'Click two points a known distance apart — or click the Scale button in the status bar to type the sheet\'s stated ratio directly (1:100, 1/4" = 1\'-0"…).',
     mlength: 'Drag from one point to another to measure.',
     mpoly: 'Click points along the route · double-click or Enter finishes.',
@@ -62,13 +62,25 @@ const Tools = (() => {
     return best ? { x: best.x, y: best.y, snapped: true } : { x: p.x, y: p.y, snapped: false };
   }
 
-  /** Ortho/45° constraint for the active tool given the previous point. */
+  /** Bearing (deg) of the in-progress polyline's last committed segment, 0 if none. */
+  function segBase() {
+    if (!creating || creating.pts.length < 2) return 0;
+    const n = creating.pts.length;
+    const a = creating.pts[n - 2], b = creating.pts[n - 1];
+    return Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+  }
+
+  /**
+   * 45° constraint for the active tool given the previous point.
+   * Free-angle is the default everywhere; Shift snaps to 45°. If the pipe
+   * tool's "snap to 45°" option is on, Shift frees the angle instead.
+   * After the first leg the snap grid is RELATIVE to the previous segment,
+   * so an off-axis run still gets square tees and true 45s off itself.
+   */
   function constrain(prev, p, shift) {
     const t = S().tool;
-    let ortho = false;
-    if (t === 'pipe') ortho = D().orthoPipe !== false ? !shift : shift;
-    else ortho = shift;
-    return ortho ? Geo.constrainAngle(prev, p, 45) : p;
+    const ortho = (t === 'pipe' && D().orthoPipe) ? !shift : shift;
+    return ortho ? Geo.constrainAngle(prev, p, 45, segBase()) : p;
   }
 
   const clearPreview = () => { Viewer.el.preview.innerHTML = ''; };
@@ -197,7 +209,8 @@ const Tools = (() => {
     let sp = snapPoint(p);
     if (creating) {
       const prev = creating.pts[creating.pts.length - 1];
-      const c = constrain(prev, sp.snapped ? sp : p, e.shiftKey);
+      // connecting to an existing endpoint beats angle snapping
+      const c = sp.snapped ? sp : constrain(prev, p, e.shiftKey);
       creating.pts.push({ x: c.x, y: c.y });
     } else {
       const base = {
@@ -229,7 +242,7 @@ const Tools = (() => {
     if (!creating) return;
     const prev = creating.pts[creating.pts.length - 1];
     let sp = snapPoint(p);
-    const c = constrain(prev, sp.snapped ? sp : p, shift);
+    const c = sp.snapped ? sp : constrain(prev, p, shift);
     const temp = { ...creating, pts: [...creating.pts, { x: c.x, y: c.y }] };
     if (creating.type === 'marea') temp.closed = true;
     let extras = sp.snapped ? snapIndicator(sp) : '';

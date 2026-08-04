@@ -25,7 +25,7 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 
 1. **Open** the drawing (PDF, any page size, multi-page sets supported).
 2. **Set the scale** — click the Scale button in the status bar and type the sheet's stated scale directly: a standard preset (1/8", 1/4", 1"=20', 1:100 …), any **custom ratio** (`1 : 75`), or a custom pairing (`1 in = 15 ft`, `1 mm = 50 mm`) — no reference dimension needed. If the sheet has a trustworthy dimension (or was replotted at an odd size), **calibrate** instead: click two points a known distance apart and type the real distance (`25'`, `12'6"`, `7.6m`). Per-page or all-pages.
-3. **Draw pipe runs** (`P`) — click along the route, double-click to finish. Runs are **color-coded by pipe size**, drawn at their **true OD line width at the sheet scale** (a 2" header is visibly twice as wide as a 1" branch — IPS ODs for steel, +1/8" for copper, tube OD for aluminum), labeled with size + length automatically, and snap to the ends of other runs so headers and branches connect cleanly. Ortho drawing is on by default (hold `Shift` for free angles). Sizes come in three families: **imperial NPS** (1/4"–6"), **metric tube** (16–160 mm, designation = OD, as used by Transair/AIRnet-style aluminum systems), and **metric steel DN15–DN150** (EN 10255 ODs).
+3. **Draw pipe runs** (`P`) — click along the route, double-click to finish. Runs are **color-coded by pipe size**, drawn at their **true OD line width at the sheet scale** (a 2" header is visibly twice as wide as a 1" branch — IPS ODs for steel, +1/8" for copper, tube OD for aluminum), labeled with size + length automatically, and snap to the ends of other runs so headers and branches connect cleanly. Route at **any angle** — hold `Shift` to snap to 45°, or turn on "Snap to 45° angles" in the pipe properties to make ortho the default (Shift then frees it). The snap grid is **relative to the previous leg**: start a run 30° off the building axis and the next legs still snap straight-on / 45° / square off that run, not off the sheet's horizontal. Connecting to another run's endpoint always wins over angle snapping. Sizes come in three families: **imperial NPS** (1/4"–6"), **metric tube** (16–160 mm, designation = OD, as used by Transair/AIRnet-style aluminum systems), and **metric steel DN15–DN150** (EN 10255 ODs).
 4. **Drop symbols** — ball valves, shut-off/check valves, regulators, filter/lubricator/FRL sets, air drops, auto drains, quick couplers, unions, gauges, flow meters, compressors, receivers, dryers, elbows, tees, reducers — plus **AS-BUILT / INSTALLED / REMOVED / RELOCATED / FIELD VERIFY** stamps.
 5. **Count** (`C`) — create count groups (drops, couplers, elbow fittings…) and click to place marks.
 6. Add **clouds, callouts, text, arrows, highlights** for revision notes.
@@ -58,7 +58,7 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 | `T` / `Q` | Text / Callout |
 | `Enter` or double-click | Finish pipe / polyline |
 | `Backspace` | Remove last point while drawing |
-| `Shift` | Free angle on pipes (ortho is default) · constrain lines to 45° |
+| `Shift` | Snap to 45° while drawing (free-angle is the default; inverted if 45°-snap is enabled in pipe properties) |
 | `R` | Rotate symbol (before or after placing) |
 | `Esc` | Cancel / clear selection |
 | `Del` | Delete selection |

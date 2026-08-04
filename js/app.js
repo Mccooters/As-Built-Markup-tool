@@ -235,7 +235,7 @@ const App = (() => {
         <dt><kbd>C</kbd></dt><dd>Count</dd>
         <dt><kbd>T</kbd> / <kbd>Q</kbd></dt><dd>Text / Callout</dd>
         <dt><kbd>Enter</kbd> / dbl-click</dt><dd>Finish pipe / polyline</dd>
-        <dt><kbd>Shift</kbd></dt><dd>Free angle while drawing pipes (ortho is default) · constrain 45° on lines</dd>
+        <dt><kbd>Shift</kbd></dt><dd>Snap to 45° while drawing (relative to the previous pipe leg — off-axis runs still get square tees)</dd>
         <dt><kbd>Backspace</kbd></dt><dd>Remove last pipe point while drawing</dd>
         <dt><kbd>R</kbd></dt><dd>Rotate symbol (before or after placing)</dd>
         <dt><kbd>Esc</kbd></dt><dd>Cancel / clear selection</dd>
