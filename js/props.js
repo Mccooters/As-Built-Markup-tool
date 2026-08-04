@@ -30,15 +30,18 @@ const Props = (() => {
   }
 
   /** Apply a patch to selection (undoable) or to defaults when nothing is selected. */
-  function apply(patch, alsoDefaults) {
+  function apply(patch, alsoDefaults, opts) {
     const sel = [...S().selection];
     if (sel.length) {
-      State.updateMarkups(sel, patch);
+      State.updateMarkups(sel, patch, opts);
       if (alsoDefaults) Object.assign(D(), patch);
     } else {
       Object.assign(D(), typeof patch === 'function' ? {} : patch);
     }
   }
+
+  /** Slider variant — bindLive takes the single undo snapshot per drag. */
+  const applyLive = patch => apply(patch, false, { noUndo: true });
 
   /** Live slider: one undo snapshot per drag interaction. */
   function bindLive(input, valEl, fn) {
@@ -79,6 +82,8 @@ const Props = (() => {
   /** True-scale width state for a markup-or-defaults object ('scale' unless explicitly fixed). */
   const pipeScaleMode = o => (o.widthMode || D().pipeWidthMode || 'scale') !== 'fixed';
 
+  const pipeWidthScaleOf = o => o.widthScale ?? D().pipeWidthScale ?? 1;
+
   function pipeWidthInfo(o) {
     const size = o.pipeSize || D().pipeSize, mat = o.material || D().material;
     const odIn = Symbols.pipeOdInches(size, mat);
@@ -86,8 +91,9 @@ const Props = (() => {
     const sc = State.scaleForPage(S().page);
     if (!pipeScaleMode(o)) return `Fixed width — un-tick to draw at the true ${odStr} OD.`;
     if (!sc) return `⚠ OD ${odStr} — set the sheet scale and this pipe will draw at its true width (fixed width until then).`;
-    const units = (odIn / 12) / sc.ftPerUnit;
-    return `OD ${odStr} → ${units.toFixed(1)} pt line at ${Units.scaleLabel(sc)}.`;
+    const ws = pipeWidthScaleOf(o);
+    const units = (odIn / 12) / sc.ftPerUnit * ws;
+    return `OD ${odStr} → ${units.toFixed(1)} pt line${ws !== 1 ? ` (×${ws} width boost)` : ''} at ${Units.scaleLabel(sc)}.`;
   }
 
   function pipeSizeOptions(current) {
@@ -103,6 +109,7 @@ const Props = (() => {
       <div class="prop-row"><label>Material</label><select id="p-pmat">${Symbols.MATERIALS.map(s => `<option${s === o.material ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       <div class="prop-row"><label>System</label><select id="p-psys">${Symbols.SYSTEMS.map(s => `<option${s === o.system ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pscalew"${pipeScaleMode(o) ? ' checked' : ''}> True-scale line width (actual OD)</label></div>
+      ${pipeScaleMode(o) ? `<div class="prop-row"><label>Width ×</label><input type="range" id="p-pwscale" min="0.5" max="6" step="0.25" value="${pipeWidthScaleOf(o)}"><span class="val" id="p-pwscale-v">${pipeWidthScaleOf(o)}</span></div>` : ''}
       <p class="prop-note" id="p-podinfo">${esc(pipeWidthInfo(o))}</p>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pcolor"${D().colorBySize ? ' checked' : ''}> Color by pipe size</label></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-portho"${D().orthoPipe ? ' checked' : ''}> Snap to 45° angles (Shift inverts)</label></div>
@@ -212,11 +219,11 @@ const Props = (() => {
       apply({ color: custom.value });
     });
 
-    if (has('#p-lw')) bindLive(has('#p-lw'), has('#p-lw-v'), v => apply({ lineWidth: v }));
-    if (has('#p-op')) bindLive(has('#p-op'), has('#p-op-v'), v => apply({ opacity: v }));
+    if (has('#p-lw')) bindLive(has('#p-lw'), has('#p-lw-v'), v => applyLive({ lineWidth: v }));
+    if (has('#p-op')) bindLive(has('#p-op'), has('#p-op-v'), v => applyLive({ opacity: v }));
     if (has('#p-hlw')) bindLive(has('#p-hlw'), has('#p-hlw-v'), v => { D().highlightWidth = v; });
-    if (has('#p-arc')) bindLive(has('#p-arc'), has('#p-arc-v'), v => apply({ arcSize: v }));
-    if (has('#p-ssize')) bindLive(has('#p-ssize'), has('#p-ssize-v'), v => apply({ size: v }));
+    if (has('#p-arc')) bindLive(has('#p-arc'), has('#p-arc-v'), v => applyLive({ arcSize: v }));
+    if (has('#p-ssize')) bindLive(has('#p-ssize'), has('#p-ssize-v'), v => applyLive({ size: v }));
     if (has('#p-ls')) has('#p-ls').addEventListener('change', e => apply({ lineStyle: e.target.value }));
     if (has('#p-fs')) has('#p-fs').addEventListener('change', e => apply({ fontSize: Math.max(6, parseFloat(e.target.value) || 12) }));
     if (has('#p-rot')) has('#p-rot').addEventListener('change', e => apply({ rotation: (parseFloat(e.target.value) || 0) % 360 }));
@@ -241,6 +248,13 @@ const Props = (() => {
     if (has('#p-psize')) has('#p-psize').addEventListener('change', e => pipePatch({ pipeSize: e.target.value }));
     if (has('#p-pmat')) has('#p-pmat').addEventListener('change', e => pipePatch({ material: e.target.value }));
     if (has('#p-psys')) has('#p-psys').addEventListener('change', e => pipePatch({ system: e.target.value }));
+    if (has('#p-pwscale')) bindLive(has('#p-pwscale'), has('#p-pwscale-v'), v => {
+      D().pipeWidthScale = v;
+      const sels = [...S().selection];
+      if (sels.length) State.updateMarkups(sels, m => m.type === 'pipe' ? { widthScale: v } : {}, { noUndo: true });
+      const info = has('#p-podinfo');
+      if (info) info.textContent = pipeWidthInfo(sels.length ? State.getMarkup(sels[0]) || D() : D());
+    });
     if (has('#p-pscalew')) has('#p-pscalew').addEventListener('change', e => {
       const wm = e.target.checked ? 'scale' : 'fixed';
       D().pipeWidthMode = wm;
@@ -261,7 +275,7 @@ const Props = (() => {
       if (!sel.length) D().fill = v;
       renderProps();
     });
-    if (has('#p-fop')) bindLive(has('#p-fop'), has('#p-fop-v'), v => apply({ fillOpacity: v }));
+    if (has('#p-fop')) bindLive(has('#p-fop'), has('#p-fop-v'), v => applyLive({ fillOpacity: v }));
 
     if (has('#p-scaledlg')) has('#p-scaledlg').addEventListener('click', () => App.scaleDialog());
     if (has('#p-preset')) has('#p-preset').addEventListener('change', e => {

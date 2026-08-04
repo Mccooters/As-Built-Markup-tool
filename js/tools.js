@@ -223,6 +223,7 @@ const Tools = (() => {
           color: d.colorBySize ? (Symbols.PIPE_COLORS[d.pipeSize] || d.color) : d.color,
           lineWidth: Math.max(d.lineWidth, 3),          // fallback when uncalibrated / fixed mode
           widthMode: d.pipeWidthMode || 'scale',        // 'scale' = draw at true OD width
+          widthScale: d.pipeWidthScale || 1,            // visibility multiplier on that width
           pipeSize: d.pipeSize, material: d.material, system: d.system,
           showLabel: d.showLabel, subject: `Pipe ${d.pipeSize}`,
         });

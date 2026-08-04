@@ -53,6 +53,7 @@ const State = (() => {
     material: 'Aluminum',
     system: 'Main Header',
     pipeWidthMode: 'scale',   // 'scale' = line width is the true OD at sheet scale
+    pipeWidthScale: 1,        // visibility multiplier on the true-scale width (proportions kept)
     orthoPipe: false,         // false = route at any angle; Shift snaps to 45°. true inverts.
     colorBySize: true,
     showLabel: true,
@@ -198,7 +199,9 @@ const State = (() => {
     const sc = scaleForPage(m.page);
     if (!sc || m.widthMode === 'fixed') return m.lineWidth || 3;
     const odIn = Symbols.pipeOdInches(m.pipeSize, m.material);
-    return Math.max((odIn / 12) / sc.ftPerUnit, 0.35);
+    // widthScale boosts visibility on small-scale sheets while keeping all
+    // pipe sizes proportional to each other
+    return Math.max((odIn / 12) / sc.ftPerUnit * (m.widthScale || 1), 0.35);
   }
 
   /** Length of a markup in feet (null if page not calibrated or not a length markup). */
