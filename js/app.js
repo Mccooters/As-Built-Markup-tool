@@ -243,6 +243,7 @@ const App = (() => {
         <dt><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></dt><dd>Undo / redo</dd>
         <dt><kbd>Ctrl+D</kbd></dt><dd>Duplicate selection</dd>
         <dt><kbd>Ctrl+S</kbd></dt><dd>Save project (.airmark)</dd>
+        <dt>Arrows</dt><dd>Pan the view — works mid pipe run (<kbd>Shift</kbd> = faster) · nudges the selection when using Select</dd>
         <dt>Wheel</dt><dd>Zoom at cursor · <kbd>+</kbd>/<kbd>−</kbd>/<kbd>0</kbd> zoom &amp; fit</dd>
         <dt><kbd>PgUp</kbd>/<kbd>PgDn</kbd></dt><dd>Previous / next page</dd>
       </dl>

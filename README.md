@@ -66,6 +66,7 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 | `Ctrl+D` | Duplicate |
 | `Ctrl+A` | Select all on page |
 | `Ctrl+S` | Save project |
+| Arrow keys | Pan the view — including mid pipe run (`Shift` = faster) · nudge the selection when on Select |
 | Mouse wheel | Zoom at cursor · `+` / `−` / `0` zoom in/out/fit |
 | `PgUp` / `PgDn` | Previous / next page |
 

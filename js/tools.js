@@ -10,7 +10,7 @@ const Tools = (() => {
   const TOOL_HINTS = {
     select: 'Click to select · drag to move · Shift-click adds · drag empty space for marquee · double-click text to edit · Del deletes',
     pan: 'Drag to pan. Mouse wheel zooms.',
-    pipe: 'Click points along the route — any angle · hold Shift to snap 45°/90° off the previous leg · double-click or Enter finishes · Backspace removes last point · Esc cancels',
+    pipe: 'Click points along the route — any angle · Shift snaps 45°/90° off the previous leg · arrow keys pan the view mid-run (Shift = faster) · double-click or Enter finishes · Backspace removes last point · Esc cancels',
     calibrate: 'Click two points a known distance apart — or click the Scale button in the status bar to type the sheet\'s stated ratio directly (1:100, 1/4" = 1\'-0"…).',
     mlength: 'Drag from one point to another to measure.',
     mpoly: 'Click points along the route · double-click or Enter finishes.',
@@ -32,6 +32,7 @@ const Tools = (() => {
   let creating = null;     // multi-click creation in progress
   let dragging = false;    // any active drag (suppress selection redraw churn)
   let hoverPt = null;      // last pointer position in page units
+  let lastClient = null;   // last pointer position in client px (survives view pans)
   let editingTextarea = null;
 
   const S = () => State.S;
@@ -545,8 +546,18 @@ const Tools = (() => {
 
   function onOverlayMove(e) {
     if (!S().pdf) return;
+    lastClient = { clientX: e.clientX, clientY: e.clientY };
     hoverPt = Viewer.toPage(e);
     if (creating) updatePolyPreview(hoverPt, e.shiftKey);
+    else if (S().tool === 'calibrate') calibratePreview(hoverPt);
+    else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
+  }
+
+  /** After the view pans under a stationary cursor, re-derive the hover point and previews. */
+  function refreshHover(shift) {
+    if (!lastClient) return;
+    hoverPt = Viewer.toPage(lastClient);
+    if (creating) updatePolyPreview(hoverPt, shift);
     else if (S().tool === 'calibrate') calibratePreview(hoverPt);
     else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
   }
@@ -605,15 +616,28 @@ const Tools = (() => {
         return;
       }
       case 'ArrowUp': case 'ArrowDown': case 'ArrowLeft': case 'ArrowRight': {
-        if (!sel.length || S().tool !== 'select') return;
-        const step = (e.shiftKey ? 10 : 1);
-        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
-        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        State.pushUndo();
-        for (const id of sel) { const m = State.getMarkup(id); if (m) moveBy(m, dx, dy); }
-        Render.refresh(sel);
-        State.emit('markups', { changed: sel });
-        State.touch();
+        if (!S().pdf) return;
+        // Select tool with a selection → nudge the markups (original behavior)
+        if (sel.length && S().tool === 'select') {
+          const step = (e.shiftKey ? 10 : 1);
+          const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+          const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+          State.pushUndo();
+          for (const id of sel) { const m = State.getMarkup(id); if (m) moveBy(m, dx, dy); }
+          Render.refresh(sel);
+          State.emit('markups', { changed: sel });
+          State.touch();
+          e.preventDefault();
+          return;
+        }
+        // otherwise pan the view — handy for navigating mid pipe run on big sheets
+        const vp = Viewer.el.viewport;
+        const step = e.shiftKey ? 320 : 90;
+        if (e.key === 'ArrowLeft') vp.scrollLeft -= step;
+        if (e.key === 'ArrowRight') vp.scrollLeft += step;
+        if (e.key === 'ArrowUp') vp.scrollTop -= step;
+        if (e.key === 'ArrowDown') vp.scrollTop += step;
+        refreshHover(e.shiftKey);
         e.preventDefault();
         return;
       }
