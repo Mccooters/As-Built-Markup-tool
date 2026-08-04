@@ -165,9 +165,15 @@ const Symbols = (() => {
   const stampById = id => STAMPS.find(s => s.id === id) || null;
 
   /* ---- pipe presets ---- */
-  const PIPE_SIZES = ['1/4"', '3/8"', '1/2"', '3/4"', '1"', '1-1/4"', '1-1/2"', '2"', '2-1/2"', '3"', '4"', '6"'];
+  const PIPE_SIZES_IN = ['1/4"', '3/8"', '1/2"', '3/4"', '1"', '1-1/4"', '1-1/2"', '2"', '2-1/2"', '3"', '4"', '6"'];
+  /** Metric tube systems (Transair, AIRnet, Infinity…): the designation IS the OD in mm. */
+  const PIPE_SIZES_MM = ['16mm', '20mm', '25mm', '32mm', '40mm', '50mm', '63mm', '76mm', '100mm', '110mm', '160mm'];
+  /** Metric threaded steel (EN 10255 / ISO 65). */
+  const PIPE_SIZES_DN = ['DN15', 'DN20', 'DN25', 'DN32', 'DN40', 'DN50', 'DN65', 'DN80', 'DN100', 'DN150'];
+  /** Combined, in takeoff sort order. */
+  const PIPE_SIZES = [...PIPE_SIZES_IN, ...PIPE_SIZES_MM, ...PIPE_SIZES_DN];
 
-  /** Nominal size (inches) per size label. */
+  /** Nominal size (inches) per imperial size label. */
   const PIPE_NOMINAL = {
     '1/4"': 0.25, '3/8"': 0.375, '1/2"': 0.5, '3/4"': 0.75, '1"': 1,
     '1-1/4"': 1.25, '1-1/2"': 1.5, '2"': 2, '2-1/2"': 2.5, '3"': 3, '4"': 4, '6"': 6,
@@ -178,16 +184,26 @@ const Symbols = (() => {
     '1-1/4"': 1.660, '1-1/2"': 1.900, '2"': 2.375, '2-1/2"': 2.875,
     '3"': 3.500, '4"': 4.500, '6"': 6.625,
   };
+  /** DN steel outside diameters, mm (EN 10255). */
+  const DN_OD_MM = {
+    DN15: 21.3, DN20: 26.9, DN25: 33.7, DN32: 42.4, DN40: 48.3,
+    DN50: 60.3, DN65: 76.1, DN80: 88.9, DN100: 114.3, DN150: 168.3,
+  };
 
   /**
-   * Actual outside diameter (inches) for a nominal size + material, used to
-   * draw pipe runs at true scale:
-   *  - Aluminum tube systems (Transair/RapidAir style): OD ≈ nominal (25 mm ≈ 1")
-   *  - Copper CTS: OD = nominal + 1/8"
-   *  - Steel / galvanized / stainless / poly: IPS schedule OD
+   * Actual outside diameter (inches) for a size + material, used to draw pipe
+   * runs at true scale:
+   *  - "NNmm" metric tube: OD = the designation itself
+   *  - "DNnn" steel: EN 10255 OD
+   *  - Imperial + Aluminum tube systems: OD ≈ nominal (25 mm ≈ 1")
+   *  - Imperial + Copper CTS: OD = nominal + 1/8"
+   *  - Imperial + steel / galvanized / stainless / poly: IPS schedule OD
    *  - Rubber hose: rough OD with wall
    */
   function pipeOdInches(size, material) {
+    if (DN_OD_MM[size] != null) return DN_OD_MM[size] / 25.4;
+    const mm = /^([\d.]+)\s*mm$/i.exec(size || '');
+    if (mm) return parseFloat(mm[1]) / 25.4;
     const nom = PIPE_NOMINAL[size];
     if (nom == null) return IPS_OD[size] || 1;
     if (material === 'Aluminum') return nom;
@@ -195,10 +211,27 @@ const Symbols = (() => {
     if (material === 'Rubber Hose') return nom + 0.25;
     return IPS_OD[size] || nom;
   }
+
+  /** Human-readable OD for the properties panel — mm for metric families, inches otherwise. */
+  function pipeOdLabel(size, material) {
+    const odIn = pipeOdInches(size, material);
+    if (DN_OD_MM[size] != null || /^[\d.]+\s*mm$/i.test(size || '')) {
+      return `${(odIn * 25.4).toFixed(1).replace(/\.0$/, '')} mm`;
+    }
+    return `${odIn}"`;
+  }
   const PIPE_COLORS = {
     '1/4"': '#8d6e63', '3/8"': '#c2185b', '1/2"': '#e53935', '3/4"': '#f57c00',
     '1"': '#c9a212', '1-1/4"': '#43a047', '1-1/2"': '#00897b', '2"': '#1e88e5',
     '2-1/2"': '#5e35b1', '3"': '#d81b60', '4"': '#6d4c41', '6"': '#3949ab',
+    // metric tube — hues follow the rough imperial equivalents
+    '16mm': '#e53935', '20mm': '#f57c00', '25mm': '#c9a212', '32mm': '#43a047',
+    '40mm': '#00897b', '50mm': '#1e88e5', '63mm': '#5e35b1', '76mm': '#d81b60',
+    '100mm': '#6d4c41', '110mm': '#3949ab', '160mm': '#00695c',
+    // DN steel
+    DN15: '#e53935', DN20: '#f57c00', DN25: '#c9a212', DN32: '#43a047',
+    DN40: '#00897b', DN50: '#1e88e5', DN65: '#8e24aa', DN80: '#d81b60',
+    DN100: '#6d4c41', DN150: '#3949ab',
   };
   const MATERIALS = ['Aluminum', 'Copper L', 'Black Iron', 'Galvanized', 'Stainless', 'HDPE/Poly', 'Rubber Hose'];
   const SYSTEMS = ['Main Header', 'Branch', 'Drop', 'Condensate', 'Vacuum', 'Nitrogen'];
@@ -220,5 +253,10 @@ const Symbols = (() => {
     }
   }
 
-  return { SYMBOLS, STAMPS, byId, stampById, PIPE_SIZES, PIPE_NOMINAL, pipeOdInches, PIPE_COLORS, MATERIALS, SYSTEMS, COLORS, COUNT_SHAPES, countShapeSvg };
+  return {
+    SYMBOLS, STAMPS, byId, stampById,
+    PIPE_SIZES, PIPE_SIZES_IN, PIPE_SIZES_MM, PIPE_SIZES_DN,
+    PIPE_NOMINAL, pipeOdInches, pipeOdLabel, PIPE_COLORS,
+    MATERIALS, SYSTEMS, COLORS, COUNT_SHAPES, countShapeSvg,
+  };
 })();

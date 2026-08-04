@@ -80,17 +80,26 @@ const Props = (() => {
   const pipeScaleMode = o => (o.widthMode || D().pipeWidthMode || 'scale') !== 'fixed';
 
   function pipeWidthInfo(o) {
-    const od = Symbols.pipeOdInches(o.pipeSize || D().pipeSize, o.material || D().material);
+    const size = o.pipeSize || D().pipeSize, mat = o.material || D().material;
+    const odIn = Symbols.pipeOdInches(size, mat);
+    const odStr = Symbols.pipeOdLabel(size, mat);
     const sc = State.scaleForPage(S().page);
-    if (!pipeScaleMode(o)) return `Fixed width — un-tick to draw at the true ${od}" OD.`;
-    if (!sc) return `⚠ OD ${od}" — set the sheet scale and this pipe will draw at its true width (fixed width until then).`;
-    const units = (od / 12) / sc.ftPerUnit;
-    return `OD ${od}" → ${units.toFixed(1)} pt line at ${Units.scaleLabel(sc)}.`;
+    if (!pipeScaleMode(o)) return `Fixed width — un-tick to draw at the true ${odStr} OD.`;
+    if (!sc) return `⚠ OD ${odStr} — set the sheet scale and this pipe will draw at its true width (fixed width until then).`;
+    const units = (odIn / 12) / sc.ftPerUnit;
+    return `OD ${odStr} → ${units.toFixed(1)} pt line at ${Units.scaleLabel(sc)}.`;
+  }
+
+  function pipeSizeOptions(current) {
+    const opts = arr => arr.map(s => `<option${s === current ? ' selected' : ''}>${esc(s)}</option>`).join('');
+    return `<optgroup label="Imperial (NPS)">${opts(Symbols.PIPE_SIZES_IN)}</optgroup>` +
+      `<optgroup label="Metric tube (OD mm)">${opts(Symbols.PIPE_SIZES_MM)}</optgroup>` +
+      `<optgroup label="Metric steel (DN)">${opts(Symbols.PIPE_SIZES_DN)}</optgroup>`;
   }
 
   function pipeRows(o) {
     return `<div class="prop-section"><div class="prop-cap">Pipe</div>
-      <div class="prop-row"><label>Size</label><select id="p-psize">${Symbols.PIPE_SIZES.map(s => `<option${s === o.pipeSize ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
+      <div class="prop-row"><label>Size</label><select id="p-psize">${pipeSizeOptions(o.pipeSize)}</select></div>
       <div class="prop-row"><label>Material</label><select id="p-pmat">${Symbols.MATERIALS.map(s => `<option${s === o.material ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       <div class="prop-row"><label>System</label><select id="p-psys">${Symbols.SYSTEMS.map(s => `<option${s === o.system ? ' selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-pscalew"${pipeScaleMode(o) ? ' checked' : ''}> True-scale line width (actual OD)</label></div>
