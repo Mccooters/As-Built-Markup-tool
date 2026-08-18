@@ -311,6 +311,63 @@ const Render = (() => {
       g.appendChild(t);
     },
 
+    photo(g, m) {
+      const src = State.S.images[m.imgId];
+      if (!src) {
+        g.appendChild(svg('rect', { x: m.x, y: m.y, width: m.w, height: m.h, fill: '#eeeeee', stroke: m.color, 'stroke-width': 1.5 }));
+        g.appendChild(labelEl(m.x + m.w / 2, m.y + m.h / 2, 'missing photo', m, { fontSize: 11 }));
+        return;
+      }
+      const img = svg('image', {
+        x: m.x, y: m.y, width: m.w, height: m.h,
+        preserveAspectRatio: 'xMidYMid slice',
+      });
+      img.setAttribute('href', src);
+      img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', src); // rasterizer compatibility
+      g.appendChild(img);
+      g.appendChild(svg('rect', {
+        x: m.x, y: m.y, width: m.w, height: m.h,
+        fill: 'none', stroke: m.color, 'stroke-width': m.lineWidth || 2,
+      }));
+      if (m.caption) {
+        const fs = m.fontSize || 11;
+        g.appendChild(svg('rect', {
+          x: m.x, y: m.y + m.h - fs * 1.6, width: m.w, height: fs * 1.6,
+          fill: '#ffffff', 'fill-opacity': 0.85, stroke: 'none',
+        }));
+        const t = svg('text', {
+          x: m.x + fs * 0.4, y: m.y + m.h - fs * 0.45,
+          'font-family': 'Arial, Helvetica, sans-serif', 'font-size': fs, fill: '#111111',
+        });
+        t.textContent = m.caption;
+        g.appendChild(t);
+      }
+    },
+
+    penet(g, m) {
+      const s = m.size || 22;
+      const r = s / 2;
+      const k = Math.max(1.6, s * 0.08);
+      const inner = svg('g');
+      inner.setAttribute('transform', `translate(${m.x} ${m.y})`);
+      // white backing + circle + X + quadrant ticks = core-drill mark
+      inner.innerHTML =
+        `<circle r="${r * 1.05}" fill="#ffffff" fill-opacity="0.75" stroke="none"/>` +
+        `<circle r="${r}" fill="none" stroke="${m.color}" stroke-width="${k}"/>` +
+        `<path d="M${-r * 0.7} ${-r * 0.7}L${r * 0.7} ${r * 0.7}M${r * 0.7} ${-r * 0.7}L${-r * 0.7} ${r * 0.7}" stroke="${m.color}" stroke-width="${k}" stroke-linecap="round"/>` +
+        `<path d="M0 ${-r * 1.45}V${-r}M0 ${r}V${r * 1.45}M${-r * 1.45} 0H${-r}M${r} 0H${r * 1.45}" stroke="${m.color}" stroke-width="${k}" stroke-linecap="round"/>`;
+      g.appendChild(inner);
+      if (m.showLabel !== false) {
+        const fs = Math.max(8, s * 0.42);
+        g.appendChild(labelEl(m.x, m.y + r * 1.5 + fs, `Ø${m.penSize || '?'}`, m, { fontSize: fs, bold: true }));
+        const sub = `${m.penType || ''}${m.penFire ? ' · FIRE' : ''}`.trim();
+        if (sub) {
+          g.appendChild(labelEl(m.x, m.y + r * 1.5 + fs * 2.15, sub, m,
+            { fontSize: fs * 0.78, bold: !!m.penFire, color: m.penFire ? '#e02020' : m.color }));
+        }
+      }
+    },
+
     count(g, m) {
       const grp = State.countGroup(m.groupId);
       const color = grp ? grp.color : m.color;

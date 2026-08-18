@@ -27,6 +27,8 @@ const Tools = (() => {
     text: 'Click (or drag a box) then type. Click outside or Ctrl+Enter to commit.',
     callout: 'Press at the point you want the arrow, drag to where the note box goes, release, then type.',
     symbol: 'Click to place the selected symbol · R rotates · pick a different one in the Symbols tab.',
+    penet: 'Click where the pipe passes through — marks the core/sleeve with its required hole size. Set Ø size, wall/floor and fire rating in the panel; the Takeoff tab totals them into a core-drill schedule.',
+    photo: 'Pick an image, then click the drawing to pin it (drag-dropping an image file works too). Drag corners to resize · double-click to view full size.',
   };
 
   let creating = null;     // multi-click creation in progress
@@ -357,6 +359,99 @@ const Tools = (() => {
     });
   }
 
+  /* ================= penetrations ================= */
+
+  function placePenetration(p) {
+    const d = D();
+    const created = State.addMarkup({
+      type: 'penet', page: S().page, x: p.x, y: p.y,
+      size: Math.max(14, Math.round(d.symbolSize * 0.85)),
+      color: d.color, lineWidth: 2, fontSize: d.fontSize,
+      penSize: d.penSize, penType: d.penType, penFire: d.penFire,
+      showLabel: true,
+      subject: `Penetration Ø${d.penSize}`,
+    });
+    State.select([created.id]);
+  }
+
+  /* ================= photos ================= */
+
+  let armedPhoto = null;   // { imgId, aspect } waiting for a placement click
+
+  function importPhotoFile(file, cb) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1600;                       // keep autosave/projects sane
+      const sc = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * sc));
+      c.height = Math.max(1, Math.round(img.naturalHeight * sc));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      cb(c.toDataURL('image/jpeg', 0.82), c.width / c.height);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); App.toast('Could not read that image file.', 'err'); };
+    img.src = url;
+  }
+
+  function armPhoto(file) {
+    importPhotoFile(file, (dataUrl, aspect) => {
+      armedPhoto = { imgId: State.addImage(dataUrl), aspect };
+      State.setTool('photo');
+      App.toast('Click the drawing to place the photo.', 'ok', 3500);
+      if (hoverPt) photoGhost(hoverPt);
+    });
+  }
+
+  function photoMarkupAt(p, ghost) {
+    const d = D();
+    const w = d.photoWidth || 220;
+    const h = w / (armedPhoto ? armedPhoto.aspect : 4 / 3);
+    return {
+      type: 'photo', page: S().page,
+      x: p.x - w / 2, y: p.y - h / 2, w, h,
+      imgId: armedPhoto ? armedPhoto.imgId : null,
+      color: d.color, lineWidth: 2, fontSize: 11,
+      caption: '', subject: 'Photo',
+      opacity: ghost ? 0.6 : 1,
+    };
+  }
+
+  function photoGhost(p) {
+    if (!armedPhoto) { clearPreview(); return; }
+    const layer = Viewer.el.preview;
+    layer.innerHTML = '';
+    layer.appendChild(Render.buildMarkupEl(photoMarkupAt(p, true)));
+  }
+
+  function placePhoto(p) {
+    if (!armedPhoto) {
+      document.getElementById('filePhoto').click();
+      return;
+    }
+    const m = photoMarkupAt(p, false);
+    delete m.opacity;
+    armedPhoto = null;
+    clearPreview();
+    const created = State.addMarkup(m);
+    State.setTool('select');
+    State.select([created.id]);
+  }
+
+  /** Drag-dropped image file → import and place centered on the drop point. */
+  function placeDroppedPhoto(file, p) {
+    importPhotoFile(file, (dataUrl, aspect) => {
+      armedPhoto = { imgId: State.addImage(dataUrl), aspect };
+      const m = photoMarkupAt(p, false);
+      delete m.opacity;
+      armedPhoto = null;
+      const created = State.addMarkup(m);
+      State.setTool('select');
+      State.select([created.id]);
+    });
+  }
+
   function placeText(p) {
     const d = D();
     const m = State.addMarkup({
@@ -542,6 +637,8 @@ const Tools = (() => {
     if (tool === 'symbol') { placeSymbol(p); return; }
     if (tool === 'count') { placeCount(p); return; }
     if (tool === 'text') { placeText(p); return; }
+    if (tool === 'penet') { placePenetration(p); return; }
+    if (tool === 'photo') { placePhoto(p); return; }
   }
 
   function onOverlayMove(e) {
@@ -551,6 +648,7 @@ const Tools = (() => {
     if (creating) updatePolyPreview(hoverPt, e.shiftKey);
     else if (S().tool === 'calibrate') calibratePreview(hoverPt);
     else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
+    else if (S().tool === 'photo' && !dragging) photoGhost(hoverPt);
   }
 
   /** After the view pans under a stationary cursor, re-derive the hover point and previews. */
@@ -560,6 +658,7 @@ const Tools = (() => {
     if (creating) updatePolyPreview(hoverPt, shift);
     else if (S().tool === 'calibrate') calibratePreview(hoverPt);
     else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
+    else if (S().tool === 'photo' && !dragging) photoGhost(hoverPt);
   }
 
   function onOverlayDblClick(e) {
@@ -568,6 +667,7 @@ const Tools = (() => {
       if (g) {
         const m = State.getMarkup(g.dataset.id);
         if (m && (m.type === 'text' || m.type === 'callout')) { State.select([m.id]); editText(m, false); }
+        else if (m && m.type === 'photo') { State.select([m.id]); App.photoLightbox(m); }
         else if (m) Props.focusSubject();
       }
       return;
@@ -674,6 +774,13 @@ const Tools = (() => {
     });
     window.addEventListener('keydown', onKeyDown);
 
+    // photo tool: activating it with nothing armed opens the picker
+    const photoInput = document.getElementById('filePhoto');
+    photoInput.addEventListener('change', e => {
+      if (e.target.files.length) armPhoto(e.target.files[0]);
+      e.target.value = '';
+    });
+
     State.on('tool', () => {
       cancelCreation();
       calPts = [];
@@ -681,9 +788,11 @@ const Tools = (() => {
       clearPreview();
       toolCursor();
       if (S().tool !== 'select') State.clearSelection();
+      if (S().tool === 'photo' && !armedPhoto && S().pdf) photoInput.click();
+      if (S().tool !== 'photo') armedPhoto = null;
     });
     toolCursor();
   }
 
-  return { init, TOOL_HINTS, cancelCreation, editText, closeTextEditor, isDragging: () => dragging };
+  return { init, TOOL_HINTS, cancelCreation, editText, closeTextEditor, isDragging: () => dragging, placeDroppedPhoto };
 })();

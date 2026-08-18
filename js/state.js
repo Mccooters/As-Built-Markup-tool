@@ -23,6 +23,7 @@ const State = (() => {
     countGroups: [],         // {id, name, shape, color}
     pageScales: {},          // pageNum -> { ftPerUnit }
     defaultScale: null,      // { ftPerUnit } applied when page has none
+    images: {},              // imgId -> data URL (downscaled site photos)
 
     // ui
     tool: 'select',
@@ -56,6 +57,10 @@ const State = (() => {
     pipeWidthScale: 1,        // visibility multiplier on the true-scale width (proportions kept)
     orthoPipe: false,         // false = route at any angle; Shift snaps to 45°. true inverts.
     colorBySize: true,
+    penSize: '2"',            // penetration core/hole diameter
+    penType: 'Wall',          // Wall | Floor | Roof | Ceiling
+    penFire: false,           // fire-rated assembly → firestop required
+    photoWidth: 220,          // default placed photo width, page units
     showLabel: true,
     highlightColor: '#ffe419',
     highlightWidth: 14,
@@ -237,8 +242,15 @@ const State = (() => {
   /* ---- document lifecycle ---- */
   function resetDoc() {
     S.markups = []; S.countGroups = []; S.pageScales = {}; S.defaultScale = null;
+    S.images = {};
     S.selection.clear(); S.idCounter = 1; S.dirty = false;
     clearHistory();
+  }
+
+  function addImage(dataUrl) {
+    const id = 'img' + (S.idCounter++);
+    S.images[id] = dataUrl;
+    return id;
   }
 
   return {
@@ -248,6 +260,6 @@ const State = (() => {
     select, clearSelection, selectedMarkups, setTool,
     scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
-    resetDoc, newId, touch,
+    resetDoc, newId, touch, addImage,
   };
 })();

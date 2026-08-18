@@ -11,12 +11,18 @@ const Project = (() => {
 
   function serialize(includePdf) {
     const S = State.S;
+    // carry only images that a photo markup still references
+    const usedImages = {};
+    for (const m of S.markups) {
+      if (m.type === 'photo' && m.imgId && S.images[m.imgId]) usedImages[m.imgId] = S.images[m.imgId];
+    }
     const data = {
       app: 'AirMark', version: 1, savedAt: new Date().toISOString(),
       fileName: S.fileName, fingerprint: S.fingerprint,
       unitFormat: S.unitFormat, author: S.author, idCounter: S.idCounter,
       pageScales: S.pageScales, defaultScale: S.defaultScale,
       countGroups: S.countGroups, markups: S.markups,
+      images: usedImages,
       defaults: S.defaults, activeCountGroup: S.activeCountGroup,
     };
     if (includePdf && S.pdfBytes && S.pdfBytes.length < EMBED_LIMIT) {
@@ -29,6 +35,7 @@ const Project = (() => {
     const S = State.S;
     S.markups = data.markups || [];
     S.countGroups = data.countGroups || [];
+    S.images = Object.assign({}, S.images, data.images || {});
     S.pageScales = data.pageScales || {};
     S.defaultScale = data.defaultScale || null;
     S.activeCountGroup = data.activeCountGroup || (S.countGroups[0] && S.countGroups[0].id) || null;

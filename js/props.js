@@ -103,6 +103,20 @@ const Props = (() => {
       `<optgroup label="Metric steel (DN)">${opts(Symbols.PIPE_SIZES_DN)}</optgroup>`;
   }
 
+  const CORE_SIZES = ['1"', '1-1/2"', '2"', '2-1/2"', '3"', '3-1/2"', '4"', '4-1/2"', '5"', '6"', '8"', '25mm', '32mm', '50mm', '65mm', '80mm', '100mm', '150mm'];
+  const PEN_TYPES = ['Wall', 'Floor', 'Roof', 'Ceiling', 'Beam'];
+
+  function penetRows(o) {
+    return `<div class="prop-section"><div class="prop-cap">Penetration</div>
+      <div class="prop-row"><label>Hole Ø</label>
+        <input type="text" id="p-pensize" value="${esc(o.penSize ?? D().penSize)}" list="core-sizes" placeholder='e.g. 2-1/2"'>
+        <datalist id="core-sizes">${CORE_SIZES.map(s => `<option value="${esc(s)}">`).join('')}</datalist></div>
+      <div class="prop-row"><label>Through</label><select id="p-pentype">${PEN_TYPES.map(s => `<option${s === (o.penType ?? D().penType) ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-penfire"${(o.penFire ?? D().penFire) ? ' checked' : ''}> Fire-rated (firestop required)</label></div>
+      <p class="prop-note">Rule of thumb: core Ø = pipe OD + 1" clearance (more with insulation or a sleeve). The Takeoff tab totals penetrations into a core-drill schedule.</p>
+    </div>`;
+  }
+
   function pipeRows(o) {
     return `<div class="prop-section"><div class="prop-cap">Pipe</div>
       <div class="prop-row"><label>Size</label><select id="p-psize">${pipeSizeOptions(o.pipeSize)}</select></div>
@@ -125,6 +139,12 @@ const Props = (() => {
     if (t === 'pipe') {
       h += pipeRows(d) + commonRows(d, { noColor: d.colorBySize, noWidth: pipeScaleMode(d) });
       if (d.colorBySize) h += `<p class="prop-note">Color follows pipe size (see legend in Takeoff tab). Un-tick “Color by pipe size” to pick your own.</p>`;
+    } else if (t === 'penet') {
+      h += penetRows({}) + `<div class="prop-section"><div class="prop-cap">Color</div>${swatchesHtml(d.color)}</div>`;
+    } else if (t === 'photo') {
+      h += `<p class="prop-note">Pick an image, then click the drawing to pin it — or simply drag an image file onto the sheet. Photos are downscaled for storage and flatten into the exported PDF.</p>
+        <div style="margin:8px 0"><button class="mini-btn primary" id="p-photopick">Choose image…</button></div>
+        <div class="prop-row"><label>Placed width</label><input type="range" id="p-photow" min="80" max="600" step="10" value="${d.photoWidth}"><span class="val" id="p-photow-v">${d.photoWidth}</span></div>`;
     } else if (t === 'count') {
       h += countGroupsHtml();
     } else if (t === 'calibrate') {
@@ -176,14 +196,21 @@ const Props = (() => {
     const hasPipe = types.has('pipe');
     if (hasPipe) h += pipeRows(first);
 
+    if (types.has('penet')) h += penetRows(first);
+
+    if (types.has('photo') && sel.length === 1) {
+      h += `<div class="prop-row"><label>Caption</label><input type="text" id="p-caption" value="${esc(first.caption)}" placeholder="e.g. Drop at CNC-102"></div>
+        <div class="prop-row"><label></label><button class="mini-btn" id="p-photoview">View full size</button></div>`;
+    }
+
     const textish = types.has('text') || types.has('callout');
     if (textish) h += `<div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${first.fontSize || 12}"></div>`;
 
-    const symbolish = types.has('symbol') || types.has('stamp');
+    const symbolish = types.has('symbol') || types.has('stamp') || types.has('penet');
     if (symbolish) {
       h += `<div class="prop-row"><label>Size</label><input type="range" id="p-ssize" min="10" max="90" step="1" value="${first.size || 26}"><span class="val" id="p-ssize-v">${first.size || 26}</span></div>`;
-      h += `<div class="prop-row"><label>Rotation</label><input type="number" id="p-rot" min="0" max="359" step="15" value="${first.rotation || 0}"> <span class="val">deg</span></div>`;
-      if (types.has('symbol')) h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-slabel"${first.showLabel !== false ? ' checked' : ''}> Show label</label></div>`;
+      if (!types.has('penet')) h += `<div class="prop-row"><label>Rotation</label><input type="number" id="p-rot" min="0" max="359" step="15" value="${first.rotation || 0}"> <span class="val">deg</span></div>`;
+      if (types.has('symbol') || types.has('penet')) h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-slabel"${first.showLabel !== false ? ' checked' : ''}> Show label</label></div>`;
     }
 
     h += commonRows(first, { noColor: hasPipe && D().colorBySize, noWidth: hasPipe && pipeScaleMode(first) });
@@ -268,6 +295,35 @@ const Props = (() => {
       else renderProps();
     });
     if (has('#p-portho')) has('#p-portho').addEventListener('change', e => { D().orthoPipe = e.target.checked; });
+
+    // penetration fields — sticky: also update tool defaults
+    const penPatch = patch => {
+      const sels = [...S().selection];
+      if (sels.length) {
+        State.updateMarkups(sels, m => {
+          if (m.type !== 'penet') return {};
+          const p = { ...patch };
+          if (p.penSize) p.subject = `Penetration Ø${p.penSize}`;
+          return p;
+        });
+      }
+      Object.assign(D(), patch);
+    };
+    if (has('#p-pensize')) has('#p-pensize').addEventListener('change', e => {
+      const v = e.target.value.trim() || D().penSize;
+      penPatch({ penSize: v });
+    });
+    if (has('#p-pentype')) has('#p-pentype').addEventListener('change', e => penPatch({ penType: e.target.value }));
+    if (has('#p-penfire')) has('#p-penfire').addEventListener('change', e => penPatch({ penFire: e.target.checked }));
+
+    // photo fields
+    if (has('#p-caption')) has('#p-caption').addEventListener('change', e => apply({ caption: e.target.value }));
+    if (has('#p-photoview')) has('#p-photoview').addEventListener('click', () => {
+      const m = State.selectedMarkups().find(x => x.type === 'photo');
+      if (m) App.photoLightbox(m);
+    });
+    if (has('#p-photopick')) has('#p-photopick').addEventListener('click', () => document.getElementById('filePhoto').click());
+    if (has('#p-photow')) bindLive(has('#p-photow'), has('#p-photow-v'), v => { D().photoWidth = v; });
 
     if (has('#p-fill')) has('#p-fill').addEventListener('change', e => {
       const v = e.target.value === 'none' ? 'none' : (sel[0] ? sel[0].color : D().color);
@@ -373,6 +429,13 @@ const Props = (() => {
       for (const r of to.symbols) h += `<tr><td>${esc(r.name)}</td><td class="num">${r.count}</td></tr>`;
       h += `</table>`;
     }
+    if (to.penetrations.length) {
+      h += `<div class="prop-cap">Penetration schedule</div><table class="to-table"><tr><th>Core Ø / through</th><th style="text-align:right">Qty</th></tr>`;
+      for (const r of to.penetrations) {
+        h += `<tr><td>Ø${esc(r.size)} ${esc(r.type)}${r.fire ? ' <span style="color:#e05555;font-weight:700">FIRE</span>' : ''}</td><td class="num">${r.count}</td></tr>`;
+      }
+      h += `</table>`;
+    }
     if (to.counts.length) {
       h += `<div class="prop-cap">Counts</div><table class="to-table"><tr><th>Group</th><th style="text-align:right">Qty</th></tr>`;
       for (const r of to.counts) h += `<tr><td><span class="to-chip" style="background:${r.color};border-radius:50%"></span>${esc(r.name)}</td><td class="num">${r.count}</td></tr>`;
@@ -403,6 +466,7 @@ const Props = (() => {
       mpoly: 'Polylength', marea: 'Area', count: 'Count', line: 'Line', arrow: 'Arrow',
       polyline: 'Polyline', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud',
       pen: 'Pen', highlight: 'Highlighter', text: 'Text', callout: 'Callout', symbol: 'Symbol',
+      penet: 'Penetration', photo: 'Photo',
     })[t] || t;
   }
   function typeName(t) {
@@ -410,6 +474,7 @@ const Props = (() => {
       pipe: 'Pipe run', mlength: 'Length measurement', mpoly: 'Polylength', marea: 'Area',
       cloud: 'Revision cloud', highlight: 'Highlight', symbol: 'Symbol', stamp: 'Stamp',
       count: 'Count mark', callout: 'Callout', text: 'Text',
+      penet: 'Penetration', photo: 'Photo',
     })[t] || (t[0].toUpperCase() + t.slice(1));
   }
 

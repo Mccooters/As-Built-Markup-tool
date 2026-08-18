@@ -192,6 +192,26 @@ const App = (() => {
     });
   }
 
+  function photoLightbox(m) {
+    const src = State.S.images[m.imgId];
+    if (!src) { toast('This photo\'s image data is missing.', 'warn'); return; }
+    modal(`
+      <h3>${m.caption ? m.caption.replace(/</g, '&lt;') : 'Site photo'}</h3>
+      <img src="${src}" style="max-width:100%;max-height:62vh;display:block;border-radius:6px;margin:0 auto">
+      <div class="form-row" style="margin-top:10px"><label>Caption</label>
+        <input type="text" id="ph-cap" value="${(m.caption || '').replace(/"/g, '&quot;')}" placeholder="e.g. Drop at CNC-102, installed 8/4"></div>
+      <div class="modal-actions"><button class="mini-btn primary" id="ph-ok">Done</button></div>`,
+      (box, close) => {
+        const finish = () => {
+          const cap = $('ph-cap').value.trim();
+          if (cap !== (m.caption || '')) State.updateMarkups([m.id], { caption: cap });
+          close();
+        };
+        $('ph-ok').onclick = finish;
+        $('ph-cap').addEventListener('keydown', e => { if (e.key === 'Enter') finish(); });
+      });
+  }
+
   function countGroupDialog() {
     const used = State.S.countGroups.length;
     const color = Symbols.COLORS[used % (Symbols.COLORS.length - 1)];
@@ -408,7 +428,17 @@ const App = (() => {
       e.preventDefault();
       depth = 0;
       wrap.classList.remove('dragging');
-      if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+      if (!e.dataTransfer.files.length) return;
+      // image dropped on an open drawing → pin it as a photo at the drop point
+      const img = [...e.dataTransfer.files].find(f => /^image\//.test(f.type));
+      if (img && State.S.pdf) {
+        const p = Viewer.toPage(e);
+        p.x = Math.max(0, Math.min(State.S.pageW, p.x));
+        p.y = Math.max(0, Math.min(State.S.pageH, p.y));
+        Tools.placeDroppedPhoto(img, p);
+        return;
+      }
+      handleFiles(e.dataTransfer.files);
     });
   }
 
@@ -489,6 +519,6 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    download, savedIndicator, showTab: (...a) => Props.showTab(...a),
+    photoLightbox, download, savedIndicator, showTab: (...a) => Props.showTab(...a),
   };
 })();

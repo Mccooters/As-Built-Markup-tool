@@ -152,8 +152,13 @@ const Geo = (() => {
       case 'line': case 'arrow': case 'polyline': case 'pen': case 'highlight':
       case 'mlength': case 'mpoly': case 'marea':
         return inflate(boundsOfPts(m.pts), (m.lineWidth || 2) + 4);
-      case 'rect': case 'ellipse': case 'cloud': case 'text':
+      case 'rect': case 'ellipse': case 'cloud': case 'text': case 'photo':
         return inflate({ x: m.x, y: m.y, w: m.w, h: m.h }, (m.lineWidth || 2) + 4);
+      case 'penet': {
+        const r = (m.size || 22) / 2;
+        // marker + the Ø-size / type labels below it
+        return { x: m.x - r * 2.2, y: m.y - r * 1.6, w: r * 4.4, h: r * 4.4 };
+      }
       case 'callout': {
         const b = boundsOfPts([
           { x: m.x, y: m.y }, { x: m.x + m.w, y: m.y + m.h }, m.anchor,

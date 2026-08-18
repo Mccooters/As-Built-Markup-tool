@@ -16,12 +16,14 @@ const MarkupList = (() => {
     if (m.type === 'pipe') label = [m.pipeSize, m.material, m.system].filter(Boolean).join(' · ');
     else if (m.type === 'text' || m.type === 'callout') label = (m.text || '').replace(/\n/g, ' ');
     else if (m.type === 'count') { const g = State.countGroup(m.groupId); label = g ? g.name : ''; }
+    else if (m.type === 'penet') label = [`Ø${m.penSize || '?'}`, m.penType, m.penFire ? 'FIRE-RATED' : ''].filter(Boolean).join(' · ');
+    else if (m.type === 'photo') label = m.caption || '';
     if (m.comment) label = label ? `${label} — ${m.comment}` : m.comment;
     return {
       id: m.id, idx, page: m.page,
       subject: m.subject || m.type,
       label,
-      measure: meas,
+      measure: m.type === 'penet' ? `Ø${m.penSize || '?'}` : meas,
       measureVal: State.lengthFt(m) ?? State.areaFt(m) ?? -1,
       color: m.color,
       author: m.author || '',
@@ -99,6 +101,7 @@ const MarkupList = (() => {
     const pipes = new Map();     // key size|material
     const symbols = new Map();
     const counts = new Map();
+    const penetrations = new Map();  // key size|type|fire
     const otherMeasures = [];
     let pipeTotalFt = 0, pipeTotalKnown = true, pipeRunCount = 0;
 
@@ -121,6 +124,11 @@ const MarkupList = (() => {
       } else if (m.type === 'stamp') {
         const name = `Stamp: ${m.text}`;
         symbols.set(name, (symbols.get(name) || 0) + 1);
+      } else if (m.type === 'penet') {
+        const key = `${m.penSize || '?'}|${m.penType || ''}|${m.penFire ? 1 : 0}`;
+        const cur = penetrations.get(key) || { size: m.penSize || '?', type: m.penType || '', fire: !!m.penFire, count: 0 };
+        cur.count++;
+        penetrations.set(key, cur);
       } else if (m.type === 'count') {
         const g = State.countGroup(m.groupId);
         const key = g ? g.id : '?';
@@ -142,6 +150,7 @@ const MarkupList = (() => {
       pipeRunCount,
       symbols: [...symbols.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name)),
       counts: [...counts.values()],
+      penetrations: [...penetrations.values()].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true }) || a.type.localeCompare(b.type)),
       otherMeasures,
     };
   }
@@ -176,6 +185,12 @@ const MarkupList = (() => {
       lines.push('FITTINGS & EQUIPMENT');
       lines.push('Item,Qty');
       for (const s of to.symbols) lines.push([s.name, s.count].map(csvCell).join(','));
+      lines.push('');
+    }
+    if (to.penetrations.length) {
+      lines.push('PENETRATION SCHEDULE');
+      lines.push('Core diameter,Through,Fire-rated,Qty');
+      for (const p of to.penetrations) lines.push([`Ø${p.size}`, p.type, p.fire ? 'YES' : '', p.count].map(csvCell).join(','));
       lines.push('');
     }
     if (to.counts.length) {

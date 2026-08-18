@@ -124,8 +124,11 @@
     <div class="rail-sep"></div>
     <div class="rail-cap">PIPE</div>
 
-    <button class="tool-btn accent" data-tool="pipe" title="Pipe run (P) — click points along the route, double-click / Enter to finish. Shift = free angle (ortho is on by default). Snaps to ends of other runs. Color-coded by pipe size, length labeled automatically.">
+    <button class="tool-btn accent" data-tool="pipe" title="Pipe run (P) — click points along the route, double-click / Enter to finish. Shift snaps 45°/90° off the previous leg. Snaps to ends of other runs. Color-coded by pipe size, drawn at true OD width, length labeled automatically.">
       <svg viewBox="0 0 24 24"><path d="M4 21v-9a4 4 0 0 1 4-4h5v8h7"/><path d="M2 21h4M11 6v4M18 14v4" stroke-width="2.4"/></svg>
+    </button>
+    <button class="tool-btn accent" data-tool="penet" title="Penetration — click where pipe passes through a wall/floor to mark the core/sleeve location with its required hole size. Set size, wall/floor and fire-rating in the panel on the right; totals appear in the Takeoff tab as a core-drill schedule.">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M7 7l10 10M17 7 7 17M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
     </button>
 
     <div class="rail-sep"></div>
@@ -179,6 +182,9 @@
     </button>
     <button class="tool-btn" data-tool="callout" title="Callout (Q) — drag from the arrow point to where the note box goes, then type">
       <svg viewBox="0 0 24 24"><rect x="10" y="3" width="11" height="8" rx="1"/><path d="M10 8 3.5 20.5M3.5 20.5l1-4.3m-1 4.3 4.3-1"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="photo" title="Photo — pin a site photo to the drawing. Pick an image (or just drag one onto the sheet), click to place, drag corners to resize, double-click to view full size. Photos flatten into the exported PDF.">
+      <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M8 6l1.5-2.5h5L16 6"/><circle cx="12" cy="13" r="3.6"/></svg>
     </button>
     <button class="tool-btn" data-tool="symbol" title="Symbols &amp; stamps — valves, drops, FRL, drains, AS-BUILT stamps… pick one in the panel on the right, then click the drawing to place. R rotates.">
       <svg viewBox="0 0 24 24"><circle cx="7.5" cy="7.5" r="3.5"/><rect x="14.5" y="4" width="7" height="7" rx="1"/><path d="M7.5 14.5v7M4 18h7"/><path d="m15.5 15 5 5m0-5-5 5"/></svg>
@@ -277,6 +283,7 @@
 
 <input type="file" id="filePdf" accept="application/pdf,.pdf" class="hidden">
 <input type="file" id="fileProject" accept=".airmark,.json" class="hidden">
+<input type="file" id="filePhoto" accept="image/*" class="hidden">
 
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/pdf-lib.min.js"></script>
