@@ -70,9 +70,10 @@ const Viewer = (() => {
 
   const isTyping = e => /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
 
+  /** Two-finger gesture: pinch zoom + pan together (one finger is left to the tools). */
   function initPinch() {
     const pts = new Map();
-    let startDist = 0, startZoom = 1;
+    let startDist = 0, startZoom = 1, prevCenter = null;
     el.viewport.addEventListener('pointerdown', e => {
       if (e.pointerType !== 'touch') return;
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -80,6 +81,7 @@ const Viewer = (() => {
         const [a, b] = [...pts.values()];
         startDist = Math.hypot(b.x - a.x, b.y - a.y);
         startZoom = State.S.zoom;
+        prevCenter = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       }
     }, true);
     el.viewport.addEventListener('pointermove', e => {
@@ -89,10 +91,18 @@ const Viewer = (() => {
         const [a, b] = [...pts.values()];
         const d = Math.hypot(b.x - a.x, b.y - a.y);
         const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+        if (prevCenter) {
+          el.viewport.scrollLeft -= cx - prevCenter.x;
+          el.viewport.scrollTop -= cy - prevCenter.y;
+        }
+        prevCenter = { x: cx, y: cy };
         zoomAt(startZoom * d / startDist, cx, cy);
       }
     }, true);
-    const drop = e => { pts.delete(e.pointerId); if (pts.size < 2) startDist = 0; };
+    const drop = e => {
+      pts.delete(e.pointerId);
+      if (pts.size < 2) { startDist = 0; prevCenter = null; }
+    };
     el.viewport.addEventListener('pointerup', drop, true);
     el.viewport.addEventListener('pointercancel', drop, true);
   }

@@ -105,12 +105,13 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
   /* label text must never become a browser text-selection — a drag that starts
      over selected text turns into a native drag and swallows pointer events */
   user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;   /* no iOS long-press menu over the drawing */
 }
 #pdfCanvas { display: block; }
 #overlay, #previewLayer, #selLayer { position: absolute; inset: 0; overflow: visible; }
-#overlay { pointer-events: auto; }
+#overlay { pointer-events: auto; touch-action: none; }
 #previewLayer, #selLayer { pointer-events: none; }
-#selLayer .handle { pointer-events: auto; }
+#selLayer .handle { pointer-events: auto; touch-action: none; }
 #editLayer { position: absolute; inset: 0; pointer-events: none; }
 #editLayer textarea {
   position: absolute; pointer-events: auto; resize: none; overflow: hidden;

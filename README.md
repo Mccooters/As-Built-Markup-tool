@@ -103,7 +103,9 @@ js/export.js        flattened PDF export, sample floor plan
 js/app.js           toolbar, shortcuts, modals, wiring
 ```
 
-Markup geometry is stored in PDF page units (points), so markups stay put at any zoom and export at exact scale. Touch input works for tablets (draw with a finger, two-finger pinch to zoom).
+Markup geometry is stored in PDF page units (points), so markups stay put at any zoom and export at exact scale.
+
+**Tablet / iPad:** one finger drags a selected markup (or pans when over empty sheet / in a tap-style tool), taps place points and symbols — tap the last vertex again to finish a pipe run — double-tap edits text or opens a photo, and **two fingers pinch-zoom and pan** anywhere, even mid-run. A second finger cleanly cancels whatever the first finger started, so gestures never leave stray marks.
 
 ## Known limits / ideas for later
 

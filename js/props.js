@@ -107,7 +107,7 @@ const Props = (() => {
   const PEN_TYPES = ['Wall', 'Floor', 'Roof', 'Ceiling', 'Beam'];
 
   function penetRows(o) {
-    return `<div class="prop-section"><div class="prop-cap">Penetration</div>
+    return `<div class="prop-section"><div class="prop-cap">Core / sleeve</div>
       <div class="prop-row"><label>Hole Ø</label>
         <input type="text" id="p-pensize" value="${esc(o.penSize ?? D().penSize)}" list="core-sizes" placeholder='e.g. 2-1/2"'>
         <datalist id="core-sizes">${CORE_SIZES.map(s => `<option value="${esc(s)}">`).join('')}</datalist></div>
@@ -208,7 +208,7 @@ const Props = (() => {
 
     const symbolish = types.has('symbol') || types.has('stamp') || types.has('penet');
     if (symbolish) {
-      h += `<div class="prop-row"><label>Size</label><input type="range" id="p-ssize" min="10" max="90" step="1" value="${first.size || 26}"><span class="val" id="p-ssize-v">${first.size || 26}</span></div>`;
+      h += `<div class="prop-row"><label>Size</label><input type="range" id="p-ssize" min="5" max="90" step="1" value="${first.size || 26}"><span class="val" id="p-ssize-v">${first.size || 26}</span></div>`;
       if (!types.has('penet')) h += `<div class="prop-row"><label>Rotation</label><input type="number" id="p-rot" min="0" max="359" step="15" value="${first.rotation || 0}"> <span class="val">deg</span></div>`;
       if (types.has('symbol') || types.has('penet')) h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-slabel"${first.showLabel !== false ? ' checked' : ''}> Show label</label></div>`;
     }

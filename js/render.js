@@ -345,9 +345,9 @@ const Render = (() => {
     },
 
     penet(g, m) {
-      const s = m.size || 22;
+      const s = m.size || 16;
       const r = s / 2;
-      const k = Math.max(1.6, s * 0.08);
+      const k = Math.max(1.0, s * 0.08);
       const inner = svg('g');
       inner.setAttribute('transform', `translate(${m.x} ${m.y})`);
       // white backing + circle + X + quadrant ticks = core-drill mark
@@ -358,7 +358,7 @@ const Render = (() => {
         `<path d="M0 ${-r * 1.45}V${-r}M0 ${r}V${r * 1.45}M${-r * 1.45} 0H${-r}M${r} 0H${r * 1.45}" stroke="${m.color}" stroke-width="${k}" stroke-linecap="round"/>`;
       g.appendChild(inner);
       if (m.showLabel !== false) {
-        const fs = Math.max(8, s * 0.42);
+        const fs = Math.max(4.5, s * 0.4);
         g.appendChild(labelEl(m.x, m.y + r * 1.5 + fs, `Ø${m.penSize || '?'}`, m, { fontSize: fs, bold: true }));
         const sub = `${m.penType || ''}${m.penFire ? ' · FIRE' : ''}`.trim();
         if (sub) {
@@ -423,16 +423,18 @@ const Render = (() => {
 
   /* ================= selection layer ================= */
 
-  function handleEl(x, y, kind, id, idx) {
+  /** Visible handle + an invisible, finger-sized hit circle on top (touch-friendly). */
+  function appendHandle(layer, x, y, kind, id, idx) {
     const z = State.S.zoom;
-    const h = svg('circle', {
-      cx: x, cy: y, r: 4.6 / z,
-      fill: '#ffffff', stroke: '#1f6fd0', 'stroke-width': 1.6 / z,
-    });
-    h.classList.add('handle');
-    h.dataset.kind = kind; h.dataset.hid = id;
-    if (idx != null) h.dataset.idx = idx;
-    return h;
+    const mk = (r, attrs) => {
+      const c = svg('circle', { cx: x, cy: y, r, ...attrs });
+      c.classList.add('handle');
+      c.dataset.kind = kind; c.dataset.hid = id;
+      if (idx != null) c.dataset.idx = idx;
+      return c;
+    };
+    layer.appendChild(mk(4.6 / z, { fill: '#ffffff', stroke: '#1f6fd0', 'stroke-width': 1.6 / z }));
+    layer.appendChild(mk(14 / z, { fill: '#000000', 'fill-opacity': 0, stroke: 'none', 'pointer-events': 'all' }));
   }
 
   function drawSelection() {
@@ -453,12 +455,12 @@ const Render = (() => {
       if (!withHandles) continue;
       // vertex handles
       if (m.pts) {
-        m.pts.forEach((p, i) => layer.appendChild(handleEl(p.x, p.y, 'pt', m.id, i)));
+        m.pts.forEach((p, i) => appendHandle(layer, p.x, p.y, 'pt', m.id, i));
       } else if (m.type === 'callout') {
-        layer.appendChild(handleEl(m.anchor.x, m.anchor.y, 'anchor', m.id));
-        for (const [kind, hx, hy] of rectHandles(m)) layer.appendChild(handleEl(hx, hy, kind, m.id));
+        appendHandle(layer, m.anchor.x, m.anchor.y, 'anchor', m.id);
+        for (const [kind, hx, hy] of rectHandles(m)) appendHandle(layer, hx, hy, kind, m.id);
       } else if (m.w != null) {
-        for (const [kind, hx, hy] of rectHandles(m)) layer.appendChild(handleEl(hx, hy, kind, m.id));
+        for (const [kind, hx, hy] of rectHandles(m)) appendHandle(layer, hx, hy, kind, m.id);
       }
     }
   }

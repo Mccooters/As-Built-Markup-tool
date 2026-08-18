@@ -37,6 +37,13 @@ const Tools = (() => {
   let lastClient = null;   // last pointer position in client px (survives view pans)
   let editingTextarea = null;
 
+  /* touch state: one finger works the tools, two fingers are a view gesture */
+  const activeTouches = new Set();
+  let activeDragAbort = null;  // cancels the in-flight drag without committing
+  let pendingTap = null;       // touch tap-in-progress for click-style tools
+  let lastTap = null;          // for double-tap detection on the select tool
+  const CLICK_TOOLS = { calibrate: 1, symbol: 1, count: 1, text: 1, penet: 1, photo: 1 };
+
   const S = () => State.S;
   const D = () => State.S.defaults;
 
@@ -120,17 +127,32 @@ const Tools = (() => {
     if (m.anchor) { m.anchor.x += dx; m.anchor.y += dy; }
   }
 
-  function windowDrag(onMove, onUp) {
+  function windowDrag(onMove, onUp, onAbort) {
     dragging = true;
-    const move = e => onMove(e);
-    const up = e => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       dragging = false;
-      if (onUp) onUp(e);
+      activeDragAbort = null;
     };
+    const move = e => onMove(e);
+    const up = e => { cleanup(); if (onUp) onUp(e); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    activeDragAbort = () => { cleanup(); if (onAbort) onAbort(); };
+  }
+
+  /** One-finger pan of the scrollable view (touch fallback in tap-style tools / empty sheet). */
+  function beginTouchPan(e) {
+    const vp = Viewer.el.viewport;
+    const pid = e.pointerId;
+    let last = { x: e.clientX, y: e.clientY };
+    windowDrag(ev => {
+      if (ev.pointerId !== pid) return;
+      vp.scrollLeft -= ev.clientX - last.x;
+      vp.scrollTop -= ev.clientY - last.y;
+      last = { x: ev.clientX, y: ev.clientY };
+    }, null, null);
   }
 
   /* ================= creation: drag tools ================= */
@@ -201,7 +223,7 @@ const Tools = (() => {
       const created = State.addMarkup(m);
       if (tool === 'callout') { State.select([created.id]); editText(created, true); }
       else State.select([created.id]);
-    });
+    }, clearPreview /* abort: second finger arrived — discard, nothing committed */);
   }
 
   /* ================= creation: multi-click poly tools ================= */
@@ -365,7 +387,7 @@ const Tools = (() => {
     const d = D();
     const created = State.addMarkup({
       type: 'penet', page: S().page, x: p.x, y: p.y,
-      size: Math.max(14, Math.round(d.symbolSize * 0.85)),
+      size: Math.max(8, Math.round(d.symbolSize * 0.6)),
       color: d.color, lineWidth: 2, fontSize: d.fontSize,
       penSize: d.penSize, penType: d.penType, penFire: d.penFire,
       showLabel: true,
@@ -549,6 +571,8 @@ const Tools = (() => {
       Render.refresh(ids);
     }, () => {
       if (started) { State.touch(); State.emit('markups', { changed: ids }); }
+    }, () => {
+      if (started) State.undo();   // gesture abort: put the markups back
     });
   }
 
@@ -572,7 +596,7 @@ const Tools = (() => {
         .filter(m => Geo.rectsIntersect(box, Geo.markupBounds(m)))
         .map(m => m.id);
       State.select(hits, additive);
-    });
+    }, clearPreview);
   }
 
   /* ---- handle drags (vertex move / resize / callout anchor) ---- */
@@ -601,6 +625,8 @@ const Tools = (() => {
       Render.refresh([id]);
     }, () => {
       if (started) { State.touch(); State.emit('markups', { changed: [id] }); }
+    }, () => {
+      if (started) State.undo();
     });
   }
 
@@ -630,6 +656,21 @@ const Tools = (() => {
     const p = Viewer.toPage(e);
     const tool = S().tool;
 
+    if (e.pointerType === 'touch') {
+      if (activeTouches.size >= 2) return;      // second finger of a gesture
+      // tap-style tools act on pointerUP so a two-finger gesture never marks the sheet;
+      // a moved finger converts into a one-finger pan (see onOverlayMove)
+      if (POLY_TOOLS[tool] || CLICK_TOOLS[tool]) {
+        pendingTap = { clientX: e.clientX, clientY: e.clientY, pointerId: e.pointerId, moved: false };
+        return;
+      }
+      if (tool === 'select') {
+        const g = e.target.closest && e.target.closest('g[data-id]');
+        if (!g) { beginTouchPan(e); return; }   // one finger on empty sheet pans
+        // finger on a markup: select + drag it (falls through)
+      }
+    }
+
     if (tool === 'select') { selectDown(e, p); return; }
     if (POLY_TOOLS[tool]) { polyClick(e, p); return; }
     if (DRAG_TOOLS[tool]) { beginDragCreate(e, p); return; }
@@ -641,8 +682,56 @@ const Tools = (() => {
     if (tool === 'photo') { placePhoto(p); return; }
   }
 
+  /** Touch tap released → run the deferred tool action; also double-tap handling on Select. */
+  function onOverlayUp(e) {
+    if (e.pointerType !== 'touch') return;
+    if (S().tool === 'select') {
+      const g = e.target.closest && e.target.closest('g[data-id]');
+      const now = performance.now();
+      if (g && lastTap && lastTap.id === g.dataset.id && now - lastTap.t < 380 &&
+          Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+        lastTap = null;
+        const m = State.getMarkup(g.dataset.id);
+        if (m && (m.type === 'text' || m.type === 'callout')) { State.select([m.id]); editText(m, false); }
+        else if (m && m.type === 'photo') { State.select([m.id]); App.photoLightbox(m); }
+        return;
+      }
+      lastTap = g ? { t: now, x: e.clientX, y: e.clientY, id: g.dataset.id } : null;
+      return;
+    }
+    if (!pendingTap || pendingTap.pointerId !== e.pointerId) return;
+    const tap = pendingTap;
+    pendingTap = null;
+    if (tap.moved) return;   // it became a pan, not a tap (gestures null pendingTap directly)
+    const p = Viewer.toPage(e);
+    const tool = S().tool;
+    if (POLY_TOOLS[tool]) {
+      // tapping the last vertex again finishes the run (no double-click on touch)
+      if (creating && creating.pts.length >= (creating.type === 'marea' ? 3 : 2)) {
+        const lastPt = creating.pts[creating.pts.length - 1];
+        if (Geo.dist(p, lastPt) < 16 / S().zoom) { finishPoly(); return; }
+      }
+      polyClick({ shiftKey: false, target: e.target }, p);
+      return;
+    }
+    if (tool === 'calibrate') { calibrateClick(p); return; }
+    if (tool === 'symbol') { placeSymbol(p); return; }
+    if (tool === 'count') { placeCount(p); return; }
+    if (tool === 'text') { placeText(p); return; }
+    if (tool === 'penet') { placePenetration(p); return; }
+    if (tool === 'photo') { placePhoto(p); return; }
+  }
+
   function onOverlayMove(e) {
     if (!S().pdf) return;
+    if (e.pointerType === 'touch' && activeTouches.size >= 2) return;  // view gesture
+    // a touch that moves past the tap threshold becomes a one-finger pan
+    if (pendingTap && e.pointerId === pendingTap.pointerId && !pendingTap.moved &&
+        Math.hypot(e.clientX - pendingTap.clientX, e.clientY - pendingTap.clientY) > 12) {
+      pendingTap.moved = true;
+      beginTouchPan(e);
+      return;
+    }
     lastClient = { clientX: e.clientX, clientY: e.clientY };
     hoverPt = Viewer.toPage(e);
     if (creating) updatePolyPreview(hoverPt, e.shiftKey);
@@ -768,7 +857,23 @@ const Tools = (() => {
     const o = Viewer.el.overlay;
     o.addEventListener('pointerdown', onOverlayDown);
     o.addEventListener('pointermove', onOverlayMove);
+    o.addEventListener('pointerup', onOverlayUp);
     o.addEventListener('dblclick', onOverlayDblClick);
+
+    // touch bookkeeping: a second finger anywhere = view gesture → abort tool work
+    const touchDown = e => {
+      if (e.pointerType !== 'touch') return;
+      activeTouches.add(e.pointerId);
+      if (activeTouches.size === 2) {
+        pendingTap = null;
+        if (activeDragAbort) activeDragAbort();
+        if (!creating) clearPreview();   // keep an in-progress run's rubber band
+      }
+    };
+    const touchEnd = e => { if (e.pointerType === 'touch') activeTouches.delete(e.pointerId); };
+    window.addEventListener('pointerdown', touchDown, true);
+    window.addEventListener('pointerup', touchEnd, true);
+    window.addEventListener('pointercancel', touchEnd, true);
     Viewer.el.sel.addEventListener('pointerdown', e => {
       if (e.target.classList && e.target.classList.contains('handle')) handleDown(e);
     });
