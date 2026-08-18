@@ -37,11 +37,26 @@ const Tools = (() => {
   let lastClient = null;   // last pointer position in client px (survives view pans)
   let editingTextarea = null;
 
-  /* touch state: one finger works the tools, two fingers are a view gesture */
-  const activeTouches = new Set();
+  /* touch state: one finger works the tools, two fingers are a view gesture.
+     pointerId → last-seen time; some engines (WebKit) occasionally drop a
+     pointerup, so ghosts are pruned by staleness and cleared by native
+     touchend ground truth — a leaked id would otherwise make every later
+     touch look like a two-finger gesture and kill the tools. */
+  const activeTouches = new Map();
+  const TOUCH_STALE_MS = 3500;
+  function touchCount() {
+    const now = performance.now();
+    for (const [id, t] of activeTouches) if (now - t > TOUCH_STALE_MS) activeTouches.delete(id);
+    return activeTouches.size;
+  }
   let activeDragAbort = null;  // cancels the in-flight drag without committing
   let pendingTap = null;       // touch tap-in-progress for click-style tools
   let lastTap = null;          // for double-tap detection on the select tool
+  let lastDownType = 'mouse';  // pointerType of the most recent pointerdown anywhere
+  let tapConsumedAt = 0;       // when the pointerup path last ran a tap action
+  let gestureAt = 0;           // when a second finger last landed
+  let panConvertedAt = 0;      // when a touch turned into a one-finger pan
+  const TAP_SLOP = 22;         // px of finger roll still counted as a tap
   const CLICK_TOOLS = { calibrate: 1, symbol: 1, count: 1, text: 1, penet: 1, photo: 1 };
 
   const S = () => State.S;
@@ -657,11 +672,12 @@ const Tools = (() => {
     const tool = S().tool;
 
     if (e.pointerType === 'touch') {
-      if (activeTouches.size >= 2) return;      // second finger of a gesture
+      if (touchCount() >= 2) return;            // second finger of a gesture
       // tap-style tools act on pointerUP so a two-finger gesture never marks the sheet;
       // a moved finger converts into a one-finger pan (see onOverlayMove)
       if (POLY_TOOLS[tool] || CLICK_TOOLS[tool]) {
         pendingTap = { clientX: e.clientX, clientY: e.clientY, pointerId: e.pointerId, moved: false };
+        tapConsumedAt = 0;   // new gesture — lets the click fallback fire if pointerup dies
         return;
       }
       if (tool === 'select') {
@@ -682,8 +698,32 @@ const Tools = (() => {
     if (tool === 'photo') { placePhoto(p); return; }
   }
 
-  /** Touch tap released → run the deferred tool action; also double-tap handling on Select. */
-  function onOverlayUp(e) {
+  /** The tap action itself — shared by the pointerup path and the click fallback. */
+  function runTapAction(tool, p, target) {
+    tapConsumedAt = performance.now();
+    if (POLY_TOOLS[tool]) {
+      // tapping the last vertex again finishes the run (no double-click on touch)
+      if (creating && creating.pts.length >= (creating.type === 'marea' ? 3 : 2)) {
+        const lastPt = creating.pts[creating.pts.length - 1];
+        if (Geo.dist(p, lastPt) < 16 / S().zoom) { finishPoly(); return; }
+      }
+      polyClick({ shiftKey: false, target }, p);
+      return;
+    }
+    if (tool === 'calibrate') { calibrateClick(p); return; }
+    if (tool === 'symbol') { placeSymbol(p); return; }
+    if (tool === 'count') { placeCount(p); return; }
+    if (tool === 'text') { placeText(p); return; }
+    if (tool === 'penet') { placePenetration(p); return; }
+    if (tool === 'photo') { placePhoto(p); return; }
+  }
+
+  /**
+   * Touch tap released → run the deferred tool action. Registered on window so
+   * implicit touch pointer-capture can never hide the pointerup from us.
+   * Also handles double-tap on the Select tool.
+   */
+  function onGlobalPointerUp(e) {
     if (e.pointerType !== 'touch') return;
     if (S().tool === 'select') {
       const g = e.target.closest && e.target.closest('g[data-id]');
@@ -703,32 +743,34 @@ const Tools = (() => {
     const tap = pendingTap;
     pendingTap = null;
     if (tap.moved) return;   // it became a pan, not a tap (gestures null pendingTap directly)
-    const p = Viewer.toPage(e);
+    runTapAction(S().tool, Viewer.toPage(e), e.target);
+  }
+
+  /**
+   * Safety net for engines that swallow the touch pointerup (seen on WebKit):
+   * a tap always produces a click — run the action from it if nothing else did.
+   */
+  function onOverlayClick(e) {
+    if (lastDownType !== 'touch') return;       // mouse flow acts on pointerdown
+    if (!S().pdf) return;
+    const now = performance.now();
+    if (now - tapConsumedAt < 600) return;      // pointerup path already handled it
+    if (now - gestureAt < 600) return;          // was a two-finger gesture
+    if (now - panConvertedAt < 600) return;     // was a one-finger pan
+    pendingTap = null;
     const tool = S().tool;
-    if (POLY_TOOLS[tool]) {
-      // tapping the last vertex again finishes the run (no double-click on touch)
-      if (creating && creating.pts.length >= (creating.type === 'marea' ? 3 : 2)) {
-        const lastPt = creating.pts[creating.pts.length - 1];
-        if (Geo.dist(p, lastPt) < 16 / S().zoom) { finishPoly(); return; }
-      }
-      polyClick({ shiftKey: false, target: e.target }, p);
-      return;
-    }
-    if (tool === 'calibrate') { calibrateClick(p); return; }
-    if (tool === 'symbol') { placeSymbol(p); return; }
-    if (tool === 'count') { placeCount(p); return; }
-    if (tool === 'text') { placeText(p); return; }
-    if (tool === 'penet') { placePenetration(p); return; }
-    if (tool === 'photo') { placePhoto(p); return; }
+    if (!(POLY_TOOLS[tool] || CLICK_TOOLS[tool])) return;
+    runTapAction(tool, Viewer.toPage(e), e.target);
   }
 
   function onOverlayMove(e) {
     if (!S().pdf) return;
-    if (e.pointerType === 'touch' && activeTouches.size >= 2) return;  // view gesture
-    // a touch that moves past the tap threshold becomes a one-finger pan
+    if (e.pointerType === 'touch' && touchCount() >= 2) return;  // view gesture
+    // a touch that moves past the tap slop becomes a one-finger pan
     if (pendingTap && e.pointerId === pendingTap.pointerId && !pendingTap.moved &&
-        Math.hypot(e.clientX - pendingTap.clientX, e.clientY - pendingTap.clientY) > 12) {
+        Math.hypot(e.clientX - pendingTap.clientX, e.clientY - pendingTap.clientY) > TAP_SLOP) {
       pendingTap.moved = true;
+      panConvertedAt = performance.now();
       beginTouchPan(e);
       return;
     }
@@ -857,23 +899,40 @@ const Tools = (() => {
     const o = Viewer.el.overlay;
     o.addEventListener('pointerdown', onOverlayDown);
     o.addEventListener('pointermove', onOverlayMove);
-    o.addEventListener('pointerup', onOverlayUp);
+    o.addEventListener('click', onOverlayClick);
     o.addEventListener('dblclick', onOverlayDblClick);
+    window.addEventListener('pointerup', onGlobalPointerUp);
 
     // touch bookkeeping: a second finger anywhere = view gesture → abort tool work
     const touchDown = e => {
+      lastDownType = e.pointerType || 'mouse';
       if (e.pointerType !== 'touch') return;
-      activeTouches.add(e.pointerId);
-      if (activeTouches.size === 2) {
+      activeTouches.set(e.pointerId, performance.now());
+      if (touchCount() === 2) {
+        gestureAt = performance.now();
         pendingTap = null;
         if (activeDragAbort) activeDragAbort();
         if (!creating) clearPreview();   // keep an in-progress run's rubber band
       }
     };
+    const touchMove = e => {
+      if (e.pointerType === 'touch' && activeTouches.has(e.pointerId)) {
+        activeTouches.set(e.pointerId, performance.now());
+      }
+    };
     const touchEnd = e => { if (e.pointerType === 'touch') activeTouches.delete(e.pointerId); };
     window.addEventListener('pointerdown', touchDown, true);
+    window.addEventListener('pointermove', touchMove, true);
     window.addEventListener('pointerup', touchEnd, true);
     window.addEventListener('pointercancel', touchEnd, true);
+    // ground truth from native touch events (always delivered): no fingers = no gesture
+    const touchSync = e => { if (e.touches && e.touches.length === 0) activeTouches.clear(); };
+    window.addEventListener('touchend', touchSync, true);
+    window.addEventListener('touchcancel', touchSync, true);
+    // an engine-initiated cancel ends the tap without running it
+    o.addEventListener('pointercancel', e => {
+      if (pendingTap && pendingTap.pointerId === e.pointerId) pendingTap = null;
+    });
     Viewer.el.sel.addEventListener('pointerdown', e => {
       if (e.target.classList && e.target.classList.contains('handle')) handleDown(e);
     });

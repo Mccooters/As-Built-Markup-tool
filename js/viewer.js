@@ -72,11 +72,17 @@ const Viewer = (() => {
 
   /** Two-finger gesture: pinch zoom + pan together (one finger is left to the tools). */
   function initPinch() {
-    const pts = new Map();
+    const pts = new Map();   // pointerId -> {x, y, t}; ghost-proofed like tools.js
+    const STALE = 3500;
     let startDist = 0, startZoom = 1, prevCenter = null;
+    const prune = () => {
+      const now = performance.now();
+      for (const [id, p] of pts) if (now - p.t > STALE) pts.delete(id);
+    };
     el.viewport.addEventListener('pointerdown', e => {
       if (e.pointerType !== 'touch') return;
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      prune();
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
         startDist = Math.hypot(b.x - a.x, b.y - a.y);
@@ -86,7 +92,7 @@ const Viewer = (() => {
     }, true);
     el.viewport.addEventListener('pointermove', e => {
       if (!pts.has(e.pointerId)) return;
-      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
       if (pts.size === 2 && startDist > 0) {
         const [a, b] = [...pts.values()];
         const d = Math.hypot(b.x - a.x, b.y - a.y);
@@ -105,6 +111,11 @@ const Viewer = (() => {
     };
     el.viewport.addEventListener('pointerup', drop, true);
     el.viewport.addEventListener('pointercancel', drop, true);
+    const allUp = e => {
+      if (e.touches && e.touches.length === 0) { pts.clear(); startDist = 0; prevCenter = null; }
+    };
+    window.addEventListener('touchend', allUp, true);
+    window.addEventListener('touchcancel', allUp, true);
   }
 
   /* ================= document ================= */
