@@ -311,20 +311,22 @@ const Render = (() => {
       g.appendChild(t);
     },
 
-    photo(g, m) {
+    photo(g, m, opts = {}) {
       const src = State.S.images[m.imgId];
       if (!src) {
         g.appendChild(svg('rect', { x: m.x, y: m.y, width: m.w, height: m.h, fill: '#eeeeee', stroke: m.color, 'stroke-width': 1.5 }));
         g.appendChild(labelEl(m.x + m.w / 2, m.y + m.h / 2, 'missing photo', m, { fontSize: 11 }));
         return;
       }
-      const img = svg('image', {
-        x: m.x, y: m.y, width: m.w, height: m.h,
-        preserveAspectRatio: 'xMidYMid slice',
-      });
-      img.setAttribute('href', src);
-      img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', src); // rasterizer compatibility
-      g.appendChild(img);
+      if (!opts.noPhotoImage) {   // export embeds photos natively and skips the SVG copy
+        const img = svg('image', {
+          x: m.x, y: m.y, width: m.w, height: m.h,
+          preserveAspectRatio: 'xMidYMid slice',
+        });
+        img.setAttribute('href', src);
+        img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', src); // rasterizer compatibility
+        g.appendChild(img);
+      }
       g.appendChild(svg('rect', {
         x: m.x, y: m.y, width: m.w, height: m.h,
         fill: 'none', stroke: m.color, 'stroke-width': m.lineWidth || 2,
@@ -381,12 +383,12 @@ const Render = (() => {
 
   /* ================= public API ================= */
 
-  function buildMarkupEl(m) {
+  function buildMarkupEl(m, opts) {
     const g = svg('g');
     g.dataset.id = m.id;
     if (m.opacity != null && m.opacity < 1) g.setAttribute('opacity', m.opacity);
     const b = builders[m.type];
-    if (b) b(g, m);
+    if (b) b(g, m, opts || {});
     return g;
   }
 

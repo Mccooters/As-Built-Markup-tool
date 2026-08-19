@@ -5,48 +5,34 @@ const Export = (() => {
 
   /* ================= flattened PDF ================= */
 
+  // Canvas limits: iOS caps canvas area hard (silently blank above it)
+  const IS_TOUCH_DEVICE = (navigator.maxTouchPoints || 0) > 1;
+  const MAX_AREA = IS_TOUCH_DEVICE ? 14e6 : 60e6;
+  const MAX_DIM = 8100;
+
+  const layerScale = (w, h, target = 3) =>
+    Math.max(1, Math.min(target, Math.sqrt(MAX_AREA / (w * h)), MAX_DIM / Math.max(w, h)));
+
+  /**
+   * Export keeps the ORIGINAL pages untouched (vector linework stays razor
+   * sharp) and stamps a transparent high-res raster of the markups over each
+   * page. Falls back to full-page rasterization only when the source PDF
+   * cannot be reloaded (e.g. encrypted).
+   */
   async function exportFlattenedPdf() {
     const S = State.S;
     if (!S.pdf) { App.toast('Open a drawing first.', 'warn'); return; }
 
-    const progress = App.progress('Exporting flattened PDF…');
+    const progress = App.progress('Exporting as-built PDF…');
     try {
-      const out = await PDFLib.PDFDocument.create();
-      const n = S.pageCount;
+      let out = null;
+      try {
+        out = await PDFLib.PDFDocument.load(S.pdfBytes, { ignoreEncryption: true });
+        if (out.getPageCount() !== S.pageCount) out = null;
+      } catch (_) { out = null; }
 
-      for (let p = 1; p <= n; p++) {
-        progress.set(((p - 1) / n) * 100, `Rendering page ${p} of ${n}…`);
-        const page = await S.pdf.getPage(p);
-        const vp1 = page.getViewport({ scale: 1 });
-        const maxDim = Math.max(vp1.width, vp1.height);
-        const scale = Math.max(1, Math.min(3, 4200 / maxDim));
-        const vp = page.getViewport({ scale });
-
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.floor(vp.width);
-        canvas.height = Math.floor(vp.height);
-        const ctx = canvas.getContext('2d', { alpha: false });
-        await page.render({ canvasContext: ctx, viewport: vp }).promise;
-
-        // burn in markups via an offscreen SVG rasterization
-        const markups = State.pageMarkups(p);
-        if (markups.length) {
-          const svgStr = pageSvg(markups, vp1.width, vp1.height, canvas.width, canvas.height);
-          await drawSvgOnCanvas(ctx, svgStr, canvas.width, canvas.height);
-        }
-
-        const jpegUrl = canvas.toDataURL('image/jpeg', 0.87);
-        const jpeg = await out.embedJpg(jpegUrl);
-        const outPage = out.addPage([vp1.width, vp1.height]);
-        outPage.drawImage(jpeg, { x: 0, y: 0, width: vp1.width, height: vp1.height });
-      }
-
-      progress.set(97, 'Writing PDF…');
-      const bytes = await out.save();
-      const base = (S.fileName || 'drawing').replace(/\.pdf$/i, '');
-      App.download(new Blob([bytes], { type: 'application/pdf' }), base + ' (as-built).pdf');
-      progress.close();
-      App.toast('Flattened PDF exported — markups are burned in and print-ready.', 'ok');
+      if (out) await overlayExport(out, progress);
+      else await rasterExport(progress);
     } catch (err) {
       console.error(err);
       progress.close();
@@ -54,20 +40,127 @@ const Export = (() => {
     }
   }
 
-  function pageSvg(markups, pageW, pageH, pxW, pxH) {
+  /** Anchor + rotation that make a full-page stamp match the DISPLAYED orientation. */
+  function pageStampFrame(page) {
+    const box = page.getCropBox();
+    const R = ((page.getRotation().angle % 360) + 360) % 360;
+    const sideways = R === 90 || R === 270;
+    const vpW = sideways ? box.height : box.width;   // displayed size
+    const vpH = sideways ? box.width : box.height;
+    let x = box.x, y = box.y;
+    if (R === 90) x = box.x + box.width;
+    else if (R === 180) { x = box.x + box.width; y = box.y + box.height; }
+    else if (R === 270) y = box.y + box.height;
+    return { box, R, vpW, vpH, x, y };
+  }
+
+  async function overlayExport(out, progress) {
+    const S = State.S;
+    const n = S.pageCount;
+
+    for (let p = 1; p <= n; p++) {
+      const markups = State.pageMarkups(p);
+      if (!markups.length) continue;
+      progress.set(((p - 1) / n) * 100, `Marking up page ${p} of ${n}…`);
+
+      const page = out.getPage(p - 1);
+      const f = pageStampFrame(page);
+
+      // photos embed natively at their stored resolution (upright pages)
+      const nativePhotos = f.R === 0
+        ? markups.filter(m => m.type === 'photo' && S.images[m.imgId])
+        : [];
+      for (const ph of nativePhotos) {
+        const src = S.images[ph.imgId];
+        const img = /^data:image\/png/.test(src) ? await out.embedPng(src) : await out.embedJpg(src);
+        page.drawImage(img, {
+          x: f.box.x + ph.x,
+          y: f.box.y + f.box.height - ph.y - ph.h,
+          width: ph.w, height: ph.h,
+        });
+      }
+
+      // everything else → transparent high-res layer
+      const s = layerScale(f.vpW, f.vpH);
+      const pxW = Math.round(f.vpW * s), pxH = Math.round(f.vpH * s);
+      const svgStr = pageSvg(markups, f.vpW, f.vpH, pxW, pxH, { noPhotoImage: f.R === 0 });
+      const canvas = await svgToCanvas(svgStr, pxW, pxH);
+      const png = await out.embedPng(canvas.toDataURL('image/png'));
+      page.drawImage(png, {
+        x: f.x, y: f.y, width: f.vpW, height: f.vpH,
+        rotate: PDFLib.degrees(f.R),
+      });
+    }
+
+    await finishExport(out, progress,
+      'As-built PDF exported — original drawing untouched (full vector quality), markups stamped on top.');
+  }
+
+  /** Fallback: rasterize whole pages (only when the source PDF can't be reloaded). */
+  async function rasterExport(progress) {
+    const S = State.S;
+    const out = await PDFLib.PDFDocument.create();
+    const n = S.pageCount;
+
+    for (let p = 1; p <= n; p++) {
+      progress.set(((p - 1) / n) * 100, `Rendering page ${p} of ${n}…`);
+      const page = await S.pdf.getPage(p);
+      const vp1 = page.getViewport({ scale: 1 });
+      const scale = layerScale(vp1.width, vp1.height);
+      const vp = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(vp.width);
+      canvas.height = Math.floor(vp.height);
+      const ctx = canvas.getContext('2d', { alpha: false });
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+
+      const markups = State.pageMarkups(p);
+      if (markups.length) {
+        const svgStr = pageSvg(markups, vp1.width, vp1.height, canvas.width, canvas.height);
+        const layer = await svgToCanvas(svgStr, canvas.width, canvas.height);
+        ctx.drawImage(layer, 0, 0);
+      }
+
+      const jpeg = await out.embedJpg(canvas.toDataURL('image/jpeg', 0.87));
+      const outPage = out.addPage([vp1.width, vp1.height]);
+      outPage.drawImage(jpeg, { x: 0, y: 0, width: vp1.width, height: vp1.height });
+    }
+
+    await finishExport(out, progress,
+      'PDF exported (rasterized — the source PDF could not be reloaded for vector output).');
+  }
+
+  async function finishExport(out, progress, message) {
+    progress.set(97, 'Writing PDF…');
+    const bytes = await out.save();
+    const base = (State.S.fileName || 'drawing').replace(/\.pdf$/i, '');
+    App.download(new Blob([bytes], { type: 'application/pdf' }), base + ' (as-built).pdf');
+    progress.close();
+    App.toast(message, 'ok');
+  }
+
+  function pageSvg(markups, pageW, pageH, pxW, pxH, opts) {
     const holder = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    for (const m of markups) holder.appendChild(Render.buildMarkupEl(m));
+    for (const m of markups) holder.appendChild(Render.buildMarkupEl(m, opts));
     const inner = new XMLSerializer().serializeToString(holder)
       .replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pageW} ${pageH}" width="${pxW}" height="${pxH}">${inner}</svg>`;
   }
 
-  function drawSvgOnCanvas(ctx, svgStr, w, h) {
+  /** Rasterize an SVG string onto a fresh TRANSPARENT canvas. */
+  function svgToCanvas(svgStr, w, h) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const url = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }));
-      img.onload = () => { ctx.drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url); resolve(); };
-      img.onerror = e => { URL.revokeObjectURL(url); reject(new Error('SVG rasterization failed')); };
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve(c);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG rasterization failed')); };
       img.src = url;
     });
   }
