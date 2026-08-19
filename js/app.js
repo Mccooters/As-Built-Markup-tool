@@ -212,6 +212,83 @@ const App = (() => {
       });
   }
 
+  /** Schedule export dialog — pick sections and individual rows, add a note. */
+  function csvExportDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first.', 'warn'); return; }
+    const to = MarkupList.computeTakeoff();
+    const K = MarkupList.rowKeys;
+    const fmt = State.S.unitFormat;
+    const prev = State.S.exportPrefs || { sections: {}, exclude: {}, note: '' };
+    const secOn = s => prev.sections[s] !== false && prev.sections[s] !== 0;
+    const rowOn = (s, k) => !((prev.exclude && prev.exclude[s]) || []).includes(k);
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+
+    const section = (id, title, rows) => {
+      let h = `<div class="csv-sec" style="margin-bottom:10px">
+        <label class="chk" style="font-weight:600"><input type="checkbox" class="csv-sec-box" data-sec="${id}"${secOn(id) ? ' checked' : ''}> ${title}</label>`;
+      if (rows && rows.length) {
+        h += `<div style="margin:4px 0 0 24px;display:flex;flex-direction:column;gap:3px">` +
+          rows.map(r => `<label class="chk"><input type="checkbox" class="csv-row-box" data-sec="${id}" data-key="${esc(r.key)}"${rowOn(id, r.key) ? ' checked' : ''}> ${r.label}</label>`).join('') +
+          `</div>`;
+      }
+      return h + `</div>`;
+    };
+
+    const pipeRows = to.pipes.map(p => ({
+      key: K.pipes(p),
+      label: `${esc(p.size)} ${esc(p.material)} — ${p.totalFt != null ? Units.fmtLen(p.totalFt, fmt) : '—'} (${p.count} run${p.count === 1 ? '' : 's'})`,
+    }));
+    const fitRows = to.symbols.map(s => ({ key: K.fittings(s), label: `${esc(s.name)} — ${s.count}` }));
+    const penRows = to.penetrations.map(p => ({
+      key: K.penetrations(p),
+      label: `Ø${esc(p.size)} ${esc(p.type)}${p.fire ? ' FIRE' : ''} — ${p.count}`,
+    }));
+    const cntRows = to.counts.map(c => ({ key: K.counts(c), label: `${esc(c.name)} — ${c.count}` }));
+
+    modal(`
+      <h3>Export schedule (CSV)</h3>
+      <p class="muted">Tick what goes in. Totals recalculate over the included rows.</p>
+      ${to.pipes.length ? section('pipes', 'Pipe takeoff', pipeRows) : ''}
+      ${to.symbols.length ? section('fittings', 'Fittings &amp; equipment', fitRows) : ''}
+      ${to.penetrations.length ? section('penetrations', 'Penetration schedule', penRows) : ''}
+      ${to.counts.length ? section('counts', 'Counts', cntRows) : ''}
+      ${to.otherMeasures.length ? section('other', `Other measurements (${to.otherMeasures.length})`) : ''}
+      ${section('list', `Full markup list (${State.S.markups.length})`)}
+      <div class="form-row" style="margin-top:8px"><label>Note printed in the schedule header</label>
+        <input type="text" id="csv-note" value="${esc(prev.note)}" placeholder='e.g. Penetration Ø = pipe OD — fire-rating clearance TBC'></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="csv-cancel">Cancel</button>
+        <button class="mini-btn primary" id="csv-ok">Export CSV</button>
+      </div>`, (box, close) => {
+
+      // section checkbox enables/disables its rows
+      const syncRows = () => {
+        box.querySelectorAll('.csv-sec-box').forEach(sb => {
+          box.querySelectorAll(`.csv-row-box[data-sec="${sb.dataset.sec}"]`).forEach(rb => { rb.disabled = !sb.checked; });
+        });
+      };
+      box.querySelectorAll('.csv-sec-box').forEach(sb => sb.addEventListener('change', syncRows));
+      syncRows();
+
+      $('csv-ok').onclick = () => {
+        const sections = {}, exclude = {};
+        box.querySelectorAll('.csv-sec-box').forEach(sb => { sections[sb.dataset.sec] = sb.checked ? 1 : 0; });
+        for (const s of ['pipes', 'fittings', 'penetrations', 'counts', 'other', 'list']) {
+          if (sections[s] === undefined) sections[s] = 1;   // section had no data → default on
+        }
+        box.querySelectorAll('.csv-row-box').forEach(rb => {
+          if (!rb.checked) (exclude[rb.dataset.sec] = exclude[rb.dataset.sec] || []).push(rb.dataset.key);
+        });
+        const prefs = { sections, exclude, note: $('csv-note').value };
+        State.S.exportPrefs = prefs;
+        State.touch();
+        close();
+        MarkupList.exportCsv(prefs);
+      };
+      $('csv-cancel').onclick = close;
+    });
+  }
+
   function countGroupDialog() {
     const used = State.S.countGroups.length;
     const color = Symbols.COLORS[used % (Symbols.COLORS.length - 1)];
@@ -361,7 +438,7 @@ const App = (() => {
     });
     $('btnSaveProject').onclick = () => Project.saveProject();
     $('btnExportPdf').onclick = () => Export.exportFlattenedPdf();
-    $('btnExportCsv').onclick = () => MarkupList.exportCsv();
+    $('btnExportCsv').onclick = () => csvExportDialog();
 
     $('btnUndo').onclick = () => State.undo();
     $('btnRedo').onclick = () => State.redo();
@@ -519,6 +596,6 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    photoLightbox, download, savedIndicator, showTab: (...a) => Props.showTab(...a),
+    csvExportDialog, photoLightbox, download, savedIndicator, showTab: (...a) => Props.showTab(...a),
   };
 })();

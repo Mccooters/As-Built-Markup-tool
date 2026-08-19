@@ -24,6 +24,7 @@ const Project = (() => {
       countGroups: S.countGroups, markups: S.markups,
       images: usedImages,
       defaults: S.defaults, activeCountGroup: S.activeCountGroup,
+      exportPrefs: S.exportPrefs,
     };
     if (includePdf && S.pdfBytes && S.pdfBytes.length < EMBED_LIMIT) {
       data.pdfBase64 = bytesToBase64(S.pdfBytes);
@@ -39,6 +40,7 @@ const Project = (() => {
     S.pageScales = data.pageScales || {};
     S.defaultScale = data.defaultScale || null;
     S.activeCountGroup = data.activeCountGroup || (S.countGroups[0] && S.countGroups[0].id) || null;
+    if (data.exportPrefs) S.exportPrefs = data.exportPrefs;
     if (data.defaults) Object.assign(S.defaults, data.defaults);
     if (data.unitFormat) S.unitFormat = data.unitFormat;
     // id counter must clear every existing id

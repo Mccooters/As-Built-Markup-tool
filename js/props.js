@@ -106,14 +106,21 @@ const Props = (() => {
   const CORE_SIZES = ['1"', '1-1/2"', '2"', '2-1/2"', '3"', '3-1/2"', '4"', '4-1/2"', '5"', '6"', '8"', '25mm', '32mm', '50mm', '65mm', '80mm', '100mm', '150mm'];
   const PEN_TYPES = ['Wall', 'Floor', 'Roof', 'Ceiling', 'Beam'];
 
+  /** Compact OD string of the current default pipe: '2.375"' or '54mm'. */
+  function defaultPipeOdStr() {
+    const label = Symbols.pipeOdLabel(D().pipeSize, D().material);   // e.g. '2.375"' / '54 mm'
+    return label.replace(/\s+/g, '');
+  }
+
   function penetRows(o) {
     return `<div class="prop-section"><div class="prop-cap">Core / sleeve</div>
       <div class="prop-row"><label>Hole Ø</label>
         <input type="text" id="p-pensize" value="${esc(o.penSize ?? D().penSize)}" list="core-sizes" placeholder='e.g. 2-1/2"'>
         <datalist id="core-sizes">${CORE_SIZES.map(s => `<option value="${esc(s)}">`).join('')}</datalist></div>
+      <div class="prop-row"><label></label><button class="mini-btn" id="p-penod" title="Set the hole Ø to the current pipe's actual outside diameter — for when the fire-rating clearance isn't decided yet">Ø = pipe OD (${esc(defaultPipeOdStr())})</button></div>
       <div class="prop-row"><label>Through</label><select id="p-pentype">${PEN_TYPES.map(s => `<option${s === (o.penType ?? D().penType) ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-penfire"${(o.penFire ?? D().penFire) ? ' checked' : ''}> Fire-rated (firestop required)</label></div>
-      <p class="prop-note">Rule of thumb: core Ø = pipe OD + 1" clearance (more with insulation or a sleeve). The Takeoff tab totals penetrations into a core-drill schedule.</p>
+      <p class="prop-note">Rule of thumb: core Ø = pipe OD + 1" clearance (more with insulation or a sleeve). Clearance not decided yet? Use <b>Ø = pipe OD</b> and add a note in the schedule export. The Takeoff tab totals penetrations into a core-drill schedule.</p>
     </div>`;
   }
 
@@ -313,6 +320,12 @@ const Props = (() => {
       const v = e.target.value.trim() || D().penSize;
       penPatch({ penSize: v });
     });
+    if (has('#p-penod')) has('#p-penod').addEventListener('click', () => {
+      const v = defaultPipeOdStr();
+      penPatch({ penSize: v });
+      if (has('#p-pensize')) has('#p-pensize').value = v;
+      renderProps();
+    });
     if (has('#p-pentype')) has('#p-pentype').addEventListener('change', e => penPatch({ penType: e.target.value }));
     if (has('#p-penfire')) has('#p-penfire').addEventListener('change', e => penPatch({ penFire: e.target.checked }));
 
@@ -455,7 +468,7 @@ const Props = (() => {
 
     takeoffRoot.innerHTML = h;
     const csv = takeoffRoot.querySelector('#to-csv');
-    if (csv) csv.addEventListener('click', () => MarkupList.exportCsv());
+    if (csv) csv.addEventListener('click', () => App.csvExportDialog());
   }
 
   /* ================= names ================= */

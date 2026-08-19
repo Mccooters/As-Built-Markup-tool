@@ -162,54 +162,105 @@ const MarkupList = (() => {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
 
-  function exportCsv() {
+  /** Stable row keys so export prefs can exclude individual schedule rows. */
+  const rowKeys = {
+    pipes: p => `${p.size}|${p.material}`,
+    fittings: s => s.name,
+    penetrations: p => `${p.size}|${p.type}|${p.fire ? 1 : 0}`,
+    counts: c => c.name,
+  };
+
+  /**
+   * Export the schedule. `prefs` selects what goes in:
+   *   { sections: {pipes, fittings, penetrations, counts, other, list},
+   *     exclude: {pipes: [keys…], …}, note: '…' }
+   * No prefs = everything (legacy behavior). Totals recompute over included rows.
+   */
+  function exportCsv(prefs) {
+    const P = prefs || { sections: { pipes: 1, fittings: 1, penetrations: 1, counts: 1, other: 1, list: 1 }, exclude: {}, note: '' };
+    const inc = sec => !!P.sections[sec];
+    const excluded = sec => new Set((P.exclude && P.exclude[sec]) || []);
+
     const fmt = State.S.unitFormat;
     const lines = [];
     lines.push(['AirMark markup export', State.S.fileName, new Date().toLocaleString()].map(csvCell).join(','));
+    if (P.note && P.note.trim()) lines.push(csvCell('NOTE: ' + P.note.trim()));
     lines.push('');
 
     const to = computeTakeoff();
-    lines.push('PIPE TAKEOFF');
-    lines.push(['Size', 'Material', 'Runs', `Total length (${fmt === 'm' ? 'm' : 'ft'})`, 'Total length (formatted)'].join(','));
-    for (const p of to.pipes) {
-      const raw = p.totalFt == null ? '' : (fmt === 'm' ? (p.totalFt / Units.FT_PER_M).toFixed(2) : p.totalFt.toFixed(2));
-      lines.push([p.size, p.material, p.count, raw, p.totalFt == null ? 'not calibrated' : Units.fmtLen(p.totalFt, fmt)].map(csvCell).join(','));
-    }
-    if (to.pipeRunCount) {
-      const raw = to.pipeTotalFt == null ? '' : (fmt === 'm' ? (to.pipeTotalFt / Units.FT_PER_M).toFixed(2) : to.pipeTotalFt.toFixed(2));
-      lines.push(['TOTAL', '', to.pipeRunCount, raw, to.pipeTotalFt == null ? '' : Units.fmtLen(to.pipeTotalFt, fmt)].map(csvCell).join(','));
-    }
-    lines.push('');
 
-    if (to.symbols.length) {
-      lines.push('FITTINGS & EQUIPMENT');
-      lines.push('Item,Qty');
-      for (const s of to.symbols) lines.push([s.name, s.count].map(csvCell).join(','));
-      lines.push('');
-    }
-    if (to.penetrations.length) {
-      lines.push('PENETRATION SCHEDULE');
-      lines.push('Core diameter,Through,Fire-rated,Qty');
-      for (const p of to.penetrations) lines.push([`Ø${p.size}`, p.type, p.fire ? 'YES' : '', p.count].map(csvCell).join(','));
-      lines.push('');
-    }
-    if (to.counts.length) {
-      lines.push('COUNTS');
-      lines.push('Group,Qty');
-      for (const c of to.counts) lines.push([c.name, c.count].map(csvCell).join(','));
-      lines.push('');
+    if (inc('pipes')) {
+      const ex = excluded('pipes');
+      const rows = to.pipes.filter(p => !ex.has(rowKeys.pipes(p)));
+      if (rows.length) {
+        lines.push('PIPE TAKEOFF');
+        lines.push(['Size', 'Material', 'Runs', `Total length (${fmt === 'm' ? 'm' : 'ft'})`, 'Total length (formatted)'].join(','));
+        let totFt = 0, totKnown = true, totRuns = 0;
+        for (const p of rows) {
+          const raw = p.totalFt == null ? '' : (fmt === 'm' ? (p.totalFt / Units.FT_PER_M).toFixed(2) : p.totalFt.toFixed(2));
+          lines.push([p.size, p.material, p.count, raw, p.totalFt == null ? 'not calibrated' : Units.fmtLen(p.totalFt, fmt)].map(csvCell).join(','));
+          totRuns += p.count;
+          if (p.totalFt == null) totKnown = false; else totFt += p.totalFt;
+        }
+        const raw = !totKnown ? '' : (fmt === 'm' ? (totFt / Units.FT_PER_M).toFixed(2) : totFt.toFixed(2));
+        lines.push(['TOTAL', '', totRuns, raw, !totKnown ? '' : Units.fmtLen(totFt, fmt)].map(csvCell).join(','));
+        lines.push('');
+      }
     }
 
-    lines.push('ALL MARKUPS');
-    lines.push(['#', 'Page', 'Type', 'Subject', 'Label/Comments', 'Measurement', 'Color', 'Author', 'Date'].join(','));
-    State.S.markups.forEach((m, i) => {
-      const r = rowData(m, i);
-      lines.push([r.idx + 1, r.page, r.type, r.subject, r.label, r.measure, r.color, r.author, r.date].map(csvCell).join(','));
-    });
+    if (inc('fittings')) {
+      const ex = excluded('fittings');
+      const rows = to.symbols.filter(s => !ex.has(rowKeys.fittings(s)));
+      if (rows.length) {
+        lines.push('FITTINGS & EQUIPMENT');
+        lines.push('Item,Qty');
+        for (const s of rows) lines.push([s.name, s.count].map(csvCell).join(','));
+        lines.push('');
+      }
+    }
+
+    if (inc('penetrations')) {
+      const ex = excluded('penetrations');
+      const rows = to.penetrations.filter(p => !ex.has(rowKeys.penetrations(p)));
+      if (rows.length) {
+        lines.push('PENETRATION SCHEDULE');
+        lines.push('Core diameter,Through,Fire-rated,Qty');
+        for (const p of rows) lines.push([`Ø${p.size}`, p.type, p.fire ? 'YES' : '', p.count].map(csvCell).join(','));
+        lines.push(['TOTAL', '', '', rows.reduce((a, r) => a + r.count, 0)].join(','));
+        lines.push('');
+      }
+    }
+
+    if (inc('counts')) {
+      const ex = excluded('counts');
+      const rows = to.counts.filter(c => !ex.has(rowKeys.counts(c)));
+      if (rows.length) {
+        lines.push('COUNTS');
+        lines.push('Group,Qty');
+        for (const c of rows) lines.push([c.name, c.count].map(csvCell).join(','));
+        lines.push('');
+      }
+    }
+
+    if (inc('other') && to.otherMeasures.length) {
+      lines.push('OTHER MEASUREMENTS');
+      lines.push('Measurement,Value');
+      for (const o of to.otherMeasures) lines.push([o.name, o.value].map(csvCell).join(','));
+      lines.push('');
+    }
+
+    if (inc('list')) {
+      lines.push('ALL MARKUPS');
+      lines.push(['#', 'Page', 'Type', 'Subject', 'Label/Comments', 'Measurement', 'Color', 'Author', 'Date'].join(','));
+      State.S.markups.forEach((m, i) => {
+        const r = rowData(m, i);
+        lines.push([r.idx + 1, r.page, r.type, r.subject, r.label, r.measure, r.color, r.author, r.date].map(csvCell).join(','));
+      });
+    }
 
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     App.download(blob, (State.S.fileName || 'markups').replace(/\.pdf$/i, '') + ' - takeoff.csv');
-    App.toast('CSV exported — pipe takeoff, counts and full markup list.', 'ok');
+    App.toast('Schedule exported.', 'ok');
   }
 
   /* ================= init ================= */
@@ -254,5 +305,5 @@ const MarkupList = (() => {
     render();
   }
 
-  return { init, render, computeTakeoff, exportCsv };
+  return { init, render, computeTakeoff, exportCsv, rowKeys };
 })();

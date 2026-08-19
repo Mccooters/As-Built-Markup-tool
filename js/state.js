@@ -33,6 +33,7 @@ const State = (() => {
     activeCountGroup: null,  // group id
     unitFormat: localStorage.getItem('abmt:units') || 'ftin',
     author: localStorage.getItem('abmt:author') || 'Field',
+    exportPrefs: null,       // schedule-export selections + note (persisted with the project)
 
     idCounter: 1,
     dirty: false,
