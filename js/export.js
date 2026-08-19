@@ -1,11 +1,21 @@
-/* ============ export.js — flattened PDF export + sample drawing generator ============ */
+/* ============ export.js — vector-quality PDF export + sample drawing generator ============
+ *
+ * Export philosophy: the ORIGINAL pages pass through untouched (their vector
+ * linework and text stay perfect), and the markups are drawn on top as native
+ * PDF vector geometry — paths, circles and embedded-font text — so they are
+ * exactly as crisp as the drawing at any zoom. Photos embed as images at their
+ * stored resolution. Only symbol glyphs (SVG art) rasterize, and those become
+ * tiny per-symbol stamps at very high scale rather than a page-wide layer.
+ * Any markup the vector renderer cannot reproduce falls back to its own
+ * high-res mini stamp, so nothing ever goes missing from an export.
+ */
 'use strict';
 
 const Export = (() => {
 
-  /* ================= flattened PDF ================= */
+  /* ================= canvas limits ================= */
 
-  // Canvas limits: iOS caps canvas area hard (silently blank above it)
+  // iOS caps canvas area hard (silently blank above it)
   const IS_TOUCH_DEVICE = (navigator.maxTouchPoints || 0) > 1;
   const MAX_AREA = IS_TOUCH_DEVICE ? 14e6 : 60e6;
   const MAX_DIM = 8100;
@@ -13,12 +23,8 @@ const Export = (() => {
   const layerScale = (w, h, target = 3) =>
     Math.max(1, Math.min(target, Math.sqrt(MAX_AREA / (w * h)), MAX_DIM / Math.max(w, h)));
 
-  /**
-   * Export keeps the ORIGINAL pages untouched (vector linework stays razor
-   * sharp) and stamps a transparent high-res raster of the markups over each
-   * page. Falls back to full-page rasterization only when the source PDF
-   * cannot be reloaded (e.g. encrypted).
-   */
+  /* ================= entry point ================= */
+
   async function exportFlattenedPdf() {
     const S = State.S;
     if (!S.pdf) { App.toast('Open a drawing first.', 'warn'); return; }
@@ -40,23 +46,499 @@ const Export = (() => {
     }
   }
 
-  /** Anchor + rotation that make a full-page stamp match the DISPLAYED orientation. */
-  function pageStampFrame(page) {
+  /* ================= page frame: displayed coords ⇄ page coords ================= */
+
+  /**
+   * A frame maps DISPLAYED coordinates (what the app shows: origin top-left,
+   * y-down, rotation applied — the space all markups live in) onto the page's
+   * raw coordinate system, for any /Rotate value.
+   */
+  function makeFrame(page) {
     const box = page.getCropBox();
     const R = ((page.getRotation().angle % 360) + 360) % 360;
     const sideways = R === 90 || R === 270;
-    const vpW = sideways ? box.height : box.width;   // displayed size
+    const vpW = sideways ? box.height : box.width;
     const vpH = sideways ? box.width : box.height;
-    let x = box.x, y = box.y;
-    if (R === 90) x = box.x + box.width;
-    else if (R === 180) { x = box.x + box.width; y = box.y + box.height; }
-    else if (R === 270) y = box.y + box.height;
-    return { box, R, vpW, vpH, x, y };
+    const bx = box.x, by = box.y, bw = box.width, bh = box.height;
+
+    // displayed → drawSvgPath space (origin at (bx, by+bh), y-down)
+    const map = (x, y) => {
+      switch (R) {
+        case 90: return { x: y, y: bh - x };
+        case 180: return { x: bw - x, y: bh - y };
+        case 270: return { x: bw - y, y: x };
+        default: return { x, y };
+      }
+    };
+    // displayed → absolute page coords (y-up)
+    const pagePt = (x, y) => {
+      const p = map(x, y);
+      return { x: bx + p.x, y: by + bh - p.y };
+    };
+    // screen-space angle (deg, y-down clockwise-positive) → PDF CCW degrees
+    const angle = a => R - a;
+
+    return { box, R, vpW, vpH, originX: bx, originY: by + bh, map, pagePt, angle };
   }
+
+  /* ================= vector drawing helpers ================= */
+
+  const rgbCache = {};
+  function rgbOf(hex) {
+    if (rgbCache[hex]) return rgbCache[hex];
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    const n = m ? parseInt(m[1], 16) : 0xe02020;
+    return (rgbCache[hex] = PDFLib.rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255));
+  }
+  const WHITE = () => PDFLib.rgb(1, 1, 1);
+
+  /** Path d string from displayed points through the frame map. */
+  function svgD(pts, close, f) {
+    let d = '';
+    for (let i = 0; i < pts.length; i++) {
+      const q = f.map(pts[i].x, pts[i].y);
+      d += (i ? 'L' : 'M') + q.x.toFixed(2) + ' ' + q.y.toFixed(2);
+    }
+    return close ? d + 'Z' : d;
+  }
+
+  function strokePath(page, f, d, color, width, o = {}) {
+    page.drawSvgPath(d, {
+      x: f.originX, y: f.originY,
+      borderColor: color, borderWidth: width,
+      borderLineCap: PDFLib.LineCapStyle.Round,
+      borderOpacity: o.opacity != null ? o.opacity : 1,
+      ...(o.dash ? { borderDashArray: o.dash } : {}),
+    });
+  }
+  function fillPath(page, f, d, color, opacity) {
+    page.drawSvgPath(d, { x: f.originX, y: f.originY, color, opacity: opacity != null ? opacity : 1 });
+  }
+  function circle(page, f, cx, cy, r, o = {}) {
+    const c = f.pagePt(cx, cy);
+    page.drawEllipse({
+      x: c.x, y: c.y, xScale: r, yScale: r,
+      ...(o.fill ? { color: o.fill, opacity: o.opacity != null ? o.opacity : 1 } : {}),
+      ...(o.stroke ? { borderColor: o.stroke, borderWidth: o.width || 1, borderOpacity: o.opacity != null ? o.opacity : 1 } : {}),
+    });
+  }
+
+  function dashOf(m, lw) {
+    if (m.lineStyle === 'dash') return [lw * 3.2, lw * 2.2];
+    if (m.lineStyle === 'dot') return [0.1, lw * 2.4];
+    return null;
+  }
+
+  /* ---- text ---- */
+
+  const encodable = new Map();
+  const CHAR_FALLBACK = { '⚠': '!', '→': '>', '←': '<', '✕': 'x', '✛': '+' };
+  function sanitize(str, font) {
+    let out = '';
+    for (const ch of String(str || '')) {
+      let ok = encodable.get(ch);
+      if (ok === undefined) {
+        try { font.widthOfTextAtSize(ch, 10); ok = true; } catch (_) { ok = false; }
+        encodable.set(ch, ok);
+      }
+      out += ok ? ch : (CHAR_FALLBACK[ch] || '?');
+    }
+    return out;
+  }
+
+  /**
+   * Text at a displayed baseline point, with screen-space rotation and an
+   * optional white halo pill (mirrors the SVG labels' paint-order halo).
+   */
+  function drawLabel(page, f, fonts, str, cx, cy, o = {}) {
+    const font = o.bold ? fonts.bold : fonts.reg;
+    str = sanitize(str, font);
+    if (!str.trim()) return;
+    const size = o.size || 12;
+    const w = font.widthOfTextAtSize(str, size);
+    const aDeg = f.angle(o.angleScreen || 0);
+    const a = aDeg * Math.PI / 180;
+    const dir = { x: Math.cos(a), y: Math.sin(a) };
+    const up = { x: -Math.sin(a), y: Math.cos(a) };
+    const c = f.pagePt(cx, cy);
+    const half = o.anchor === 'start' ? 0 : w / 2;
+    const bx = c.x - dir.x * half, by = c.y - dir.y * half;
+    if (o.halo) {
+      const pad = size * 0.22, drop = size * 0.3;
+      page.drawRectangle({
+        x: bx - dir.x * pad + up.x * -drop,
+        y: by - dir.y * pad + up.y * -drop,
+        width: w + pad * 2, height: size * 1.28,
+        rotate: PDFLib.degrees(aDeg),
+        color: WHITE(), opacity: o.haloOpacity != null ? o.haloOpacity : 0.8,
+      });
+    }
+    page.drawText(str, {
+      x: bx, y: by, size, font,
+      color: rgbOf(o.color || '#111111'),
+      rotate: PDFLib.degrees(aDeg),
+      opacity: o.opacity != null ? o.opacity : 1,
+    });
+  }
+
+  /** Wrapped multi-line block matching the SVG text builders. */
+  function drawWrapped(page, f, fonts, m, color, opacity) {
+    const fs = m.fontSize || 12, pad = fs * 0.35;
+    const lines = Render.wrapText(m.text, m.w - pad * 2, fs);
+    lines.forEach((ln, i) => {
+      drawLabel(page, f, fonts, ln, m.x + pad, m.y + pad + fs * 0.85 + i * fs * 1.25,
+        { size: fs, color, anchor: 'start', opacity });
+    });
+  }
+
+  /* ---- cloud scallops as beziers (arc flags avoided entirely) ---- */
+
+  function cloudD(pts, arcSize, closed, f) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      area += (b.x - a.x) * (b.y + a.y);
+    }
+    const P = (closed && area < 0) ? [...pts].reverse() : pts;
+    const n = P.length, segs = closed ? n : n - 1;
+    const q0 = f.map(P[0].x, P[0].y);
+    let d = `M${q0.x.toFixed(2)} ${q0.y.toFixed(2)}`;
+    for (let i = 0; i < segs; i++) {
+      const a = P[i], b = P[(i + 1) % n];
+      const len = Geo.dist(a, b);
+      if (len < 0.5) continue;
+      const chunks = Math.max(1, Math.round(len / Math.max(4, arcSize)));
+      const ux = (b.x - a.x) / chunks, uy = (b.y - a.y) / chunks;
+      const chord = len / chunks, r = chord * 0.62;
+      for (let c = 1; c <= chunks; c++) {
+        const p1 = { x: a.x + ux * (c - 1), y: a.y + uy * (c - 1) };
+        const p2 = { x: a.x + ux * c, y: a.y + uy * c };
+        d += arcCubics(p1, p2, r, f);
+      }
+    }
+    return d;
+  }
+
+  /** Circular arc p1→p2 (radius r, SVG sweep=1, largeArc=0) as cubic segments, mapped. */
+  function arcCubics(p1, p2, r, f) {
+    const dx = (p2.x - p1.x) / 2, dy = (p2.y - p1.y) / 2;
+    const d2 = dx * dx + dy * dy;
+    const k = Math.sqrt(Math.max(0, r * r / d2 - 1));
+    // SVG center rule for fA=0, fS=1 → center = mid + k*(dy, -dx)
+    const cx = p1.x + dx + k * dy, cy = p1.y + dy - k * dx;
+    let a1 = Math.atan2(p1.y - cy, p1.x - cx);
+    let a2 = Math.atan2(p2.y - cy, p2.x - cx);
+    let delta = a2 - a1;
+    while (delta <= 0) delta += 2 * Math.PI;      // sweep=1 → positive angle in y-down space
+    const nSeg = Math.max(1, Math.ceil(delta / (Math.PI / 2)));
+    const step = delta / nSeg;
+    let d = '';
+    for (let i = 0; i < nSeg; i++) {
+      const t1 = a1 + i * step, t2 = t1 + step;
+      const alpha = (4 / 3) * Math.tan(step / 4) * r;
+      const s1 = { x: cx + r * Math.cos(t1), y: cy + r * Math.sin(t1) };
+      const s2 = { x: cx + r * Math.cos(t2), y: cy + r * Math.sin(t2) };
+      const c1 = { x: s1.x - alpha * Math.sin(t1), y: s1.y + alpha * Math.cos(t1) };
+      const c2 = { x: s2.x + alpha * Math.sin(t2), y: s2.y - alpha * Math.cos(t2) };
+      const m1 = f.map(c1.x, c1.y), m2 = f.map(c2.x, c2.y), m3 = f.map(s2.x, s2.y);
+      d += `C${m1.x.toFixed(2)} ${m1.y.toFixed(2)} ${m2.x.toFixed(2)} ${m2.y.toFixed(2)} ${m3.x.toFixed(2)} ${m3.y.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  const rectPts = m => [
+    { x: m.x, y: m.y }, { x: m.x + m.w, y: m.y },
+    { x: m.x + m.w, y: m.y + m.h }, { x: m.x, y: m.y + m.h },
+  ];
+
+  /** Rounded-rect path (displayed coords, mapped), corner radius r. */
+  function roundedRectD(x, y, w, h, r, f) {
+    r = Math.min(r, w / 2, h / 2);
+    const K = 0.5523 * r;
+    const P = (px, py) => { const q = f.map(px, py); return `${q.x.toFixed(2)} ${q.y.toFixed(2)}`; };
+    return `M${P(x + r, y)}L${P(x + w - r, y)}C${P(x + w - r + K, y)} ${P(x + w, y + r - K)} ${P(x + w, y + r)}` +
+      `L${P(x + w, y + h - r)}C${P(x + w, y + h - r + K)} ${P(x + w - r + K, y + h)} ${P(x + w - r, y + h)}` +
+      `L${P(x + r, y + h)}C${P(x + r - K, y + h)} ${P(x, y + h - r + K)} ${P(x, y + h - r)}` +
+      `L${P(x, y + r)}C${P(x, y + r - K)} ${P(x + r - K, y)} ${P(x + r, y)}Z`;
+  }
+
+  const rotPt = (p, c, deg) => {
+    if (!deg) return p;
+    const a = deg * Math.PI / 180, s = Math.sin(a), co = Math.cos(a);
+    return { x: c.x + (p.x - c.x) * co - (p.y - c.y) * s, y: c.y + (p.x - c.x) * s + (p.y - c.y) * co };
+  };
+
+  /* ================= per-type vector renderers ================= */
+
+  function drawVectorMarkup(page, f, fonts, m) {
+    const op = m.opacity != null ? m.opacity : 1;
+    const col = rgbOf(m.color);
+    const lw = m.lineWidth || 2;
+
+    switch (m.type) {
+
+      case 'pipe': {
+        const w = State.pipeDisplayWidth(m);
+        const d = svgD(m.pts, false, f);
+        strokePath(page, f, d, WHITE(), w + Math.max(1.5, w * 0.7), { opacity: 0.65 * op });
+        strokePath(page, f, d, col, w, { opacity: op, dash: dashOf(m, w) });
+        for (const p of [m.pts[0], m.pts[m.pts.length - 1]]) {
+          circle(page, f, p.x, p.y, Math.max(1.2, w * 0.75), { fill: col, opacity: op });
+        }
+        if (m.showLabel !== false) {
+          const seg = Geo.longestSegment(m.pts);
+          const len = Render.measureLabel(m);
+          const str = len ? `${m.pipeSize} – ${len}` : (m.pipeSize || '');
+          if (str) {
+            const off = w / 2 + (m.fontSize || 12) * 0.62;
+            drawLabel(page, f, fonts, str, seg.mid.x, seg.mid.y - off,
+              { size: m.fontSize || 12, bold: true, color: m.color, angleScreen: seg.angle, halo: true, opacity: op });
+          }
+        }
+        return;
+      }
+
+      case 'line':
+        strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op, dash: dashOf(m, lw) });
+        return;
+
+      case 'arrow': {
+        strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op, dash: dashOf(m, lw) });
+        const head = Geo.arrowHead(m.pts[0], m.pts[1], Math.max(7, lw * 3.4));
+        fillPath(page, f, svgD(head, true, f), col, op);
+        return;
+      }
+
+      case 'polyline': {
+        const d = m.cloudStyle ? cloudD(m.pts, m.arcSize || 14, m.closed, f) + (m.closed ? 'Z' : '')
+          : svgD(m.pts, m.closed, f);
+        if (m.closed && m.fill && m.fill !== 'none') fillPath(page, f, d, rgbOf(m.fill), (m.fillOpacity != null ? m.fillOpacity : 0.2) * op);
+        strokePath(page, f, d, col, lw, { opacity: op, dash: dashOf(m, lw) });
+        return;
+      }
+
+      case 'pen':
+        strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op });
+        return;
+
+      case 'highlight':
+        strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: 0.45 * op });
+        return;
+
+      case 'rect': {
+        const d = svgD(rectPts(m), true, f);
+        if (m.fill && m.fill !== 'none') fillPath(page, f, d, rgbOf(m.fill), (m.fillOpacity != null ? m.fillOpacity : 0.2) * op);
+        strokePath(page, f, d, col, lw, { opacity: op, dash: dashOf(m, lw) });
+        return;
+      }
+
+      case 'ellipse': {
+        const c = f.pagePt(m.x + m.w / 2, m.y + m.h / 2);
+        const sideways = f.R === 90 || f.R === 270;
+        const rx = Math.abs(m.w / 2), ry = Math.abs(m.h / 2);
+        page.drawEllipse({
+          x: c.x, y: c.y,
+          xScale: sideways ? ry : rx, yScale: sideways ? rx : ry,
+          ...(m.fill && m.fill !== 'none' ? { color: rgbOf(m.fill), opacity: (m.fillOpacity != null ? m.fillOpacity : 0.2) * op } : {}),
+          borderColor: col, borderWidth: lw, borderOpacity: op,
+          ...(dashOf(m, lw) ? { borderDashArray: dashOf(m, lw) } : {}),
+        });
+        return;
+      }
+
+      case 'cloud': {
+        const d = cloudD(rectPts(m), m.arcSize || 14, true, f) + 'Z';
+        if (m.fill && m.fill !== 'none') fillPath(page, f, d, rgbOf(m.fill), (m.fillOpacity != null ? m.fillOpacity : 0.2) * op);
+        strokePath(page, f, d, col, lw, { opacity: op });
+        return;
+      }
+
+      case 'marea': {
+        const d = svgD(m.pts, true, f);
+        const hasFill = m.fill && m.fill !== 'none';
+        fillPath(page, f, d, hasFill ? rgbOf(m.fill) : col, (hasFill ? (m.fillOpacity != null ? m.fillOpacity : 0.2) : 0.13) * op);
+        strokePath(page, f, d, col, lw, { opacity: op, dash: dashOf(m, lw) });
+        if (m.showLabel !== false) {
+          const c = Geo.centroid(m.pts);
+          drawLabel(page, f, fonts, Render.measureLabel(m) || '! no scale', c.x, c.y,
+            { size: m.fontSize || 12, bold: true, color: m.color, halo: true, opacity: op });
+        }
+        return;
+      }
+
+      case 'mlength': {
+        const [a, b] = m.pts;
+        strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op, dash: dashOf(m, lw) });
+        const ang = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
+        const t = Math.max(5, lw * 2.5);
+        for (const p of [a, b]) {
+          const tick = [
+            { x: p.x + t * Math.cos(ang), y: p.y + t * Math.sin(ang) },
+            { x: p.x - t * Math.cos(ang), y: p.y - t * Math.sin(ang) },
+          ];
+          strokePath(page, f, svgD(tick, false, f), col, lw, { opacity: op });
+        }
+        if (m.showLabel !== false) {
+          const seg = Geo.longestSegment(m.pts);
+          drawLabel(page, f, fonts, Render.measureLabel(m) || '! no scale', seg.mid.x, seg.mid.y - (m.fontSize || 12) * 0.6,
+            { size: m.fontSize || 12, bold: true, color: m.color, angleScreen: seg.angle, halo: true, opacity: op });
+        }
+        return;
+      }
+
+      case 'mpoly': {
+        strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op, dash: dashOf(m, lw) });
+        for (const p of m.pts) circle(page, f, p.x, p.y, Math.max(2, lw * 0.85), { fill: col, opacity: op });
+        if (m.showLabel !== false) {
+          const seg = Geo.longestSegment(m.pts);
+          drawLabel(page, f, fonts, Render.measureLabel(m) || '! no scale', seg.mid.x, seg.mid.y - (m.fontSize || 12) * 0.6,
+            { size: m.fontSize || 12, bold: true, color: m.color, angleScreen: seg.angle, halo: true, opacity: op });
+        }
+        return;
+      }
+
+      case 'text': {
+        if (m.fill && m.fill !== 'none') {
+          fillPath(page, f, svgD(rectPts(m), true, f), rgbOf(m.fill), (m.fillOpacity != null ? m.fillOpacity : 0.85) * op);
+        }
+        if (m.border) strokePath(page, f, svgD(rectPts(m), true, f), col, lw, { opacity: op });
+        drawWrapped(page, f, fonts, m, m.color, op);
+        return;
+      }
+
+      case 'callout': {
+        const bx = m.anchor.x < m.x ? m.x : (m.anchor.x > m.x + m.w ? m.x + m.w : Math.max(m.x, Math.min(m.x + m.w, m.anchor.x)));
+        const by = m.anchor.y < m.y ? m.y : (m.anchor.y > m.y + m.h ? m.y + m.h : m.y + m.h / 2);
+        strokePath(page, f, svgD([{ x: bx, y: by }, m.anchor], false, f), col, lw, { opacity: op });
+        fillPath(page, f, svgD(Geo.arrowHead({ x: bx, y: by }, m.anchor, Math.max(7, lw * 3.2)), true, f), col, op);
+        const boxD = roundedRectD(m.x, m.y, m.w, m.h, 2, f);
+        fillPath(page, f, boxD, WHITE(), 0.9 * op);
+        strokePath(page, f, boxD, col, lw, { opacity: op });
+        drawWrapped(page, f, fonts, m, '#111111', op);
+        return;
+      }
+
+      case 'stamp': {
+        const s = m.size || 20, fs = s * 0.55;
+        const str = sanitize(m.text || '', fonts.bold);
+        // letter-spacing approximation used on screen
+        const tw = fonts.bold.widthOfTextAtSize(str, fs) + fs * 0.08 * Math.max(0, str.length - 1) + s * 0.9;
+        const rot = m.rotation || 0;
+        const c = { x: m.x, y: m.y };
+        const corners = rectPts({ x: m.x - tw / 2, y: m.y - s / 2, w: tw, h: s }).map(p => rotPt(p, c, rot));
+        const d = svgD(corners, true, f);
+        fillPath(page, f, d, WHITE(), 0.82 * op);
+        strokePath(page, f, d, col, Math.max(1.4, s * 0.09), { opacity: op });
+        drawLabel(page, f, fonts, str, m.x, m.y + fs * 0.36, {
+          size: fs, bold: true, color: m.color, angleScreen: rot, opacity: op,
+        });
+        return;
+      }
+
+      case 'penet': {
+        const s = m.size || 16, r = s / 2;
+        const k = Math.max(1.0, s * 0.08);
+        circle(page, f, m.x, m.y, r * 1.05, { fill: WHITE(), opacity: 0.75 * op });
+        circle(page, f, m.x, m.y, r, { stroke: col, width: k, opacity: op });
+        const c7 = r * 0.7, c145 = r * 1.45;
+        strokePath(page, f, svgD([{ x: m.x - c7, y: m.y - c7 }, { x: m.x + c7, y: m.y + c7 }], false, f), col, k, { opacity: op });
+        strokePath(page, f, svgD([{ x: m.x + c7, y: m.y - c7 }, { x: m.x - c7, y: m.y + c7 }], false, f), col, k, { opacity: op });
+        for (const [x1, y1, x2, y2] of [
+          [m.x, m.y - c145, m.x, m.y - r], [m.x, m.y + r, m.x, m.y + c145],
+          [m.x - c145, m.y, m.x - r, m.y], [m.x + r, m.y, m.x + c145, m.y],
+        ]) {
+          strokePath(page, f, svgD([{ x: x1, y: y1 }, { x: x2, y: y2 }], false, f), col, k, { opacity: op });
+        }
+        if (m.showLabel !== false) {
+          const fs = Math.max(4.5, s * 0.4);
+          drawLabel(page, f, fonts, `Ø${m.penSize || '?'}`, m.x, m.y + r * 1.5 + fs,
+            { size: fs, bold: true, color: m.color, halo: true, opacity: op });
+          const sub = `${m.penType || ''}${m.penFire ? ' · FIRE' : ''}`.trim();
+          if (sub) {
+            drawLabel(page, f, fonts, sub, m.x, m.y + r * 1.5 + fs * 2.15,
+              { size: fs * 0.78, bold: !!m.penFire, color: m.penFire ? '#e02020' : m.color, halo: true, opacity: op });
+          }
+        }
+        return;
+      }
+
+      case 'count': {
+        const grp = State.countGroup(m.groupId);
+        const color = rgbOf(grp ? grp.color : m.color);
+        const shape = grp ? grp.shape : 'circle';
+        const r = m.size || 7;
+        const pts = ({
+          square: rectPts({ x: m.x - r, y: m.y - r, w: 2 * r, h: 2 * r }),
+          diamond: [{ x: m.x, y: m.y - r * 1.2 }, { x: m.x + r * 1.2, y: m.y }, { x: m.x, y: m.y + r * 1.2 }, { x: m.x - r * 1.2, y: m.y }],
+          triangle: [{ x: m.x, y: m.y - r * 1.25 }, { x: m.x + r * 1.2, y: m.y + r }, { x: m.x - r * 1.2, y: m.y + r }],
+        })[shape];
+        if (shape === 'cross') {
+          strokePath(page, f, svgD([{ x: m.x - r, y: m.y - r }, { x: m.x + r, y: m.y + r }], false, f), color, 2.7, { opacity: op });
+          strokePath(page, f, svgD([{ x: m.x - r, y: m.y + r }, { x: m.x + r, y: m.y - r }], false, f), color, 2.7, { opacity: op });
+        } else if (pts) {
+          const d = svgD(pts, true, f);
+          fillPath(page, f, d, color, 0.25 * op);
+          strokePath(page, f, d, color, 1.8, { opacity: op });
+        } else {
+          circle(page, f, m.x, m.y, r, { fill: color, opacity: 0.25 * op });
+          circle(page, f, m.x, m.y, r, { stroke: color, width: 1.8, opacity: op });
+        }
+        return;
+      }
+
+      default:
+        throw new Error('no vector renderer for ' + m.type);
+    }
+  }
+
+  /* ================= photos & mini raster stamps ================= */
+
+  async function drawPhoto(out, page, f, fonts, m) {
+    const src = State.S.images[m.imgId];
+    if (!src) throw new Error('missing image');
+    const img = /^data:image\/png/.test(src) ? await out.embedPng(src) : await out.embedJpg(src);
+    const anchor = f.pagePt(m.x, m.y + m.h);
+    page.drawImage(img, {
+      x: anchor.x, y: anchor.y, width: m.w, height: m.h,
+      rotate: PDFLib.degrees(f.R),
+      opacity: m.opacity != null ? m.opacity : 1,
+    });
+    const frameD = svgD(rectPts(m), true, f);
+    strokePath(page, f, frameD, rgbOf(m.color), m.lineWidth || 2, {});
+    if (m.caption) {
+      const fs = m.fontSize || 11;
+      const strip = { x: m.x, y: m.y + m.h - fs * 1.6, w: m.w, h: fs * 1.6 };
+      fillPath(page, f, svgD(rectPts(strip), true, f), WHITE(), 0.85);
+      drawLabel(page, f, fonts, m.caption, m.x + fs * 0.4, m.y + m.h - fs * 0.45,
+        { size: fs, color: '#111111', anchor: 'start' });
+    }
+  }
+
+  /** High-res raster stamp of a single markup (symbols, or any vector failure). */
+  async function miniStamp(out, page, f, m) {
+    const b = Geo.markupBounds(m);
+    if (b.w <= 0 || b.h <= 0) return;
+    const s = Math.max(2, Math.min(10, 2400 / Math.max(b.w, b.h)));
+    const pxW = Math.max(2, Math.round(b.w * s)), pxH = Math.max(2, Math.round(b.h * s));
+    const svgStr = pageSvg([m], b, pxW, pxH);
+    const canvas = await svgToCanvas(svgStr, pxW, pxH);
+    const png = await out.embedPng(canvas.toDataURL('image/png'));
+    const anchor = f.pagePt(b.x, b.y + b.h);
+    page.drawImage(png, {
+      x: anchor.x, y: anchor.y, width: b.w, height: b.h,
+      rotate: PDFLib.degrees(f.R),
+    });
+  }
+
+  /* ================= export passes ================= */
 
   async function overlayExport(out, progress) {
     const S = State.S;
     const n = S.pageCount;
+    const fonts = {
+      reg: await out.embedFont(PDFLib.StandardFonts.Helvetica),
+      bold: await out.embedFont(PDFLib.StandardFonts.HelveticaBold),
+    };
 
     for (let p = 1; p <= n; p++) {
       const markups = State.pageMarkups(p);
@@ -64,36 +546,24 @@ const Export = (() => {
       progress.set(((p - 1) / n) * 100, `Marking up page ${p} of ${n}…`);
 
       const page = out.getPage(p - 1);
-      const f = pageStampFrame(page);
+      const f = makeFrame(page);
+      page.pushOperators(PDFLib.setLineJoin(PDFLib.LineJoinStyle.Round));
 
-      // photos embed natively at their stored resolution (upright pages)
-      const nativePhotos = f.R === 0
-        ? markups.filter(m => m.type === 'photo' && S.images[m.imgId])
-        : [];
-      for (const ph of nativePhotos) {
-        const src = S.images[ph.imgId];
-        const img = /^data:image\/png/.test(src) ? await out.embedPng(src) : await out.embedJpg(src);
-        page.drawImage(img, {
-          x: f.box.x + ph.x,
-          y: f.box.y + f.box.height - ph.y - ph.h,
-          width: ph.w, height: ph.h,
-        });
+      for (const m of markups) {
+        try {
+          if (m.type === 'photo') await drawPhoto(out, page, f, fonts, m);
+          else if (m.type === 'symbol') await miniStamp(out, page, f, m);
+          else drawVectorMarkup(page, f, fonts, m);
+        } catch (err) {
+          // never lose a markup — fall back to a high-res raster of just this one
+          console.warn('vector export fallback for', m.type, err);
+          try { await miniStamp(out, page, f, m); } catch (e2) { console.error('stamp failed', e2); }
+        }
       }
-
-      // everything else → transparent high-res layer
-      const s = layerScale(f.vpW, f.vpH);
-      const pxW = Math.round(f.vpW * s), pxH = Math.round(f.vpH * s);
-      const svgStr = pageSvg(markups, f.vpW, f.vpH, pxW, pxH, { noPhotoImage: f.R === 0 });
-      const canvas = await svgToCanvas(svgStr, pxW, pxH);
-      const png = await out.embedPng(canvas.toDataURL('image/png'));
-      page.drawImage(png, {
-        x: f.x, y: f.y, width: f.vpW, height: f.vpH,
-        rotate: PDFLib.degrees(f.R),
-      });
     }
 
     await finishExport(out, progress,
-      'As-built PDF exported — original drawing untouched (full vector quality), markups stamped on top.');
+      'As-built PDF exported — drawing and markups both at full vector quality.');
   }
 
   /** Fallback: rasterize whole pages (only when the source PDF can't be reloaded). */
@@ -117,7 +587,7 @@ const Export = (() => {
 
       const markups = State.pageMarkups(p);
       if (markups.length) {
-        const svgStr = pageSvg(markups, vp1.width, vp1.height, canvas.width, canvas.height);
+        const svgStr = pageSvg(markups, { x: 0, y: 0, w: vp1.width, h: vp1.height }, canvas.width, canvas.height);
         const layer = await svgToCanvas(svgStr, canvas.width, canvas.height);
         ctx.drawImage(layer, 0, 0);
       }
@@ -140,12 +610,13 @@ const Export = (() => {
     App.toast(message, 'ok');
   }
 
-  function pageSvg(markups, pageW, pageH, pxW, pxH, opts) {
+  /** SVG of the given markups over the viewBox rect vb {x,y,w,h}. */
+  function pageSvg(markups, vb, pxW, pxH, opts) {
     const holder = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     for (const m of markups) holder.appendChild(Render.buildMarkupEl(m, opts));
     const inner = new XMLSerializer().serializeToString(holder)
       .replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${pageW} ${pageH}" width="${pxW}" height="${pxH}">${inner}</svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" width="${pxW}" height="${pxH}">${inner}</svg>`;
   }
 
   /** Rasterize an SVG string onto a fresh TRANSPARENT canvas. */
@@ -227,27 +698,21 @@ const Export = (() => {
     rect(bx, by, bw, bh, 5);
 
     // ---- interior walls ----
-    // compressor room top-left (25 × 25 ft)
     line(bx + bay, by, bx + bay, by + bay, 3.2);
     line(bx, by + bay, bx + bay, by + bay, 3.2);
-    // maintenance next to it
     line(bx + 2 * bay, by, bx + 2 * bay, by + bay * 0.75, 3.2);
     line(bx + bay, by + bay * 0.75, bx + 2 * bay, by + bay * 0.75, 3.2);
-    // office strip bottom-left
     line(bx, by + bh - bay * 0.6, bx + bay * 1.5, by + bh - bay * 0.6, 3.2);
     line(bx + bay * 1.5, by + bh - bay * 0.6, bx + bay * 1.5, by + bh, 3.2);
-    // shipping right end
     line(bx + bw - bay, by + bay, bx + bw, by + bay, 3.2);
     line(bx + bw - bay, by, bx + bw - bay, by + bay, 3.2);
 
-    // door openings (gaps drawn as white-ish over walls → draw swing arcs instead)
     const door = (x, y, r, a0) => {
       page.drawLine({ start: { x, y: Y(y) }, end: { x: x + r * Math.cos(a0), y: Y(y) + r * Math.sin(a0) }, thickness: 1.2, color: dim });
     };
     door(bx + bay - 90, by + bay, 80, Math.PI / 2);
     door(bx + bay * 1.5, by + bh - bay * 0.6 + 90, 80, 0);
 
-    // room labels
     text('COMPRESSOR ROOM', bx + 40, by + 60, 22, bold);
     text('MAINTENANCE', bx + bay + 40, by + 60, 22, bold);
     text('PRODUCTION FLOOR', bx + bay + 60, by + bay + 480, 30, bold, dim);
@@ -282,7 +747,6 @@ const Export = (() => {
     machine(bx + 4 * bay + 140, by + bay + 660, 240, 140, 'PACK-1');
     machine(bx + bay + 620, by + 220, 220, 130, 'MILL-1');
 
-    // workbench row along bottom
     for (let i = 0; i < 4; i++) {
       rect(bx + bay * 1.6 + i * 380, by + bh - 200, 280, 110, 1.6);
       text('BENCH-' + (i + 1), bx + bay * 1.6 + i * 380 + 20, by + bh - 140, 13);
@@ -296,7 +760,6 @@ const Export = (() => {
     line(nx, ny - 40, nx + 14, ny - 12, 2.4);
     ctext('N', nx, ny - 62, 24, bold);
 
-    // dimension note
     text('125\'-0" × 75\'-0" CLEAR', bx + bw / 2 - 120, by + bh + 66, 16, helv, dim);
 
     return doc.save({ useObjectStreams: false });

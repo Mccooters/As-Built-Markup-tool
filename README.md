@@ -76,7 +76,7 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 
 - **Autosave** — markups are saved in the browser per drawing (keyed to the PDF's fingerprint) about a second after every change. Re-open the same PDF and you'll be offered a restore.
 - **`.airmark` project** — `Save` writes a single JSON file containing markups, calibration, count groups *and the PDF itself* (when under 50 MB), so a project can move between computers. `Load` (or drag-drop) opens it back up.
-- **Flattened PDF** — `Export PDF` keeps the **original pages untouched** (vector linework and text stay at full quality, still searchable) and stamps the markups on top as a transparent high-resolution layer; photos embed at their stored resolution. Rotated pages are handled. Only if the source PDF can't be reloaded (e.g. encrypted) does it fall back to rasterizing pages.
+- **Flattened PDF** — `Export PDF` keeps the **original pages untouched** (vector linework and text stay at full quality, still searchable) and draws the markups on top as **native PDF vector geometry** — pipes, shapes, clouds, labels and penetration marks are as crisp as the drawing at any zoom. Photos embed at their stored resolution; only symbol glyphs rasterize, as tiny ~600 DPI stamps. Rotated pages are handled, exports are small, and any markup the vector renderer can't reproduce falls back to its own high-res stamp so nothing goes missing. Only if the source PDF can't be reloaded (e.g. encrypted) does it fall back to rasterizing pages.
 - **CSV** — pipe takeoff by size/material, fittings & equipment quantities, counts, and the complete markup list.
 
 ## Tech notes
@@ -109,7 +109,6 @@ Markup geometry is stored in PDF page units (points), so markups stay put at any
 
 ## Known limits / ideas for later
 
-- Exported markups are a high-resolution raster layer over the (fully vector) original — extreme zoom shows pixels on the markups themselves, never on the drawing.
 - One drawing open at a time; no markup layers/status workflow yet.
 - Symbol library is fixed — a custom "tool chest" editor would be a natural next step.
 - No cloud sync/collaboration — files and browser storage only, by design.
