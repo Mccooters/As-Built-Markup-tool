@@ -8,8 +8,15 @@ const Units = (() => {
 
   const FT_PER_M = 3.280839895;
 
-  /** Preset drawing scales (label → ft of real world per inch of paper). */
+  /** Preset drawing scales — metric ratios first (the standard), imperial after. */
   const SCALE_PRESETS = [
+    { id: 'metric-20',  label: '1:20',  ratio: 20 },
+    { id: 'metric-25',  label: '1:25',  ratio: 25 },
+    { id: 'metric-50',  label: '1:50',  ratio: 50 },
+    { id: 'metric-100', label: '1:100', ratio: 100 },
+    { id: 'metric-200', label: '1:200', ratio: 200 },
+    { id: 'metric-250', label: '1:250', ratio: 250 },
+    { id: 'metric-500', label: '1:500', ratio: 500 },
     { id: 'arch-1/16', label: '1/16" = 1\'-0"', ftPerIn: 16 },
     { id: 'arch-3/32', label: '3/32" = 1\'-0"', ftPerIn: 32 / 3 },
     { id: 'arch-1/8',  label: '1/8" = 1\'-0"',  ftPerIn: 8 },
@@ -24,9 +31,6 @@ const Units = (() => {
     { id: 'eng-30',    label: '1" = 30\'',      ftPerIn: 30 },
     { id: 'eng-40',    label: '1" = 40\'',      ftPerIn: 40 },
     { id: 'eng-50',    label: '1" = 50\'',      ftPerIn: 50 },
-    { id: 'metric-50',  label: '1:50 (metric)',  ratio: 50 },
-    { id: 'metric-100', label: '1:100 (metric)', ratio: 100 },
-    { id: 'metric-200', label: '1:200 (metric)', ratio: 200 },
   ];
 
   /** ftPerUnit for a preset (unit = PDF point = 1/72 inch). */
@@ -42,6 +46,10 @@ const Units = (() => {
       const v = presetFtPerUnit(p);
       if (Math.abs(v - ftPerUnit) / v < 0.005) return p.label;
     }
+    // near-integer metric ratio (1 pt paper = ratio pt real; 864 pt per real ft)
+    const ratio = ftPerUnit * 864;
+    const r = Math.round(ratio);
+    if (r >= 2 && Math.abs(ratio - r) / ratio < 0.01) return `1:${r}`;
     const ftPerIn = ftPerUnit * 72;
     if (ftPerIn >= 1) return `1" = ${trim(ftPerIn)}'`;
     return `${trim(1 / ftPerIn)}" = 1'-0"`;

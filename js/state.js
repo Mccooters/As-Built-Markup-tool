@@ -31,7 +31,7 @@ const State = (() => {
     activeSymbol: null,      // symbol id or stamp id (prefixed st-)
     symbolRotation: 0,
     activeCountGroup: null,  // group id
-    unitFormat: localStorage.getItem('abmt:units') || 'ftin',
+    unitFormat: localStorage.getItem('abmt:units') || 'm',
     author: localStorage.getItem('abmt:author') || 'Field',
     exportPrefs: null,       // schedule-export selections + note (persisted with the project)
 
@@ -57,14 +57,14 @@ const State = (() => {
     arcSize: 14,              // cloud scallop size
     symbolSize: 26,
     symbolLabel: true,
-    pipeSize: '1"',
-    material: 'Aluminum',
+    pipeSize: '25mm',
+    material: 'Press Stainless',
     system: 'Main Header',
     pipeWidthMode: 'scale',   // 'scale' = line width is the true OD at sheet scale
     pipeWidthScale: 1,        // visibility multiplier on the true-scale width (proportions kept)
     orthoPipe: false,         // false = route at any angle; Shift snaps to 45°. true inverts.
     colorBySize: true,
-    penSize: '2"',            // penetration core/hole diameter
+    penSize: '50mm',          // penetration core/hole diameter
     penType: 'Wall',          // Wall | Floor | Roof | Ceiling
     penFire: false,           // fire-rated assembly → firestop required
     photoWidth: 220,          // default placed photo width, page units

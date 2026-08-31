@@ -59,7 +59,7 @@ const App = (() => {
       <h3>Calibrate scale</h3>
       <p class="muted">You marked a line of <b>${lenUnits.toFixed(1)} pt</b> on the sheet. What is that distance in the real world?</p>
       <div class="form-row"><label>Real distance</label>
-        <input type="text" id="cal-dist" placeholder="e.g. 25'  ·  12'6&quot;  ·  7.6m" autocomplete="off"></div>
+        <input type="text" id="cal-dist" placeholder="e.g. 7.6m  ·  450mm  ·  25'" autocomplete="off"></div>
       <div class="form-row"><label class="chk"><input type="checkbox" id="cal-all" checked> Apply to all pages</label></div>
       <p class="muted" id="cal-result"></p>
       <div class="modal-actions">
@@ -102,11 +102,11 @@ const App = (() => {
     const sc = State.scaleForPage(State.S.page);
     modal(`
       <h3>Set sheet scale</h3>
-      <p class="muted">Type the drawing's stated scale — no reference dimension needed. Check the title block (e.g. <b>SCALE: 1/4" = 1'-0"</b> or <b>1:100</b>).${sc ? `<br>Current: <b>${Units.scaleLabel(sc)}</b>` : ''}</p>
+      <p class="muted">Type the drawing's stated scale — no reference dimension needed. Check the title block (e.g. <b>SCALE 1:100</b> or <b>1/4" = 1'-0"</b>).${sc ? `<br>Current: <b>${Units.scaleLabel(sc)}</b>` : ''}</p>
 
       <div class="form-row" style="display:flex;align-items:center;gap:8px">
         <label class="chk" style="flex:0 0 110px"><input type="radio" name="sc-mode" value="preset" checked> Standard</label>
-        <select id="sc-preset" style="flex:1">${Units.SCALE_PRESETS.map(p => `<option value="${p.id}">${p.label.replace(/"/g, '&quot;')}</option>`).join('')}</select>
+        <select id="sc-preset" style="flex:1">${Units.SCALE_PRESETS.map(p => `<option value="${p.id}"${p.id === 'metric-100' ? ' selected' : ''}>${p.label.replace(/"/g, '&quot;')}</option>`).join('')}</select>
       </div>
 
       <div class="form-row" style="display:flex;align-items:center;gap:8px">
@@ -119,10 +119,10 @@ const App = (() => {
       <div class="form-row" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <label class="chk" style="flex:0 0 110px"><input type="radio" name="sc-mode" value="custom"> Custom</label>
         <input type="text" id="sc-paper" value="1" style="width:52px" inputmode="decimal">
-        <select id="sc-punit" style="width:64px"><option value="in">in</option><option value="mm">mm</option></select>
+        <select id="sc-punit" style="width:64px"><option value="mm">mm</option><option value="in">in</option></select>
         <span>=</span>
-        <input type="text" id="sc-real" placeholder="10" style="width:64px" inputmode="decimal">
-        <select id="sc-runit" style="width:64px"><option value="ft">ft</option><option value="in">in</option><option value="m">m</option><option value="mm">mm</option></select>
+        <input type="text" id="sc-real" placeholder="100" style="width:64px" inputmode="decimal">
+        <select id="sc-runit" style="width:64px"><option value="m">m</option><option value="mm">mm</option><option value="ft">ft</option><option value="in">in</option></select>
       </div>
 
       <div class="form-row"><label class="chk"><input type="checkbox" id="sc-all" checked> Apply to all pages</label></div>

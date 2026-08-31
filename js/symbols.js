@@ -236,7 +236,7 @@ const Symbols = (() => {
     DN40: '#00897b', DN50: '#1e88e5', DN65: '#8e24aa', DN80: '#d81b60',
     DN100: '#6d4c41', DN150: '#3949ab',
   };
-  const MATERIALS = ['Aluminum', 'Copper L', 'Black Iron', 'Galvanized', 'Stainless', 'HDPE/Poly', 'Rubber Hose'];
+  const MATERIALS = ['Press Stainless', 'Press Copper', 'Aluminum', 'Copper L', 'Black Iron', 'Galvanized', 'Stainless', 'HDPE/Poly', 'Rubber Hose'];
   const SYSTEMS = ['Main Header', 'Branch', 'Drop', 'Condensate', 'Vacuum', 'Nitrogen'];
 
   /** Default palette for generic markups. */

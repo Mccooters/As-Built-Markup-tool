@@ -99,12 +99,12 @@ const Props = (() => {
 
   function pipeSizeOptions(current) {
     const opts = arr => arr.map(s => `<option${s === current ? ' selected' : ''}>${esc(s)}</option>`).join('');
-    return `<optgroup label="Imperial (NPS)">${opts(Symbols.PIPE_SIZES_IN)}</optgroup>` +
-      `<optgroup label="Metric tube (OD mm)">${opts(Symbols.PIPE_SIZES_MM)}</optgroup>` +
-      `<optgroup label="Metric steel (DN)">${opts(Symbols.PIPE_SIZES_DN)}</optgroup>`;
+    return `<optgroup label="Metric tube (OD mm)">${opts(Symbols.PIPE_SIZES_MM)}</optgroup>` +
+      `<optgroup label="Metric steel (DN)">${opts(Symbols.PIPE_SIZES_DN)}</optgroup>` +
+      `<optgroup label="Imperial (NPS)">${opts(Symbols.PIPE_SIZES_IN)}</optgroup>`;
   }
 
-  const CORE_SIZES = ['1"', '1-1/2"', '2"', '2-1/2"', '3"', '3-1/2"', '4"', '4-1/2"', '5"', '6"', '8"', '25mm', '32mm', '50mm', '65mm', '80mm', '100mm', '150mm'];
+  const CORE_SIZES = ['25mm', '32mm', '40mm', '50mm', '65mm', '80mm', '100mm', '125mm', '150mm', '200mm', '1"', '1-1/2"', '2"', '2-1/2"', '3"', '4"', '6"'];
   const PEN_TYPES = ['Wall', 'Floor', 'Roof', 'Ceiling', 'Beam'];
 
   /** Compact OD string of the current default pipe: '2.375"' or '54mm'. */
@@ -116,12 +116,12 @@ const Props = (() => {
   function penetRows(o) {
     return `<div class="prop-section"><div class="prop-cap">Core / sleeve</div>
       <div class="prop-row"><label>Hole Ø</label>
-        <input type="text" id="p-pensize" value="${esc(o.penSize ?? D().penSize)}" list="core-sizes" placeholder='e.g. 2-1/2"'>
+        <input type="text" id="p-pensize" value="${esc(o.penSize ?? D().penSize)}" list="core-sizes" placeholder='e.g. 65mm'>
         <datalist id="core-sizes">${CORE_SIZES.map(s => `<option value="${esc(s)}">`).join('')}</datalist></div>
       <div class="prop-row"><label></label><button class="mini-btn" id="p-penod" title="Set the hole Ø to the current pipe's actual outside diameter — for when the fire-rating clearance isn't decided yet">Ø = pipe OD (${esc(defaultPipeOdStr())})</button></div>
       <div class="prop-row"><label>Through</label><select id="p-pentype">${PEN_TYPES.map(s => `<option${s === (o.penType ?? D().penType) ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
       <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-penfire"${(o.penFire ?? D().penFire) ? ' checked' : ''}> Fire-rated (firestop required)</label></div>
-      <p class="prop-note">Rule of thumb: core Ø = pipe OD + 1" clearance (more with insulation or a sleeve). Clearance not decided yet? Use <b>Ø = pipe OD</b> and add a note in the schedule export. The Takeoff tab totals penetrations into a core-drill schedule.</p>
+      <p class="prop-note">Rule of thumb: core Ø = pipe OD + 25 mm clearance (more with insulation or a sleeve). Clearance not decided yet? Use <b>Ø = pipe OD</b> and add a note in the schedule export. The Takeoff tab totals penetrations into a core-drill schedule.</p>
     </div>`;
   }
 
@@ -156,7 +156,7 @@ const Props = (() => {
     } else if (t === 'count') {
       h += countGroupsHtml();
     } else if (t === 'calibrate') {
-      h += `<p class="prop-note">Click two points a known distance apart, then type the real distance (e.g. <b>25'</b> or <b>7.6m</b>).<br><br>No reference dimension on the sheet? Type the drawing's stated scale instead:</p>
+      h += `<p class="prop-note">Click two points a known distance apart, then type the real distance (e.g. <b>7.6m</b>, <b>450mm</b> or <b>25'</b>).<br><br>No reference dimension on the sheet? Type the drawing's stated scale instead:</p>
         <div style="margin:6px 0 10px"><button class="mini-btn primary" id="p-scaledlg">Enter scale ratio…</button></div>
         <div class="prop-row"><label>Preset</label><select id="p-preset"><option value="">choose…</option>${Units.SCALE_PRESETS.map(p => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}</select></div>
         <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-preset-all" checked> Apply to all pages</label></div>`;
