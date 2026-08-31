@@ -66,7 +66,7 @@ const Aro = (() => {
 
   /* ---------------- proxy calls ---------------- */
 
-  async function call(action, params = {}) {
+  async function call(action, params = {}, opts = {}) {
     const u = new URL(cfg.url, location.href);
     u.searchParams.set('action', action);
     for (const [k, v] of Object.entries(params)) if (v != null && v !== '') u.searchParams.set(k, v);
@@ -88,6 +88,7 @@ const Aro = (() => {
         : 'The proxy returned an unexpected response (HTTP ' + resp.status + ').');
     }
     if (body.notConfigured) { const err = new Error(body.statusmessage); err.notConfigured = true; throw err; }
+    if (opts.raw) return body;
     if (!body.ok) throw new Error(body.statusmessage || ('AroFlo error (HTTP ' + (body.httpStatus || resp.status) + ')'));
     return body;
   }
@@ -259,6 +260,20 @@ const Aro = (() => {
     root.querySelector('#aro-try').addEventListener('click', refresh);
   }
 
+  function diagHtml(d) {
+    const rows = Object.entries(d.vars || {}).map(([name, v]) => {
+      const short = name.replace('AROFLO_', '');
+      if (!v.set) return `<div class="aro-diag-row bad">⚠ ${esc(short)}: <b>not set</b></div>`;
+      const flags = [];
+      if (v.innerWhitespace) flags.push('contains a line break or space — re-paste it');
+      if (!v.base64ish) flags.push('unexpected characters — check what was pasted');
+      return `<div class="aro-diag-row${flags.length ? ' bad' : ''}">${flags.length ? '⚠' : '·'} ${esc(short)}: ${v.len} chars, “${esc(v.ends)}”${flags.length ? ' — ' + esc(flags.join('; ')) : ''}</div>`;
+    }).join('');
+    return `<div class="aro-diag"><div class="aro-diag-cap">What the server has stored (lengths only — never the keys):</div>${rows}
+      ${d.hostIpConfigured ? '<div class="aro-diag-row">· AROFLO_HOST_IP is set — remove it unless your AroFlo setup uses a fixed Host IP.</div>' : ''}
+      <div class="aro-diag-cap">Compare each length and the first/last letters against the AroFlo API page. If they all match, the usual cause is the AroFlo side: open Site Admin → AroFlo API, make sure <b>Save API Settings</b> was clicked, and that no key was re-generated after you copied it (re-copy the current values if unsure).</div></div>`;
+  }
+
   function settingsDialog() {
     App.modal(`
       <h3>AroFlo connection</h3>
@@ -285,7 +300,17 @@ const Aro = (() => {
         try {
           const r = await call('ping');
           out.textContent = '✓ Connected — ' + ((r.businessUnits || []).join(', ') || 'AroFlo replied OK');
-        } catch (e) { out.textContent = '✕ ' + e.message; }
+        } catch (e) {
+          out.textContent = '✕ ' + e.message;
+          // AroFlo rejected the signed request (not a reach/token problem):
+          // pull the server-side credential fingerprints to spot a paste error.
+          if (!e.notConfigured && !/proxy|reach/i.test(e.message)) {
+            try {
+              const d = await call('diag', {}, { raw: true });
+              if (d && d.vars) out.innerHTML = '✕ ' + esc(e.message) + diagHtml(d);
+            } catch (e2) { /* diag unavailable — leave the plain error */ }
+          }
+        }
       });
       box.querySelector('#aro-cancel').addEventListener('click', close);
       box.querySelector('#aro-save').addEventListener('click', () => {

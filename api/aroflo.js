@@ -123,6 +123,37 @@ function relay(r, extra) {
 
 const ACTIONS = {
 
+  // Setup diagnostics for auth failures: reports the SHAPE of each stored
+  // credential (length, first/last two characters, stray-whitespace and
+  // base64 sanity flags) — never the values — plus AroFlo's raw reply, so a
+  // paste error or a stale key can be spotted from the app.
+  async diag() {
+    const shape = n => {
+      const raw = process.env[n] || '';
+      const v = env(n);
+      if (!v) return { set: false };
+      return {
+        set: true,
+        len: v.length,
+        ends: v.slice(0, 2) + '…' + v.slice(-2),
+        innerWhitespace: /\s/.test(v),
+        hadPadding: raw !== v,
+        base64ish: /^[A-Za-z0-9+/=]+$/.test(v),
+      };
+    };
+    const r = await aroGet('businessunits', { page: 1, pageSize: 1 });
+    return relay(r, {
+      vars: {
+        AROFLO_SECRET: shape('AROFLO_SECRET'),
+        AROFLO_UENCODED: shape('AROFLO_UENCODED'),
+        AROFLO_PENCODED: shape('AROFLO_PENCODED'),
+        AROFLO_ORGENCODED: shape('AROFLO_ORGENCODED'),
+      },
+      hostIpConfigured: !!env('AROFLO_HOST_IP'),
+      baseUrl: env('AROFLO_BASE_URL') || 'https://api.aroflo.com/',
+    });
+  },
+
   // Connection test: returns the business unit name(s).
   async ping() {
     const r = await aroGet('businessunits', { page: 1, pageSize: 10 });
