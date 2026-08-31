@@ -5,7 +5,7 @@ const Tools = (() => {
 
   const SNAP_TYPES = ['pipe', 'mpoly', 'mlength', 'line', 'polyline', 'arrow'];
   const POLY_TOOLS = { pipe: 1, polyline: 1, mpoly: 1, marea: 1 };
-  const DRAG_TOOLS = { line: 1, arrow: 1, mlength: 1, rect: 1, ellipse: 1, cloud: 1, pen: 1, highlight: 1, callout: 1 };
+  const DRAG_TOOLS = { line: 1, arrow: 1, mlength: 1, rect: 1, ellipse: 1, cloud: 1, pen: 1, highlight: 1, callout: 1, zone: 1 };
 
   const TOOL_HINTS = {
     select: 'Click to select · drag to move · Shift-click adds · drag empty space for marquee · double-click text to edit · Del deletes',
@@ -13,6 +13,7 @@ const Tools = (() => {
     pipe: 'Click points along the route — any angle · Shift snaps 45°/90° off the previous leg · arrow keys pan the view mid-run (Shift = faster) · double-click or Enter finishes · Backspace removes last point · Esc cancels',
     calibrate: 'Click two points a known distance apart — or click the Scale button in the status bar to type the sheet\'s stated ratio directly (1:100, 1/4" = 1\'-0"…).',
     mlength: 'Drag from one point to another to measure.',
+    zone: 'Drag a box over an area, then link it to the AroFlo tasks for that area. Tap a zone with Select to see its jobs and materials.',
     mpoly: 'Click points along the route · double-click or Enter finishes.',
     marea: 'Click corners of the area · double-click or Enter closes the shape.',
     count: 'Click to place a count mark. Pick the count group in the panel on the right.',
@@ -200,9 +201,10 @@ const Tools = (() => {
           preview(m, extras);
           break;
         }
-        case 'rect': case 'ellipse': case 'cloud': {
+        case 'rect': case 'ellipse': case 'cloud': case 'zone': {
           const x = Math.min(p0.x, p.x), y = Math.min(p0.y, p.y);
           m = { ...base, type: tool, x, y, w: Math.abs(p.x - p0.x), h: Math.abs(p.y - p0.y), fill: d.fill, fillOpacity: d.fillOpacity, arcSize: d.arcSize };
+          if (tool === 'zone') { m.fill = m.color; m.fillOpacity = 0.14; m.label = ''; m.jobs = []; }
           preview(m);
           break;
         }
@@ -230,15 +232,16 @@ const Tools = (() => {
         if (tool === 'callout') { /* need a drag */ }
         return;
       }
-      if ((tool === 'rect' || tool === 'ellipse' || tool === 'cloud') && (m.w < 3 || m.h < 3)) return;
+      if ((tool === 'rect' || tool === 'ellipse' || tool === 'cloud' || tool === 'zone') && (m.w < 3 || m.h < 3)) return;
       if ((tool === 'line' || tool === 'arrow' || tool === 'mlength') && Geo.polylineLength(m.pts) < 2) return;
       m.subject = m.subject || ({
         line: 'Line', arrow: 'Arrow', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision Cloud',
-        pen: 'Pen', highlight: 'Highlight', mlength: 'Length', callout: 'Callout',
+        pen: 'Pen', highlight: 'Highlight', mlength: 'Length', callout: 'Callout', zone: 'Area zone',
       })[tool] || tool;
       const created = State.addMarkup(m);
       if (tool === 'callout') { State.select([created.id]); editText(created, true); }
       else State.select([created.id]);
+      if (tool === 'zone' && typeof Aro !== 'undefined') Aro.zoneLinkDialog(created); // name it + link its jobs straight away
     }, clearPreview /* abort: second finger arrived — discard, nothing committed */);
   }
 
@@ -603,6 +606,11 @@ const Tools = (() => {
       Render.refresh(ids);
     }, () => {
       if (started) { State.touch(); State.emit('markups', { changed: ids }); }
+      else if (ids.length === 1) {
+        // a plain tap on a zone opens its task/materials popover
+        const m = State.getMarkup(ids[0]);
+        if (m && m.type === 'zone' && typeof Aro !== 'undefined') Aro.zonePopover(m);
+      }
     }, () => {
       if (started) State.undo();   // gesture abort: put the markups back
     });

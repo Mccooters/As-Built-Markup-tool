@@ -683,6 +683,144 @@ const Aro = (() => {
     </div>`;
   }
 
+  /* ---------------- task-linked area zones ---------------- */
+
+  const jobCache = {}; // job -> { task, materials, at }
+
+  async function jobMaterials(job) {
+    const c = jobCache[job];
+    if (c && Date.now() - c.at < 10 * 60 * 1000) return c;
+    const rt = await call('task', { jobnumber: job });
+    const task = (rt.tasks || [])[0] || null;
+    let materials = [];
+    if (task) {
+      const rm = await call('taskmaterials', { taskid: task.taskid });
+      materials = rm.materials || [];
+    }
+    const out = { task, materials, at: Date.now() };
+    jobCache[job] = out;
+    return out;
+  }
+
+  // Every task of the drawing's AroFlo project, for the zone link picker.
+  async function getProjectTasks() {
+    if (st.tm.pTasks.length) return st.tm.pTasks;
+    const projNo = String((State.S.aroSite && State.S.aroSite.project) || '').replace(/\D+/g, '');
+    if (!projNo) return [];
+    if (!projCache) {
+      const all = [];
+      for (let page = 1; page <= 4; page++) {
+        const r = await call('projects', { page });
+        all.push(...(r.projects || []));
+        if (r.last) break;
+      }
+      projCache = all;
+    }
+    const p = projCache.find(x => x.number === projNo);
+    if (!p) return [];
+    const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
+    st.tm.pTasks = rt.tasks || [];
+    st.tm.pId = p.id; st.tm.pName = p.name;
+    return st.tm.pTasks;
+  }
+
+  // Name a zone and tick the AroFlo tasks that live inside it.
+  function zoneLinkDialog(m) {
+    App.modal(`
+      <h3>Area zone</h3>
+      <div class="form-row"><label>Area name</label>
+        <input type="text" id="zn-label" value="${esc(m.label || '')}" placeholder="e.g. Compressor room" autocomplete="off"></div>
+      <div class="form-row"><label>Linked AroFlo tasks</label>
+        <div id="zn-tasks" class="aro-cats-list" style="display:block"><span class="muted">Loading the project's tasks…</span></div></div>
+      <div class="form-row"><label>Other job numbers (comma separated)</label>
+        <input type="text" id="zn-extra" placeholder="e.g. 11301, 11305" autocomplete="off"></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="zn-cancel">Cancel</button>
+        <button class="mini-btn primary" id="zn-save">Save</button>
+      </div>`, (box, close) => {
+      const listEl = box.querySelector('#zn-tasks');
+      const current = new Set((m.jobs || []).map(String));
+      getProjectTasks().then(tasks => {
+        if (!tasks.length) {
+          listEl.innerHTML = `<span class="muted">No project loaded — load the AroFlo project in the stock manager once (or set the job ref), or just type job numbers below.</span>`;
+          box.querySelector('#zn-extra').value = [...current].join(', ');
+          return;
+        }
+        listEl.innerHTML = tasks.map(t =>
+          `<label class="chk"><input type="checkbox" value="${esc(t.job)}"${current.has(String(t.job)) ? ' checked' : ''}> #${esc(t.job)} ${esc(t.name)} <span class="muted">(${esc(t.status)})</span></label>`).join('');
+        const known = new Set(tasks.map(t => String(t.job)));
+        box.querySelector('#zn-extra').value = [...current].filter(j => !known.has(j)).join(', ');
+      }).catch(() => {
+        listEl.innerHTML = `<span class="muted">Couldn't reach AroFlo — type job numbers below instead.</span>`;
+        box.querySelector('#zn-extra').value = [...current].join(', ');
+      });
+      box.querySelector('#zn-cancel').addEventListener('click', close);
+      box.querySelector('#zn-save').addEventListener('click', () => {
+        const ticked = [...listEl.querySelectorAll('input:checked')].map(i => i.value);
+        const extra = box.querySelector('#zn-extra').value.split(/[,\s]+/).map(s => s.replace(/\D+/g, '')).filter(Boolean);
+        m.jobs = [...new Set([...ticked, ...extra])];
+        m.label = box.querySelector('#zn-label').value.trim();
+        if (m.label) m.subject = m.label;
+        State.touch();
+        State.emit('markups', { changed: [m.id] });
+        close();
+      });
+    });
+  }
+
+  // Tap popover: the zone's jobs, their status and the materials used so far.
+  let popEl = null;
+
+  function closeZonePopover() {
+    if (popEl) { popEl.remove(); popEl = null; }
+  }
+
+  function zonePopover(m) {
+    closeZonePopover();
+    popEl = document.createElement('div');
+    popEl.id = 'zonePop';
+    const jobs = (m.jobs || []);
+    popEl.innerHTML = `
+      <div class="zp-head"><b>${esc(m.label || m.subject || 'Area zone')}</b>
+        <span style="flex:1"></span>
+        <button class="mini-btn" id="zp-edit" title="Change the linked tasks">Links</button>
+        <button class="mini-btn" id="zp-close">✕</button></div>
+      <div class="zp-body">${jobs.length
+        ? jobs.map(j => `<div class="zp-job" data-job="${esc(j)}"><div class="zp-jobhead">#${esc(j)}</div><div class="zp-mats muted">Loading…</div></div>`).join('')
+        : '<p class="prop-note">No tasks linked yet — hit Links to pick them.</p>'}</div>`;
+    document.body.appendChild(popEl);
+
+    // sit beside the zone, clamped to the window
+    const ov = document.getElementById('overlay');
+    const or = ov ? ov.getBoundingClientRect() : { left: 60, top: 60 };
+    const z = State.S.zoom || 1;
+    let px = or.left + (m.x + m.w) * z + 10;
+    let py = or.top + m.y * z;
+    const W = 340, H = Math.min(430, window.innerHeight - 40);
+    if (px + W > window.innerWidth - 8) px = Math.max(8, or.left + m.x * z - W - 10);
+    py = Math.min(Math.max(8, py), window.innerHeight - H - 8);
+    popEl.style.left = px + 'px';
+    popEl.style.top = py + 'px';
+
+    popEl.querySelector('#zp-close').addEventListener('click', closeZonePopover);
+    popEl.querySelector('#zp-edit').addEventListener('click', () => { closeZonePopover(); zoneLinkDialog(m); });
+
+    for (const j of jobs) {
+      const cell = popEl.querySelector(`.zp-job[data-job="${CSS.escape(String(j))}"] .zp-mats`);
+      jobMaterials(String(j)).then(({ task, materials }) => {
+        if (!popEl || !cell) return;
+        const head = popEl.querySelector(`.zp-job[data-job="${CSS.escape(String(j))}"] .zp-jobhead`);
+        if (head && task) head.innerHTML = `#${esc(task.job)} ${esc(task.name)} <span class="muted">(${esc(task.status)})</span>`;
+        if (!task) { cell.textContent = 'No AroFlo task found for this job number.'; return; }
+        if (!materials.length) { cell.innerHTML = '<span class="muted">No materials recorded yet.</span>'; return; }
+        cell.classList.remove('muted');
+        cell.innerHTML = `<table class="to-table">${materials.map(x =>
+          `<tr><td title="${esc(x.pn)} · ${esc(x.date)}">${esc(x.item)}</td><td class="num">${qty(x.qty)}</td></tr>`).join('')}
+          <tr class="total"><td>Lines</td><td class="num">${materials.length}</td></tr></table>`;
+      }).catch(e => { if (cell) cell.textContent = 'Couldn’t load: ' + e.message; });
+    }
+  }
+
   /* ---------------- barcode / QR scanning ---------------- */
 
   let scanReader = null;
@@ -1585,6 +1723,12 @@ const Aro = (() => {
     render();
     const tabBtn = document.querySelector('#rightPanel .tab[data-tab="stock"]');
     if (tabBtn) tabBtn.addEventListener('click', onShow);
+    // the zone popover is anchored to screen coordinates — drop it whenever
+    // the view moves under it
+    State.on('zoom', closeZonePopover);
+    State.on('page', closeZonePopover);
+    State.on('tool', closeZonePopover);
+    State.on('doc', closeZonePopover);
     document.getElementById('stockClose').addEventListener('click', closePage);
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && pageOpen() && document.getElementById('modalRoot').classList.contains('hidden')) {
@@ -1596,5 +1740,9 @@ const Aro = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { refresh, settingsDialog, call, openPage, closePage, _state: st, _onScan: onScan, _resolveScan: resolveScan };
+  return {
+    refresh, settingsDialog, call, openPage, closePage,
+    zonePopover, zoneLinkDialog, closeZonePopover,
+    _state: st, _onScan: onScan, _resolveScan: resolveScan,
+  };
 })();

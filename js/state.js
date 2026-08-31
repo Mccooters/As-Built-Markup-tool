@@ -190,6 +190,12 @@ const State = (() => {
   }
   /** How a markup renders relative to the active day: 'normal' | 'gray' | 'hidden'. */
   function dayStateOf(m, dayMode, day) {
+    // area zones are structural, not a day's work — never gray or hide them
+    if (m && m.type === 'zone') return 'normal';
+    return dayStateOfInner(m, dayMode, day);
+  }
+
+  function dayStateOfInner(m, dayMode, day) {
     const mode = dayMode != null ? dayMode : S.dayMode;
     if (!mode) return 'normal';
     const d = m.day || (m.date || '').slice(0, 10);

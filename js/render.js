@@ -122,6 +122,25 @@ const Render = (() => {
       g.appendChild(p);
     },
 
+    zone(g, m) {
+      // task-linked area: tinted box + name tag; tap for tasks & materials
+      g.appendChild(svg('rect', {
+        x: m.x, y: m.y, width: m.w, height: m.h,
+        fill: m.color, 'fill-opacity': m.fillOpacity != null ? m.fillOpacity : 0.14,
+        stroke: m.color, 'stroke-width': m.lineWidth || 2,
+        'stroke-dasharray': '7 4', rx: 3,
+      }));
+      const fs = Math.max(9, m.fontSize || 12);
+      const label = (m.label || m.subject || 'Zone') + (m.jobs && m.jobs.length ? '  ·  ' + m.jobs.map(j => '#' + j).join(' ') : '');
+      const t = svg('text', {
+        x: m.x + 6, y: m.y + fs + 4, 'font-size': fs, 'font-weight': 700,
+        fill: m.color, stroke: '#ffffff', 'stroke-width': fs / 4, 'paint-order': 'stroke',
+        'stroke-linejoin': 'round', 'font-family': 'system-ui, sans-serif',
+      });
+      t.textContent = label;
+      g.appendChild(t);
+    },
+
     rect(g, m) {
       const r = svg('rect', {
         x: m.x, y: m.y, width: m.w, height: m.h,

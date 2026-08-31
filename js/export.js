@@ -355,6 +355,17 @@ const Export = (() => {
         return;
       }
 
+      case 'zone': {
+        // task-linked area: tinted box, dashed border, name tag top-left
+        const d = svgD(rectPts(m), true, f);
+        fillPath(page, f, d, col, (m.fillOpacity != null ? m.fillOpacity : 0.14) * op);
+        strokePath(page, f, d, col, lw || 2, { opacity: op, dash: [7, 4] });
+        const fs = Math.max(9, m.fontSize || 12);
+        const label = (m.label || m.subject || 'Zone') + (m.jobs && m.jobs.length ? '  ·  ' + m.jobs.map(j => '#' + j).join(' ') : '');
+        drawLabel(page, f, fonts, label, m.x + 6, m.y + fs + 4, { size: fs, bold: true, color: m.color, halo: true, anchor: 'start' });
+        return;
+      }
+
       case 'ellipse': {
         const c = f.pagePt(m.x + m.w / 2, m.y + m.h / 2);
         const sideways = f.R === 90 || f.R === 270;

@@ -152,7 +152,7 @@ const Geo = (() => {
       case 'line': case 'arrow': case 'polyline': case 'pen': case 'highlight':
       case 'mlength': case 'mpoly': case 'marea':
         return inflate(boundsOfPts(m.pts), (m.lineWidth || 2) + 4);
-      case 'rect': case 'ellipse': case 'cloud': case 'text': case 'photo':
+      case 'rect': case 'ellipse': case 'cloud': case 'text': case 'photo': case 'zone':
         return inflate({ x: m.x, y: m.y, w: m.w, h: m.h }, (m.lineWidth || 2) + 4);
       case 'penet': {
         const r = (m.size || 22) / 2;

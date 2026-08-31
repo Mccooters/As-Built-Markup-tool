@@ -494,3 +494,15 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 .tm-item:hover td { background: rgba(255,255,255,.03); }
 .tm-sub td { color: var(--txt-dim); font-size: 11.5px; padding-top: 2px; padding-bottom: 2px; border-bottom: none; }
 .tm-sub td:first-child { padding-left: 18px; }
+/* zone tap popover */
+#zonePop {
+  position: fixed; z-index: 90; width: 340px; max-height: 62vh; overflow-y: auto;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
+  box-shadow: 0 14px 44px rgba(0,0,0,.6); padding: 10px 12px;
+}
+.zp-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 13.5px; }
+.zp-jobhead { font-size: 12px; font-weight: 700; margin: 8px 0 4px; }
+.zp-mats { font-size: 12px; }
+@media (max-width: 760px) {
+  #zonePop { left: 10px !important; right: 10px; width: auto; bottom: calc(64px + env(safe-area-inset-bottom)); top: auto !important; max-height: 52vh; }
+}

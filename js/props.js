@@ -549,7 +549,7 @@ const Props = (() => {
       mpoly: 'Polylength', marea: 'Area', count: 'Count', line: 'Line', arrow: 'Arrow',
       polyline: 'Polyline', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud',
       pen: 'Pen', highlight: 'Highlighter', text: 'Text', callout: 'Callout', symbol: 'Symbol',
-      penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting',
+      penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting', zone: 'Area zone',
     })[t] || t;
   }
   function typeName(t) {
@@ -557,7 +557,7 @@ const Props = (() => {
       pipe: 'Pipe run', mlength: 'Length measurement', mpoly: 'Polylength', marea: 'Area',
       cloud: 'Revision cloud', highlight: 'Highlight', symbol: 'Symbol', stamp: 'Stamp',
       count: 'Count mark', callout: 'Callout', text: 'Text',
-      penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting',
+      penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting', zone: 'Area zone',
     })[t] || (t[0].toUpperCase() + t.slice(1));
   }
 
