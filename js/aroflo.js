@@ -81,7 +81,19 @@ const Aro = (() => {
 
   /* ---------------- proxy calls ---------------- */
 
+  // AroFlo allows 3 requests per second — space every proxied call out so a
+  // burst (multi-category refresh, stock sweep, project aggregation) never
+  // trips the limit and kills the crawl halfway.
+  let nextSlot = 0;
+  async function pace() {
+    const now = Date.now();
+    const wait = Math.max(0, nextSlot - now);
+    nextSlot = Math.max(now, nextSlot) + 380;
+    if (wait) await new Promise(r => setTimeout(r, wait));
+  }
+
   async function call(action, params = {}, opts = {}) {
+    await pace();
     const u = new URL(cfg.url, location.href);
     u.searchParams.set('action', action);
     for (const [k, v] of Object.entries(params)) if (v != null && v !== '') u.searchParams.set(k, v);
@@ -110,6 +122,7 @@ const Aro = (() => {
 
   // Write path: JSON POST to the proxy (used by stocktake pushes & transfers).
   async function postCall(action, payload) {
+    await pace();
     const u = new URL(cfg.url, location.href);
     u.searchParams.set('action', action);
     const headers = { 'Content-Type': 'application/json' };
@@ -169,9 +182,10 @@ const Aro = (() => {
         // scoped sync: one small crawl per chosen category…
         for (const cat of cfg.cats) await crawl({ cat });
         // …then a sweep of ALL stock rows, so stock held on items outside the
-        // scope is never invisible. Rows are cheap; resolve the first few
-        // unknown items by id so they appear with their real names.
+        // scope is never invisible. Skipped when the crawl itself failed —
+        // classifying items as "outside scope" needs a complete crawl.
         try {
+          if (st.error) throw new Error('crawl incomplete');
           const known = new Set(items.map(i => i.id));
           const orphan = new Map();
           for (let page = 1; page <= 8; page++) {
@@ -185,17 +199,21 @@ const Aro = (() => {
             if (r.last) break;
           }
           st.outside = orphan.size;
+          // name the biggest holdings first; the rest collapse into one
+          // summary line in the list rather than a wall of nameless rows
+          const ranked = [...orphan.entries()]
+            .sort((a, b) => b[1].reduce((s, l) => s + l.qty, 0) - a[1].reduce((s, l) => s + l.qty, 0));
           let resolved = 0;
-          for (const [itemid, levels] of orphan) {
+          for (const [itemid, levels] of ranked) {
             if (resolved < 10) {
-              st.progress = 'Naming stocked items outside the synced categories…';
+              st.progress = 'Naming stocked items outside the synced categories… (' + (resolved + 1) + ')';
               renderStatus();
               try {
                 const r = await call('inventory', { itemid });
                 if ((r.items || []).length) { items.push(r.items[0]); resolved++; continue; }
               } catch (e) { /* fall through to stub */ }
             }
-            items.push({ id: itemid, desc: '(item outside synced categories)', pn: '', cat: '', levels });
+            items.push({ id: itemid, desc: '(item outside synced categories)', pn: '', cat: '', levels, stub: true });
           }
         } catch (e) { /* sweep is best-effort */ }
         items.sort((a, b) => a.desc.localeCompare(b.desc));
@@ -409,8 +427,10 @@ const Aro = (() => {
     const el = document.getElementById('aro-list');
     if (!el) return;
     if (st.take.on) { renderTakeList(el); return; }
-    const rows = filteredItems();
-    if (!rows.length) {
+    const all = filteredItems();
+    const rows = all.filter(r => !r.it.stub);
+    const stubCount = all.length - rows.length;
+    if (!all.length) {
       let msg;
       if (!st.items.length) msg = 'No inventory loaded yet — hit ⟳ to pull it from AroFlo.';
       else if (st.holder && !st.items.some(it => (it.levels || []).some(l => l.to === st.holder))) {
@@ -434,6 +454,7 @@ const Aro = (() => {
       </div>`;
     }
     if (rows.length > MAX_ROWS) h += `<p class="prop-note">…and ${rows.length - MAX_ROWS} more — refine the search.</p>`;
+    if (stubCount) h += `<p class="prop-note">…plus <b>${stubCount}</b> stocked item${stubCount === 1 ? '' : 's'} outside the synced categories (quantities counted above) — open ⚙ and widen the scope to see them by name.</p>`;
     el.innerHTML = h;
     el.querySelectorAll('.aro-item').forEach(div =>
       div.addEventListener('click', () => {
@@ -453,7 +474,7 @@ const Aro = (() => {
   function renderTakeList(el) {
     const terms = st.filter.toLowerCase().split(/\s+/).filter(Boolean);
     const items = st.items.filter(it =>
-      !terms.length || terms.every(t => (it.desc + ' ' + it.pn + ' ' + it.cat).toLowerCase().includes(t)));
+      !it.stub && (!terms.length || terms.every(t => (it.desc + ' ' + it.pn + ' ' + it.cat).toLowerCase().includes(t))));
     if (!items.length) { el.innerHTML = `<p class="prop-note">Nothing matches the search.</p>`; return; }
     let h = '';
     for (const it of items.slice(0, MAX_ROWS)) {

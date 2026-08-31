@@ -63,49 +63,58 @@ function buildVarString(zone, opts = {}) {
   return parts.join('&');
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function aroSend(method, varString) {
-  const afDateTimeUtc = new Date().toISOString();
-  const authorization = authorizationHeader();
-  const signature = signPayload(method, varString, authorization, afDateTimeUtc);
+  // One retry after a pause when AroFlo's per-second rate limit trips —
+  // the signature must be rebuilt because the timestamp is part of it.
+  for (let attempt = 0; ; attempt++) {
+    const afDateTimeUtc = new Date().toISOString();
+    const authorization = authorizationHeader();
+    const signature = signPayload(method, varString, authorization, afDateTimeUtc);
 
-  const headers = {
-    Authentication: `HMAC ${signature}`,
-    Authorization: authorization,
-    Accept: ACCEPT,
-    afdatetimeutc: afDateTimeUtc,
-  };
-  const hostIp = env('AROFLO_HOST_IP');
-  if (hostIp) headers.HostIP = hostIp;
+    const headers = {
+      Authentication: `HMAC ${signature}`,
+      Authorization: authorization,
+      Accept: ACCEPT,
+      afdatetimeutc: afDateTimeUtc,
+    };
+    const hostIp = env('AROFLO_HOST_IP');
+    if (hostIp) headers.HostIP = hostIp;
 
-  const url = new URL(env('AROFLO_BASE_URL') || 'https://api.aroflo.com/');
-  let reqBody;
-  if (method === 'POST') {
-    // AroFlo POSTs carry the varString (zone + postxml) as the form body;
-    // the signature is computed over that same string.
-    headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    reqBody = varString;
-  } else {
-    url.search = varString;
+    const url = new URL(env('AROFLO_BASE_URL') || 'https://api.aroflo.com/');
+    let reqBody;
+    if (method === 'POST') {
+      // AroFlo POSTs carry the varString (zone + postxml) as the form body;
+      // the signature is computed over that same string.
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      reqBody = varString;
+    } else {
+      url.search = varString;
+    }
+
+    const resp = await fetch(url, { method, headers, body: reqBody, signal: AbortSignal.timeout(20000) });
+    const text = await resp.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch (e) { /* leave null */ }
+
+    const rateLimits = {};
+    resp.headers.forEach((v, k) => { if (/ratelimit/i.test(k)) rateLimits[k.toLowerCase()] = v; });
+
+    const status = body && body.status != null ? Number(body.status) : null;
+    const statusmessage = body ? (body.statusmessage || '') : ('Non-JSON response: ' + text.slice(0, 200));
+    const ok = resp.status < 400 && (status === 0 || status === null);
+
+    if (!ok && attempt < 2 && (resp.status === 429 || /per second rate limit/i.test(statusmessage))) {
+      await sleep(1100 + attempt * 500);
+      continue;
+    }
+    return {
+      ok, httpStatus: resp.status, status, statusmessage,
+      zoneresponse: body ? (body.zoneresponse || {}) : {},
+      rateLimits, varString,
+    };
   }
-
-  const resp = await fetch(url, { method, headers, body: reqBody, signal: AbortSignal.timeout(20000) });
-  const text = await resp.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch (e) { /* leave null */ }
-
-  const rateLimits = {};
-  resp.headers.forEach((v, k) => { if (/ratelimit/i.test(k)) rateLimits[k.toLowerCase()] = v; });
-
-  const status = body && body.status != null ? Number(body.status) : null;
-  return {
-    ok: resp.status < 400 && (status === 0 || status === null),
-    httpStatus: resp.status,
-    status,
-    statusmessage: body ? (body.statusmessage || '') : ('Non-JSON response: ' + text.slice(0, 200)),
-    zoneresponse: body ? (body.zoneresponse || {}) : {},
-    rateLimits,
-    varString,
-  };
 }
 
 const aroGet = (zone, opts) => aroSend('GET', buildVarString(zone, opts));
@@ -193,6 +202,7 @@ const ACTIONS = {
       .filter(h => h.name);
     let bus = [];
     try {
+      await sleep(360); // stay under AroFlo's 3-requests-per-second limit
       const r2 = await aroGet('businessunits', { page: 1, pageSize: 50 });
       bus = (r2.zoneresponse.businessunits || [])
         .map(b => ({ name: str(b.orgname), id: str(b.orgid), type: 'org' }))
@@ -314,9 +324,11 @@ const ACTIONS = {
     const tasks = [];
     let last = { ok: true, httpStatus: 200, status: 0, statusmessage: 'OK', rateLimits: {}, varString: '' };
     for (let page = 1; page <= 8; page++) {
+      if (page > 1) await sleep(360); // 3-requests-per-second limit
       const r = await aroGet('tasks', {
         where: ['and|createdutc|>|2000-01-01'],
         order: ['jobnumber|desc'],
+        join: ['project'],   // the task rows' project field only fills when joined
         page, pageSize: PAGE_SIZE,
       });
       last = r;
