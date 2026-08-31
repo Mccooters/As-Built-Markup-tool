@@ -239,17 +239,24 @@ const App = (() => {
       label: `${esc(p.size)} ${esc(p.material)} — ${p.totalFt != null ? Units.fmtLen(p.totalFt, fmt) : '—'} (${p.count} run${p.count === 1 ? '' : 's'})`,
     }));
     const fitRows = to.symbols.map(s => ({ key: K.fittings(s), label: `${esc(s.name)} — ${s.count}` }));
+    const pressRows = to.fittings.map(fr => ({ key: K.pressfit(fr), label: `${esc(fr.code)} ${esc(fr.name)} ${esc(fr.size)} — ${fr.count}` }));
     const penRows = to.penetrations.map(p => ({
       key: K.penetrations(p),
       label: `Ø${esc(p.size)} ${esc(p.type)}${p.fire ? ' FIRE' : ''} — ${p.count}`,
     }));
     const cntRows = to.counts.map(c => ({ key: K.counts(c), label: `${esc(c.name)} — ${c.count}` }));
 
+    const dayScopePrev = prev.dayScope && prev.dayScope.mode === 'day';
     modal(`
       <h3>Export schedule (CSV)</h3>
       <p class="muted">Tick what goes in. Totals recalculate over the included rows.</p>
+      <div class="form-row" style="display:flex;gap:16px">
+        <label class="chk"><input type="radio" name="csv-scope" value="all"${dayScopePrev ? '' : ' checked'}> All work</label>
+        <label class="chk"><input type="radio" name="csv-scope" value="day"${dayScopePrev ? ' checked' : ''}> Active day only (${State.S.workDay})</label>
+      </div>
       ${to.pipes.length ? section('pipes', 'Pipe takeoff', pipeRows) : ''}
-      ${to.symbols.length ? section('fittings', 'Fittings &amp; equipment', fitRows) : ''}
+      ${to.fittings.length ? section('pressfit', 'Press fittings (IBEX Impress)', pressRows) : ''}
+      ${to.symbols.length ? section('fittings', 'Symbols &amp; equipment', fitRows) : ''}
       ${to.penetrations.length ? section('penetrations', 'Penetration schedule', penRows) : ''}
       ${to.counts.length ? section('counts', 'Counts', cntRows) : ''}
       ${to.otherMeasures.length ? section('other', `Other measurements (${to.otherMeasures.length})`) : ''}
@@ -273,19 +280,142 @@ const App = (() => {
       $('csv-ok').onclick = () => {
         const sections = {}, exclude = {};
         box.querySelectorAll('.csv-sec-box').forEach(sb => { sections[sb.dataset.sec] = sb.checked ? 1 : 0; });
-        for (const s of ['pipes', 'fittings', 'penetrations', 'counts', 'other', 'list']) {
+        for (const s of ['pipes', 'fittings', 'pressfit', 'penetrations', 'counts', 'other', 'list']) {
           if (sections[s] === undefined) sections[s] = 1;   // section had no data → default on
         }
         box.querySelectorAll('.csv-row-box').forEach(rb => {
           if (!rb.checked) (exclude[rb.dataset.sec] = exclude[rb.dataset.sec] || []).push(rb.dataset.key);
         });
-        const prefs = { sections, exclude, note: $('csv-note').value };
+        const scopeEl = box.querySelector('input[name="csv-scope"]:checked');
+        const dayScope = scopeEl && scopeEl.value === 'day' ? { mode: 'day', day: State.S.workDay } : { mode: 'all' };
+        const prefs = { sections, exclude, note: $('csv-note').value, dayScope };
         State.S.exportPrefs = prefs;
         State.touch();
         close();
         MarkupList.exportCsv(prefs);
       };
       $('csv-cancel').onclick = close;
+    });
+  }
+
+  /* ================= daily report (AroFlo-ready) ================= */
+
+  const fmtDayLong = day => {
+    const d = new Date(day + 'T12:00:00');
+    return isNaN(d) ? day : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  function buildDaySummary(day) {
+    const S = State.S;
+    const to = MarkupList.computeTakeoff({ day });
+    const fmt = S.unitFormat;
+    const L = [];
+    L.push(`DAILY REPORT — ${fmtDayLong(day)}${S.jobRef ? ' — ' + S.jobRef : ''}`);
+    L.push(`Drawing: ${S.fileName}`);
+    L.push('');
+    if (to.pipes.length) {
+      L.push('Pipe installed:');
+      for (const p of to.pipes) {
+        L.push(`  • ${p.size} ${p.material}: ${p.totalFt != null ? Units.fmtLen(p.totalFt, fmt) : '(no scale)'} (${p.count} run${p.count === 1 ? '' : 's'})`);
+      }
+    }
+    if (to.fittings.length) {
+      L.push('Fittings used (IBEX Impress):');
+      for (const f of to.fittings) L.push(`  • ${f.count}× ${f.name} ${f.size}  [${MarkupList.fittingCode(f)}]`);
+    }
+    if (to.penetrations.length) {
+      L.push('Penetrations:');
+      for (const p of to.penetrations) L.push(`  • ${p.count}× Ø${p.size} ${p.type}${p.fire ? ' (fire-rated)' : ''}`);
+    }
+    if (to.symbols.length) {
+      L.push('Equipment / valves:');
+      for (const s of to.symbols) L.push(`  • ${s.count}× ${s.name}`);
+    }
+    if (to.counts.length) {
+      for (const c of to.counts) L.push(`  • ${c.count}× ${c.name}`);
+    }
+    const photos = S.markups.filter(m => m.type === 'photo' && MarkupList.dayOf(m) === day).length;
+    if (photos) L.push(`Photos attached to drawing: ${photos}`);
+    if (!to.pipes.length && !to.fittings.length && !to.penetrations.length && !to.symbols.length && !to.counts.length) {
+      L.push('(no markups recorded for this day)');
+    }
+    return L.join('\n');
+  }
+
+  function dayMaterialsCsv(day) {
+    const S = State.S;
+    const to = MarkupList.computeTakeoff({ day });
+    const fmt = S.unitFormat;
+    const cell = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+    const lines = [];
+    lines.push(['Daily materials', S.fileName, day, S.jobRef || ''].map(cell).join(','));
+    lines.push('Code,Description,Qty,Unit');
+    for (const p of to.pipes) {
+      const qty = p.totalFt == null ? p.count : (fmt === 'm' ? (p.totalFt / Units.FT_PER_M).toFixed(1) : p.totalFt.toFixed(1));
+      const unit = p.totalFt == null ? 'runs' : (fmt === 'm' ? 'm' : 'ft');
+      lines.push([`PIPE-${String(p.size).replace(/[^0-9a-z.]/gi, '').toUpperCase()}`, `Pipe ${p.size} ${p.material}`, qty, unit].map(cell).join(','));
+    }
+    for (const f of to.fittings) {
+      lines.push([MarkupList.fittingCode(f), `IBEX Impress ${f.name} ${f.size}`, f.count, 'ea'].map(cell).join(','));
+    }
+    for (const p of to.penetrations) {
+      lines.push([`CORE-${String(p.size).replace(/[^0-9a-z.]/gi, '').toUpperCase()}`, `Core drill Ø${p.size} ${p.type}${p.fire ? ' fire-rated' : ''}`, p.count, 'ea'].map(cell).join(','));
+    }
+    return lines.join('\r\n');
+  }
+
+  function reportDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first.', 'warn'); return; }
+    const S = State.S;
+    modal(`
+      <h3>Daily report</h3>
+      <div class="form-row"><label>Work day</label>
+        <input type="date" id="rp-day" value="${S.workDay}" style="color-scheme:dark"></div>
+      <div class="form-row"><label>AroFlo task / job ref (printed on everything)</label>
+        <input type="text" id="rp-ref" value="${(S.jobRef || '').replace(/"/g, '&quot;')}" placeholder="e.g. Task #48213 — Plant 2 vacuum air"></div>
+      <div class="form-row">
+        <label class="chk"><input type="checkbox" id="rp-pdf" checked> Day-highlighted PDF (earlier days grayed, banner stamped)</label>
+        <label class="chk"><input type="checkbox" id="rp-csv" checked> Materials CSV for the day (IMPRESS codes — attach or import to AroFlo)</label>
+        <label class="chk"><input type="checkbox" id="rp-clip" checked> Copy work summary to clipboard (paste into the AroFlo task note)</label>
+      </div>
+      <p class="muted" id="rp-preview" style="white-space:pre-wrap;max-height:200px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;font-size:11.5px"></p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="rp-cancel">Cancel</button>
+        <button class="mini-btn primary" id="rp-ok">Generate report</button>
+      </div>`, (box, close) => {
+      const refresh = () => { $('rp-preview').textContent = buildDaySummary($('rp-day').value || S.workDay); };
+      $('rp-day').addEventListener('change', refresh);
+      $('rp-ref').addEventListener('input', () => { S.jobRef = $('rp-ref').value.trim(); State.touch(); refresh(); });
+      refresh();
+
+      $('rp-ok').onclick = async () => {
+        const day = $('rp-day').value || S.workDay;
+        S.jobRef = $('rp-ref').value.trim();
+        State.touch();
+        const wantPdf = $('rp-pdf').checked, wantCsv = $('rp-csv').checked, wantClip = $('rp-clip').checked;
+        const summary = buildDaySummary(day);
+        close();
+        if (wantClip) {
+          try {
+            await navigator.clipboard.writeText(summary);
+            toast('Work summary copied — paste it into the AroFlo task note.', 'ok', 6000);
+          } catch (_) {
+            toast('Clipboard unavailable — the summary is in the downloaded files instead.', 'warn');
+          }
+        }
+        if (wantCsv) {
+          const blob = new Blob(['﻿' + dayMaterialsCsv(day)], { type: 'text/csv;charset=utf-8' });
+          download(blob, `${(S.fileName || 'report').replace(/\.pdf$/i, '')} - materials ${day}.csv`);
+        }
+        if (wantPdf) {
+          await Export.exportFlattenedPdf({
+            dayMode: true, day,
+            banner: `DAILY REPORT — ${fmtDayLong(day)}${S.jobRef ? ' — ' + S.jobRef : ''}`,
+            fileSuffix: ` - daily report ${day}`,
+          });
+        }
+      };
+      $('rp-cancel').onclick = close;
     });
   }
 
@@ -488,6 +618,31 @@ const App = (() => {
       scaleDialog();
     };
 
+    // day bar
+    const dayInput = $('workDay');
+    dayInput.value = State.S.workDay;
+    dayInput.addEventListener('change', () => State.setWorkDay(dayInput.value));
+    const shiftDay = delta => {
+      const d = new Date(State.S.workDay + 'T12:00:00');
+      d.setDate(d.getDate() + delta);
+      State.setWorkDay(d.toISOString().slice(0, 10));
+    };
+    $('btnPrevDay').onclick = () => shiftDay(-1);
+    $('btnNextDay').onclick = () => shiftDay(1);
+    $('btnDayMode').onclick = () => {
+      State.setDayMode(!State.S.dayMode);
+      toast(State.S.dayMode
+        ? `Day mode on — earlier days gray, future days hidden. Active day: ${State.S.workDay}.`
+        : 'Day mode off — showing all work.', 'ok', 3500);
+    };
+    State.on('day', () => {
+      dayInput.value = State.S.workDay;
+      $('btnDayMode').classList.toggle('active', State.S.dayMode);
+      Render.drawPage();
+    });
+
+    $('btnReport').onclick = () => reportDialog();
+
     // tool rail
     document.querySelectorAll('#toolRail .tool-btn').forEach(btn => {
       btn.addEventListener('click', () => State.setTool(btn.dataset.tool));
@@ -596,6 +751,6 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    csvExportDialog, photoLightbox, download, savedIndicator, showTab: (...a) => Props.showTab(...a),
+    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, showTab: (...a) => Props.showTab(...a),
   };
 })();

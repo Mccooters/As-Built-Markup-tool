@@ -28,6 +28,7 @@ const Tools = (() => {
     callout: 'Press at the point you want the arrow, drag to where the note box goes, release, then type.',
     symbol: 'Click to place the selected symbol · R rotates · pick a different one in the Symbols tab.',
     penet: 'Click where the pipe passes through — marks the core/sleeve with its required hole size. Set Ø size, wall/floor and fire rating in the panel; the Takeoff tab totals them into a core-drill schedule.',
+    fitting: 'Tap to drop the armed press fitting at the pipe size shown in the Fittings tab — stays armed for rapid entry. Totals build the fittings schedule for the day.',
     photo: 'Pick an image, then click the drawing to pin it (drag-dropping an image file works too). Drag corners to resize · double-click to view full size.',
   };
 
@@ -57,7 +58,7 @@ const Tools = (() => {
   let gestureAt = 0;           // when a second finger last landed
   let panConvertedAt = 0;      // when a touch turned into a one-finger pan
   const TAP_SLOP = 22;         // px of finger roll still counted as a tap
-  const CLICK_TOOLS = { calibrate: 1, symbol: 1, count: 1, text: 1, penet: 1, photo: 1 };
+  const CLICK_TOOLS = { calibrate: 1, symbol: 1, count: 1, text: 1, penet: 1, photo: 1, fitting: 1 };
 
   const S = () => State.S;
   const D = () => State.S.defaults;
@@ -411,6 +412,22 @@ const Tools = (() => {
     State.select([created.id]);
   }
 
+  /* ================= press fittings ================= */
+
+  function placeFitting(p) {
+    const d = D();
+    const fit = Symbols.fittingById(S().activeFitting);
+    if (!fit) { App.toast('Pick a fitting in the Fittings tab first.', 'warn'); App.showTab('fittings'); return; }
+    State.addMarkup({
+      type: 'fitting', page: S().page, x: p.x, y: p.y,
+      fitId: fit.id, pipeSize: d.pipeSize,
+      color: d.colorBySize ? (Symbols.PIPE_COLORS[d.pipeSize] || d.color) : d.color,
+      size: 15, fontSize: d.fontSize, showLabel: true,
+      subject: `${fit.name} ${d.pipeSize}`,
+    });
+    // stays armed — tap tap tap for rapid entry; the palette badge updates live
+  }
+
   /* ================= photos ================= */
 
   let armedPhoto = null;   // { imgId, aspect } waiting for a placement click
@@ -696,6 +713,7 @@ const Tools = (() => {
     if (tool === 'text') { placeText(p); return; }
     if (tool === 'penet') { placePenetration(p); return; }
     if (tool === 'photo') { placePhoto(p); return; }
+    if (tool === 'fitting') { placeFitting(p); return; }
   }
 
   /** The tap action itself — shared by the pointerup path and the click fallback. */
@@ -716,6 +734,7 @@ const Tools = (() => {
     if (tool === 'text') { placeText(p); return; }
     if (tool === 'penet') { placePenetration(p); return; }
     if (tool === 'photo') { placePhoto(p); return; }
+    if (tool === 'fitting') { placeFitting(p); return; }
   }
 
   /**

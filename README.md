@@ -31,8 +31,9 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 6. **Pin site photos** — pick an image or just drag one onto the sheet to place it where the work is; resize by the corners, add a caption, double-click to view full size. Photos are downscaled for storage, saved in the project file, and **flatten into the exported PDF**.
 7. **Count** (`C`) — create count groups (drops, couplers, elbow fittings…) and click to place marks.
 8. Add **clouds, callouts, text, arrows, highlights** for revision notes.
-9. Check the **Takeoff** tab — total length per pipe size/material, fitting quantities, counts — and the **Markups List** at the bottom (sortable, filterable, click a row to jump to the markup).
-10. **Export** — a flattened PDF with every markup burned in (print-ready, true page size), and/or a CSV containing the pipe takeoff, fitting schedule, counts, and the full markup log.
+9. **Track the day's work** — everything you add is stamped with the active work day; Day mode grays earlier days so the day's progress reads at a glance, and the **Report** button exports the daily handover (PDF + materials CSV + clipboard summary for AroFlo).
+10. Check the **Takeoff** tab — total length per pipe size/material, fitting quantities, counts — and the **Markups List** at the bottom (sortable, filterable, click a row to jump to the markup).
+11. **Export** — a flattened PDF with every markup burned in (print-ready, true page size), and/or a CSV containing the pipe takeoff, fitting schedule, counts, and the full markup log.
 
 ## Feature map (Bluebeam Revu → AirMark)
 
@@ -71,6 +72,22 @@ Then drop a PDF drawing onto the window, or click **Sample** to load a built-in 
 | Arrow keys | Pan the view — including mid pipe run (`Shift` = faster) · nudge the selection when on Select |
 | Mouse wheel | Zoom at cursor · `+` / `−` / `0` zoom in/out/fit |
 | `PgUp` / `PgDn` | Previous / next page |
+
+## Daily reports & work-day tracking
+
+Every markup is stamped with the active **work day** (the date picker in the toolbar). Turn on **Day mode** (calendar button) and earlier days' work renders **grayed out** while the active day stays full color — step the date back and forth to review progress day by day (future days are hidden). Each markup's day is editable in Properties.
+
+The **Report** button generates the day's handover in one go:
+
+- a **day-highlighted PDF** — earlier work grayed, the day's work in color, stamped with a `DAILY REPORT — date — job ref` banner
+- a **materials CSV** for the day — pipe lengths, IBEX Impress fittings (`IMPRESS-E90-54MM` style codes) and core-drill counts, ready to attach or import into AroFlo
+- a formatted **work summary copied to the clipboard**, ready to paste straight into the AroFlo task note
+
+The AroFlo task / job ref is remembered per project and printed on everything. The Takeoff tab and the CSV schedule export can also be scoped to the active day only.
+
+## Press fittings (IBEX Impress)
+
+The **Fittings** tab holds a press-fitting palette — elbows 90°/45°, bends, equal/reducing tees, couplings, slip couplings, reducers, unions, BSP adaptors, end caps, press ball valves, flange adaptors, wall plate elbows — at any pipe size (press sizes 15–108 mm included). Tap a fitting, then tap the drawing where it goes; the tool **stays armed** so you can tap-tap-tap through an install, and each palette button shows today's running count. Fittings appear as small coded badges (`E90`, `TEE`…) colored by size, total into a fittings schedule in the Takeoff tab, and export with material codes in the CSV and daily report.
 
 ## Files & saving
 

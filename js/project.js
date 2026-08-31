@@ -25,6 +25,7 @@ const Project = (() => {
       images: usedImages,
       defaults: S.defaults, activeCountGroup: S.activeCountGroup,
       exportPrefs: S.exportPrefs,
+      workDay: S.workDay, dayMode: S.dayMode, jobRef: S.jobRef, activeFitting: S.activeFitting,
     };
     if (includePdf && S.pdfBytes && S.pdfBytes.length < EMBED_LIMIT) {
       data.pdfBase64 = bytesToBase64(S.pdfBytes);
@@ -41,6 +42,14 @@ const Project = (() => {
     S.defaultScale = data.defaultScale || null;
     S.activeCountGroup = data.activeCountGroup || (S.countGroups[0] && S.countGroups[0].id) || null;
     if (data.exportPrefs) S.exportPrefs = data.exportPrefs;
+    if (data.jobRef != null) S.jobRef = data.jobRef;
+    if (data.activeFitting) S.activeFitting = data.activeFitting;
+    if (data.workDay) S.workDay = data.workDay;
+    if (data.dayMode != null) S.dayMode = !!data.dayMode;
+    // day migration: older markups get their day from their timestamp
+    for (const m of S.markups) {
+      if (!m.day) m.day = (m.date || '').slice(0, 10) || S.workDay;
+    }
     if (data.defaults) Object.assign(S.defaults, data.defaults);
     if (data.unitFormat) S.unitFormat = data.unitFormat;
     // id counter must clear every existing id
@@ -57,6 +66,7 @@ const Project = (() => {
     State.clearHistory();
     S.selection.clear();
     State.emit('markups'); State.emit('scale'); State.emit('countGroups'); State.emit('selection');
+    State.emit('day');
     Render.drawPage();
   }
 

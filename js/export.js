@@ -25,9 +25,15 @@ const Export = (() => {
 
   /* ================= entry point ================= */
 
-  async function exportFlattenedPdf() {
+  /**
+   * opts: { dayMode, day, banner, fileSuffix } — defaults follow the live view,
+   * so with Day Mode on the export shows earlier days grayed exactly like the
+   * screen. The Daily Report dialog passes an explicit day + banner.
+   */
+  async function exportFlattenedPdf(opts) {
     const S = State.S;
     if (!S.pdf) { App.toast('Open a drawing first.', 'warn'); return; }
+    const o = Object.assign({ dayMode: S.dayMode, day: S.workDay, banner: null, fileSuffix: ' (as-built)' }, opts || {});
 
     const progress = App.progress('Exporting as-built PDF…');
     try {
@@ -37,8 +43,8 @@ const Export = (() => {
         if (out.getPageCount() !== S.pageCount) out = null;
       } catch (_) { out = null; }
 
-      if (out) await overlayExport(out, progress);
-      else await rasterExport(progress);
+      if (out) await overlayExport(out, progress, o);
+      else await rasterExport(progress, o);
     } catch (err) {
       console.error(err);
       progress.close();
@@ -270,12 +276,29 @@ const Export = (() => {
 
   /* ================= per-type vector renderers ================= */
 
-  function drawVectorMarkup(page, f, fonts, m) {
+  function drawVectorMarkup(page, f, fonts, m, mod) {
     const op = m.opacity != null ? m.opacity : 1;
     const col = rgbOf(m.color);
     const lw = m.lineWidth || 2;
+    const gray = !!(mod && mod.gray);
 
     switch (m.type) {
+
+      case 'fitting': {
+        const fit = Symbols.fittingById(m.fitId);
+        const code = fit ? fit.code : '?';
+        const s = m.size || 15, fs = s * 0.56;
+        const w = Math.max(s * 1.7, fonts.bold.widthOfTextAtSize(code, fs) + s * 0.7);
+        const d = roundedRectD(m.x - w / 2, m.y - s / 2, w, s, s * 0.22, f);
+        fillPath(page, f, d, WHITE(), 0.88 * op);
+        strokePath(page, f, d, col, Math.max(1.2, s * 0.09), { opacity: op });
+        drawLabel(page, f, fonts, code, m.x, m.y + fs * 0.36, { size: fs, bold: true, color: m.color, opacity: op });
+        if (m.showLabel !== false && m.pipeSize) {
+          drawLabel(page, f, fonts, m.pipeSize, m.x, m.y + s * 0.5 + s * 0.52,
+            { size: s * 0.44, bold: true, color: m.color, halo: true, opacity: op });
+        }
+        return;
+      }
 
       case 'pipe': {
         const w = State.pipeDisplayWidth(m);
@@ -414,7 +437,7 @@ const Export = (() => {
         const boxD = roundedRectD(m.x, m.y, m.w, m.h, 2, f);
         fillPath(page, f, boxD, WHITE(), 0.9 * op);
         strokePath(page, f, boxD, col, lw, { opacity: op });
-        drawWrapped(page, f, fonts, m, '#111111', op);
+        drawWrapped(page, f, fonts, m, gray ? m.color : '#111111', op);
         return;
       }
 
@@ -456,7 +479,7 @@ const Export = (() => {
           const sub = `${m.penType || ''}${m.penFire ? ' · FIRE' : ''}`.trim();
           if (sub) {
             drawLabel(page, f, fonts, sub, m.x, m.y + r * 1.5 + fs * 2.15,
-              { size: fs * 0.78, bold: !!m.penFire, color: m.penFire ? '#e02020' : m.color, halo: true, opacity: op });
+              { size: fs * 0.78, bold: !!m.penFire, color: m.penFire && !gray ? '#e02020' : m.color, halo: true, opacity: op });
           }
         }
         return;
@@ -464,7 +487,7 @@ const Export = (() => {
 
       case 'count': {
         const grp = State.countGroup(m.groupId);
-        const color = rgbOf(grp ? grp.color : m.color);
+        const color = rgbOf(gray ? m.color : (grp ? grp.color : m.color));
         const shape = grp ? grp.shape : 'circle';
         const r = m.size || 7;
         const pts = ({
@@ -515,12 +538,12 @@ const Export = (() => {
   }
 
   /** High-res raster stamp of a single markup (symbols, or any vector failure). */
-  async function miniStamp(out, page, f, m) {
+  async function miniStamp(out, page, f, m, mod) {
     const b = Geo.markupBounds(m);
     if (b.w <= 0 || b.h <= 0) return;
     const s = Math.max(2, Math.min(10, 2400 / Math.max(b.w, b.h)));
     const pxW = Math.max(2, Math.round(b.w * s)), pxH = Math.max(2, Math.round(b.h * s));
-    const svgStr = pageSvg([m], b, pxW, pxH);
+    const svgStr = pageSvg([m], b, pxW, pxH, { gray: !!(mod && mod.gray) });
     const canvas = await svgToCanvas(svgStr, pxW, pxH);
     const png = await out.embedPng(canvas.toDataURL('image/png'));
     const anchor = f.pagePt(b.x, b.y + b.h);
@@ -532,7 +555,7 @@ const Export = (() => {
 
   /* ================= export passes ================= */
 
-  async function overlayExport(out, progress) {
+  async function overlayExport(out, progress, o) {
     const S = State.S;
     const n = S.pageCount;
     const fonts = {
@@ -542,7 +565,7 @@ const Export = (() => {
 
     for (let p = 1; p <= n; p++) {
       const markups = State.pageMarkups(p);
-      if (!markups.length) continue;
+      if (!markups.length && !o.banner) continue;
       progress.set(((p - 1) / n) * 100, `Marking up page ${p} of ${n}…`);
 
       const page = out.getPage(p - 1);
@@ -550,27 +573,38 @@ const Export = (() => {
       page.pushOperators(PDFLib.setLineJoin(PDFLib.LineJoinStyle.Round));
 
       for (const m of markups) {
+        const st = State.dayStateOf(m, o.dayMode, o.day);
+        if (st === 'hidden') continue;
+        const gray = st === 'gray';
+        const mm = gray ? { ...m, color: '#8c8c8c', opacity: (m.opacity != null ? m.opacity : 1) * 0.4 } : m;
         try {
-          if (m.type === 'photo') await drawPhoto(out, page, f, fonts, m);
-          else if (m.type === 'symbol') await miniStamp(out, page, f, m);
-          else drawVectorMarkup(page, f, fonts, m);
+          if (m.type === 'photo') await drawPhoto(out, page, f, fonts, mm);
+          else if (m.type === 'symbol') await miniStamp(out, page, f, m, { gray });
+          else drawVectorMarkup(page, f, fonts, mm, { gray });
         } catch (err) {
           // never lose a markup — fall back to a high-res raster of just this one
           console.warn('vector export fallback for', m.type, err);
-          try { await miniStamp(out, page, f, m); } catch (e2) { console.error('stamp failed', e2); }
+          try { await miniStamp(out, page, f, m, { gray }); } catch (e2) { console.error('stamp failed', e2); }
         }
+      }
+
+      if (o.banner) {
+        drawLabel(page, f, fonts, o.banner, 16, 26,
+          { size: 15, bold: true, color: '#e02020', anchor: 'start', halo: true, haloOpacity: 0.92 });
       }
     }
 
     await finishExport(out, progress,
-      'As-built PDF exported — drawing and markups both at full vector quality.');
+      o.banner ? 'Daily report PDF exported.' : 'As-built PDF exported — drawing and markups both at full vector quality.',
+      o.fileSuffix);
   }
 
   /** Fallback: rasterize whole pages (only when the source PDF can't be reloaded). */
-  async function rasterExport(progress) {
+  async function rasterExport(progress, o) {
     const S = State.S;
     const out = await PDFLib.PDFDocument.create();
     const n = S.pageCount;
+    o = o || {};
 
     for (let p = 1; p <= n; p++) {
       progress.set(((p - 1) / n) * 100, `Rendering page ${p} of ${n}…`);
@@ -585,11 +619,18 @@ const Export = (() => {
       const ctx = canvas.getContext('2d', { alpha: false });
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
 
-      const markups = State.pageMarkups(p);
+      const markups = State.pageMarkups(p)
+        .filter(m => State.dayStateOf(m, o.dayMode, o.day) !== 'hidden');
       if (markups.length) {
-        const svgStr = pageSvg(markups, { x: 0, y: 0, w: vp1.width, h: vp1.height }, canvas.width, canvas.height);
-        const layer = await svgToCanvas(svgStr, canvas.width, canvas.height);
-        ctx.drawImage(layer, 0, 0);
+        // gray and normal markups rasterize as separate layers so the day
+        // treatment matches the vector path
+        for (const gray of [true, false]) {
+          const set = markups.filter(m => (State.dayStateOf(m, o.dayMode, o.day) === 'gray') === gray);
+          if (!set.length) continue;
+          const svgStr = pageSvg(set, { x: 0, y: 0, w: vp1.width, h: vp1.height }, canvas.width, canvas.height, { gray });
+          const layer = await svgToCanvas(svgStr, canvas.width, canvas.height);
+          ctx.drawImage(layer, 0, 0);
+        }
       }
 
       const jpeg = await out.embedJpg(canvas.toDataURL('image/jpeg', 0.87));
@@ -598,14 +639,14 @@ const Export = (() => {
     }
 
     await finishExport(out, progress,
-      'PDF exported (rasterized — the source PDF could not be reloaded for vector output).');
+      'PDF exported (rasterized — the source PDF could not be reloaded for vector output).', o.fileSuffix);
   }
 
-  async function finishExport(out, progress, message) {
+  async function finishExport(out, progress, message, suffix) {
     progress.set(97, 'Writing PDF…');
     const bytes = await out.save();
     const base = (State.S.fileName || 'drawing').replace(/\.pdf$/i, '');
-    App.download(new Blob([bytes], { type: 'application/pdf' }), base + ' (as-built).pdf');
+    App.download(new Blob([bytes], { type: 'application/pdf' }), base + (suffix || ' (as-built)') + '.pdf');
     progress.close();
     App.toast(message, 'ok');
   }

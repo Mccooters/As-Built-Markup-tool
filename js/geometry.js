@@ -172,6 +172,10 @@ const Geo = (() => {
       }
       case 'count':
         return { x: m.x - 9, y: m.y - 9, w: 18, h: 18 };
+      case 'fitting': {
+        const s = m.size || 15;
+        return { x: m.x - s * 1.4, y: m.y - s * 0.9, w: s * 2.8, h: s * 2.3 };
+      }
       default:
         return { x: m.x || 0, y: m.y || 0, w: m.w || 1, h: m.h || 1 };
     }

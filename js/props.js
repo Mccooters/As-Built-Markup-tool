@@ -4,7 +4,8 @@
 const Props = (() => {
 
   const q = sel => document.querySelector(sel);
-  let propsRoot, symbolsRoot, takeoffRoot;
+  let propsRoot, symbolsRoot, fittingsRoot, takeoffRoot;
+  let takeoffDayOnly = false;   // Takeoff tab scope (auto-follows day mode)
 
   const S = () => State.S;
   const D = () => State.S.defaults;
@@ -199,6 +200,14 @@ const Props = (() => {
       h += `<div class="prop-row"><label>Subject</label><input type="text" id="p-subject" value="${esc(first.subject)}"></div>`;
       h += `<div class="prop-row"><label>Comment</label><textarea id="p-comment" rows="2">${esc(first.comment)}</textarea></div>`;
     }
+    h += `<div class="prop-row"><label>Work day</label><input type="date" id="p-day" value="${esc(first.day || (first.date || '').slice(0, 10))}" style="color-scheme:dark"></div>`;
+
+    if (types.has('fitting')) {
+      h += `<div class="prop-section"><div class="prop-cap">Press fitting</div>
+        <div class="prop-row"><label>Fitting</label><select id="p-fitid">${Symbols.FITTINGS.map(ft => `<option value="${ft.id}"${ft.id === first.fitId ? ' selected' : ''}>${esc(ft.code)} — ${esc(ft.name)}</option>`).join('')}</select></div>
+        <div class="prop-row"><label>Size</label><select id="p-fitsize">${pipeSizeOptions(first.pipeSize)}</select></div>
+      </div>`;
+    }
 
     const hasPipe = types.has('pipe');
     if (hasPipe) h += pipeRows(first);
@@ -266,6 +275,22 @@ const Props = (() => {
 
     if (has('#p-subject')) has('#p-subject').addEventListener('change', e => apply({ subject: e.target.value }));
     if (has('#p-comment')) has('#p-comment').addEventListener('change', e => apply({ comment: e.target.value }));
+    if (has('#p-day')) has('#p-day').addEventListener('change', e => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) { apply({ day: e.target.value }); Render.drawPage(); }
+    });
+
+    // fitting fields
+    if (has('#p-fitid')) has('#p-fitid').addEventListener('change', e => {
+      const ft = Symbols.fittingById(e.target.value);
+      if (ft) State.updateMarkups([...S().selection], m => m.type === 'fitting'
+        ? { fitId: ft.id, subject: `${ft.name} ${m.pipeSize}` } : {});
+    });
+    if (has('#p-fitsize')) has('#p-fitsize').addEventListener('change', e => {
+      const size = e.target.value;
+      State.updateMarkups([...S().selection], m => m.type === 'fitting'
+        ? { pipeSize: size, color: D().colorBySize ? (Symbols.PIPE_COLORS[size] || m.color) : m.color,
+            subject: `${(Symbols.fittingById(m.fitId) || { name: 'Fitting' }).name} ${size}` } : {});
+    });
 
     // pipe fields — sticky: also update tool defaults
     const pipePatch = patch => {
@@ -419,12 +444,48 @@ const Props = (() => {
     symbolsRoot.querySelector('#sym-label').addEventListener('change', e => { D().symbolLabel = e.target.checked; });
   }
 
+  /* ================= FITTINGS TAB ================= */
+
+  function renderFittings() {
+    const d = D();
+    // today's count per fitting id (at any size) for the palette badges
+    const todays = {};
+    for (const m of S().markups) {
+      if (m.type === 'fitting' && (m.day || (m.date || '').slice(0, 10)) === S().workDay) {
+        todays[m.fitId] = (todays[m.fitId] || 0) + 1;
+      }
+    }
+    let h = `<div class="prop-cap">Press fittings — IBEX Impress</div>
+      <div class="prop-row"><label>Pipe size</label><select id="fit-size">${pipeSizeOptions(d.pipeSize)}</select></div>
+      <p class="prop-note" style="margin:2px 0 8px">Tap a fitting, then tap the drawing where it goes — it stays armed, so keep tapping to add more. Badges show today's count.</p>
+      <div class="fit-grid">`;
+    for (const ft of Symbols.FITTINGS) {
+      h += `<button class="fit-cell${S().activeFitting === ft.id && S().tool === 'fitting' ? ' active' : ''}" data-fit="${ft.id}">
+        <span class="fit-code">${esc(ft.code)}</span><span class="fit-name">${esc(ft.name)}</span>
+        ${todays[ft.id] ? `<span class="fit-count">${todays[ft.id]}</span>` : ''}
+      </button>`;
+    }
+    h += `</div><p class="prop-note" style="margin-top:10px">Schedule totals per type & size are in the <b>Takeoff</b> tab and the Daily Report / CSV exports.</p>`;
+    fittingsRoot.innerHTML = h;
+
+    fittingsRoot.querySelector('#fit-size').addEventListener('change', e => { D().pipeSize = e.target.value; });
+    fittingsRoot.querySelectorAll('.fit-cell').forEach(cell => {
+      cell.addEventListener('click', () => {
+        S().activeFitting = cell.dataset.fit;
+        State.setTool('fitting');
+        renderFittings();
+      });
+    });
+  }
+
   /* ================= TAKEOFF TAB ================= */
 
   function renderTakeoff() {
-    const to = MarkupList.computeTakeoff();
+    const dayScoped = takeoffDayOnly && S().pdf;
+    const to = MarkupList.computeTakeoff(dayScoped ? { day: S().workDay } : null);
     const fmt = S().unitFormat;
-    let h = `<div class="prop-cap">Pipe takeoff</div>`;
+    let h = `<div class="prop-row" style="margin-bottom:6px"><label class="chk"><input type="checkbox" id="to-dayonly"${takeoffDayOnly ? ' checked' : ''}> Active day only (${esc(S().workDay)})</label></div>`;
+    h += `<div class="prop-cap">Pipe takeoff</div>`;
     if (!to.pipes.length) {
       h += `<p class="prop-note">No pipe runs yet. Draw them with the <b>Pipe run</b> tool (P).</p>`;
     } else {
@@ -441,6 +502,13 @@ const Props = (() => {
       h += `<div class="prop-cap">Fittings &amp; equipment</div><table class="to-table"><tr><th>Item</th><th style="text-align:right">Qty</th></tr>`;
       for (const r of to.symbols) h += `<tr><td>${esc(r.name)}</td><td class="num">${r.count}</td></tr>`;
       h += `</table>`;
+    }
+    if (to.fittings.length) {
+      h += `<div class="prop-cap">Press fittings</div><table class="to-table"><tr><th>Fitting / size</th><th style="text-align:right">Qty</th></tr>`;
+      for (const r of to.fittings) {
+        h += `<tr><td><span class="to-chip" style="background:${Symbols.PIPE_COLORS[r.size] || '#888'}"></span>${esc(r.code)} ${esc(r.name)} ${esc(r.size)}</td><td class="num">${r.count}</td></tr>`;
+      }
+      h += `<tr class="total"><td>Total fittings</td><td class="num">${to.fittings.reduce((a, r) => a + r.count, 0)}</td></tr></table>`;
     }
     if (to.penetrations.length) {
       h += `<div class="prop-cap">Penetration schedule</div><table class="to-table"><tr><th>Core Ø / through</th><th style="text-align:right">Qty</th></tr>`;
@@ -469,6 +537,8 @@ const Props = (() => {
     takeoffRoot.innerHTML = h;
     const csv = takeoffRoot.querySelector('#to-csv');
     if (csv) csv.addEventListener('click', () => App.csvExportDialog());
+    const dayOnly = takeoffRoot.querySelector('#to-dayonly');
+    if (dayOnly) dayOnly.addEventListener('change', e => { takeoffDayOnly = e.target.checked; renderTakeoff(); });
   }
 
   /* ================= names ================= */
@@ -479,7 +549,7 @@ const Props = (() => {
       mpoly: 'Polylength', marea: 'Area', count: 'Count', line: 'Line', arrow: 'Arrow',
       polyline: 'Polyline', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud',
       pen: 'Pen', highlight: 'Highlighter', text: 'Text', callout: 'Callout', symbol: 'Symbol',
-      penet: 'Penetration', photo: 'Photo',
+      penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting',
     })[t] || t;
   }
   function typeName(t) {
@@ -487,7 +557,7 @@ const Props = (() => {
       pipe: 'Pipe run', mlength: 'Length measurement', mpoly: 'Polylength', marea: 'Area',
       cloud: 'Revision cloud', highlight: 'Highlight', symbol: 'Symbol', stamp: 'Stamp',
       count: 'Count mark', callout: 'Callout', text: 'Text',
-      penet: 'Penetration', photo: 'Photo',
+      penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting',
     })[t] || (t[0].toUpperCase() + t.slice(1));
   }
 
@@ -502,6 +572,7 @@ const Props = (() => {
   function init() {
     propsRoot = q('#tab-props');
     symbolsRoot = q('#tab-symbols');
+    fittingsRoot = q('#tab-fittings');
     takeoffRoot = q('#tab-takeoff');
 
     document.querySelectorAll('#rightPanel .tab').forEach(t =>
@@ -517,18 +588,27 @@ const Props = (() => {
       });
     };
     State.on('selection', refresh);
-    State.on('tool', () => { renderProps(); if (S().tool === 'symbol') showTab('symbols'); else showTab('props'); });
+    State.on('tool', () => {
+      renderProps();
+      if (S().tool === 'symbol') showTab('symbols');
+      else if (S().tool === 'fitting') { showTab('fittings'); renderFittings(); }
+      else showTab('props');
+    });
     State.on('history', refresh);
     State.on('countGroups', refresh);
     State.on('scale', refresh);
-    State.on('markups', () => { renderTakeoffThrottled(); });
-    State.on('doc', refresh);
+    State.on('markups', () => { renderTakeoffThrottled(); if (S().tool === 'fitting') renderFittings(); });
+    State.on('doc', () => { refresh(); renderFittings(); });
+    State.on('day', () => {
+      takeoffDayOnly = S().dayMode;
+      renderTakeoff(); renderFittings(); renderProps();
+    });
 
     let toTimer = null;
     const renderTakeoffThrottled = () => { clearTimeout(toTimer); toTimer = setTimeout(renderTakeoff, 250); };
 
-    renderProps(); renderSymbols(); renderTakeoff();
+    renderProps(); renderSymbols(); renderFittings(); renderTakeoff();
   }
 
-  return { init, showTab, renderSymbols, renderProps, renderTakeoff, focusSubject, typeName };
+  return { init, showTab, renderSymbols, renderFittings, renderProps, renderTakeoff, focusSubject, typeName };
 })();

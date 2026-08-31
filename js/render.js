@@ -379,6 +379,29 @@ const Render = (() => {
       inner.innerHTML = Symbols.countShapeSvg(shape, m.size || 7, color);
       g.appendChild(inner);
     },
+
+    fitting(g, m) {
+      const fit = Symbols.fittingById(m.fitId);
+      const code = fit ? fit.code : '?';
+      const s = m.size || 15;                 // badge height
+      const fs = s * 0.56;
+      const w = Math.max(s * 1.7, textWidth(code, fs, true) + s * 0.7);
+      g.appendChild(svg('rect', {
+        x: m.x - w / 2, y: m.y - s / 2, width: w, height: s, rx: s * 0.22,
+        fill: '#ffffff', 'fill-opacity': 0.88,
+        stroke: m.color, 'stroke-width': Math.max(1.2, s * 0.09),
+      }));
+      const t = svg('text', {
+        x: m.x, y: m.y + fs * 0.36, 'text-anchor': 'middle',
+        'font-family': 'Arial, Helvetica, sans-serif', 'font-size': fs, 'font-weight': 'bold',
+        fill: m.color,
+      });
+      t.textContent = code;
+      g.appendChild(t);
+      if (m.showLabel !== false && m.pipeSize) {
+        g.appendChild(labelEl(m.x, m.y + s * 0.5 + s * 0.52, m.pipeSize, m, { fontSize: s * 0.44, bold: true }));
+      }
+    },
   };
 
   /* ================= public API ================= */
@@ -389,6 +412,12 @@ const Render = (() => {
     if (m.opacity != null && m.opacity < 1) g.setAttribute('opacity', m.opacity);
     const b = builders[m.type];
     if (b) b(g, m, opts || {});
+    // earlier work days render grayed (forced by export, or live from day mode)
+    const gray = opts && opts.gray != null ? opts.gray : State.dayStateOf(m) === 'gray';
+    if (gray) {
+      g.style.filter = 'grayscale(100%)';
+      g.setAttribute('opacity', (m.opacity != null ? m.opacity : 1) * 0.4);
+    }
     return g;
   }
 
@@ -398,6 +427,7 @@ const Render = (() => {
     overlay.innerHTML = '';
     elMap.clear();
     for (const m of State.pageMarkups(State.S.page)) {
+      if (State.dayStateOf(m) === 'hidden') continue;   // future work days
       const g = buildMarkupEl(m);
       overlay.appendChild(g);
       elMap.set(m.id, g);
@@ -411,7 +441,7 @@ const Render = (() => {
     for (const id of ids) {
       const m = State.getMarkup(id);
       const old = elMap.get(id);
-      if (!m || m.page !== State.S.page) {
+      if (!m || m.page !== State.S.page || State.dayStateOf(m) === 'hidden') {
         if (old) { old.remove(); elMap.delete(id); }
         continue;
       }

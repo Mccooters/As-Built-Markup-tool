@@ -168,7 +168,7 @@ const Symbols = (() => {
   const PIPE_SIZES_IN = ['1/4"', '3/8"', '1/2"', '3/4"', '1"', '1-1/4"', '1-1/2"', '2"', '2-1/2"', '3"', '4"', '6"'];
   /** Metric tube: designation IS the OD in mm — covers aluminum systems (Transair,
    *  AIRnet…) and EN 1057 copper sizes (15/22/28/35/42/54/108). */
-  const PIPE_SIZES_MM = ['15mm', '16mm', '20mm', '22mm', '25mm', '28mm', '32mm', '35mm', '40mm', '42mm', '50mm', '54mm', '63mm', '76mm', '100mm', '108mm', '110mm', '160mm'];
+  const PIPE_SIZES_MM = ['15mm', '16mm', '20mm', '22mm', '25mm', '28mm', '32mm', '35mm', '40mm', '42mm', '50mm', '54mm', '63mm', '66.7mm', '76mm', '100mm', '108mm', '110mm', '160mm'];
   /** Metric threaded steel (EN 10255 / ISO 65). */
   const PIPE_SIZES_DN = ['DN15', 'DN20', 'DN25', 'DN32', 'DN40', 'DN50', 'DN65', 'DN80', 'DN100', 'DN150'];
   /** Combined, in takeoff sort order. */
@@ -229,8 +229,8 @@ const Symbols = (() => {
     '15mm': '#c2185b', '16mm': '#e53935', '20mm': '#f57c00', '22mm': '#e8820c',
     '25mm': '#c9a212', '28mm': '#7cb342', '32mm': '#43a047', '35mm': '#00acc1',
     '40mm': '#00897b', '42mm': '#8e24aa', '50mm': '#1e88e5', '54mm': '#f4511e',
-    '63mm': '#5e35b1', '76mm': '#d81b60', '100mm': '#6d4c41', '108mm': '#00695c',
-    '110mm': '#3949ab', '160mm': '#455a64',
+    '63mm': '#5e35b1', '66.7mm': '#9e9d24', '76mm': '#d81b60', '100mm': '#6d4c41',
+    '108mm': '#00695c', '110mm': '#3949ab', '160mm': '#455a64',
     // DN steel
     DN15: '#e53935', DN20: '#f57c00', DN25: '#c9a212', DN32: '#43a047',
     DN40: '#00897b', DN50: '#1e88e5', DN65: '#8e24aa', DN80: '#d81b60',
@@ -241,6 +241,29 @@ const Symbols = (() => {
 
   /** Default palette for generic markups. */
   const COLORS = ['#e02020', '#e8820c', '#c9a212', '#1d9e45', '#00897b', '#1f6fd0', '#5e35b1', '#d81b60', '#111111', '#ffffff'];
+
+  /**
+   * Press-fit fitting catalog (IBEX Impress style press pipework).
+   * `code` is the short badge shown on the drawing and used in material codes.
+   */
+  const FITTINGS = [
+    { id: 'e90', code: 'E90', name: 'Elbow 90°' },
+    { id: 'e45', code: 'E45', name: 'Elbow 45°' },
+    { id: 'bend', code: 'BND', name: 'Bend M/F 90°' },
+    { id: 'tee', code: 'TEE', name: 'Equal Tee' },
+    { id: 'teer', code: 'TR', name: 'Reducing Tee' },
+    { id: 'coup', code: 'CPL', name: 'Coupling' },
+    { id: 'slip', code: 'SLP', name: 'Slip Coupling' },
+    { id: 'red', code: 'RED', name: 'Reducer' },
+    { id: 'union', code: 'UN', name: 'Union' },
+    { id: 'mi', code: 'MI', name: 'Male BSP Adaptor' },
+    { id: 'fi', code: 'FI', name: 'Female BSP Adaptor' },
+    { id: 'cap', code: 'CAP', name: 'End Cap' },
+    { id: 'bvp', code: 'BVP', name: 'Ball Valve (press)' },
+    { id: 'flg', code: 'FLG', name: 'Flange Adaptor' },
+    { id: 'wpe', code: 'WPE', name: 'Wall Plate Elbow' },
+  ];
+  const fittingById = id => FITTINGS.find(x => x.id === id) || null;
 
   /** Count-group marker shapes. */
   const COUNT_SHAPES = ['circle', 'square', 'diamond', 'triangle', 'cross'];
@@ -261,5 +284,6 @@ const Symbols = (() => {
     PIPE_SIZES, PIPE_SIZES_IN, PIPE_SIZES_MM, PIPE_SIZES_DN,
     PIPE_NOMINAL, pipeOdInches, pipeOdLabel, PIPE_COLORS,
     MATERIALS, SYSTEMS, COLORS, COUNT_SHAPES, countShapeSvg,
+    FITTINGS, fittingById,
   };
 })();

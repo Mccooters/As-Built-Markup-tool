@@ -35,6 +35,12 @@ const State = (() => {
     author: localStorage.getItem('abmt:author') || 'Field',
     exportPrefs: null,       // schedule-export selections + note (persisted with the project)
 
+    // work-day tracking (daily reports)
+    workDay: new Date().toISOString().slice(0, 10),   // active day, YYYY-MM-DD
+    dayMode: false,          // true = gray out earlier days, hide future days
+    jobRef: '',              // AroFlo task / job reference for reports
+    activeFitting: 'e90',    // armed press-fitting id
+
     idCounter: 1,
     dirty: false,
   };
@@ -127,6 +133,7 @@ const State = (() => {
     m.id = m.id || newId();
     m.author = m.author || S.author;
     m.date = m.date || new Date().toISOString();
+    m.day = m.day || S.workDay;
     S.markups.push(m);
     emit('markups', { changed: [m.id] });
     touch();
@@ -167,6 +174,28 @@ const State = (() => {
   }
   const clearSelection = () => { if (S.selection.size) { S.selection.clear(); emit('selection'); } };
   const selectedMarkups = () => S.markups.filter(m => S.selection.has(m.id));
+
+  /* ---- work day ---- */
+  function setWorkDay(day) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '')) return;
+    S.workDay = day;
+    emit('day');
+    touch();
+  }
+  function setDayMode(on) {
+    S.dayMode = !!on;
+    emit('day');
+    touch();
+  }
+  /** How a markup renders relative to the active day: 'normal' | 'gray' | 'hidden'. */
+  function dayStateOf(m, dayMode, day) {
+    const mode = dayMode != null ? dayMode : S.dayMode;
+    if (!mode) return 'normal';
+    const d = m.day || (m.date || '').slice(0, 10);
+    const ref = day || S.workDay;
+    if (!d || d === ref) return 'normal';
+    return d < ref ? 'gray' : 'hidden';
+  }
 
   /* ---- tool ---- */
   function setTool(tool) {
@@ -259,6 +288,7 @@ const State = (() => {
     pushUndo, undo, redo, canUndo, canRedo, clearHistory,
     addMarkup, updateMarkups, deleteMarkups, getMarkup, pageMarkups,
     select, clearSelection, selectedMarkups, setTool,
+    setWorkDay, setDayMode, dayStateOf,
     scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
     resetDoc, newId, touch, addImage,

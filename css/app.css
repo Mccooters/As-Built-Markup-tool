@@ -169,6 +169,28 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 .prop-note { font-size: 11.5px; color: var(--txt-dim); line-height: 1.45; }
 .chk { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--txt-dim); cursor: pointer; white-space: nowrap; }
 
+#workDay { width: 132px; color-scheme: dark; }
+#btnDayMode.active { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+
+.fit-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.fit-cell {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg3); border: 1px solid var(--edge); border-radius: 6px;
+  padding: 6px 8px; cursor: pointer; color: var(--txt); text-align: left; position: relative;
+}
+.fit-cell:hover { border-color: var(--accent-dim); background: #363c45; }
+.fit-cell.active { border-color: var(--accent); background: var(--accent-dim); color: #fff; }
+.fit-code {
+  flex: 0 0 auto; border: 2px solid currentColor; border-radius: 4px;
+  font-weight: 700; font-size: 10.5px; padding: 1px 5px; letter-spacing: .3px;
+}
+.fit-name { font-size: 10.5px; line-height: 1.2; }
+.fit-count {
+  position: absolute; top: -6px; right: -5px; min-width: 17px; height: 17px;
+  background: var(--accent); color: #fff; border-radius: 9px; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; padding: 0 4px;
+}
+
 .sym-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .sym-cell {
   background: var(--bg3); border: 1px solid var(--edge); border-radius: 6px;

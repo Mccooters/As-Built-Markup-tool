@@ -13,7 +13,11 @@ const MarkupList = (() => {
   function rowData(m, idx) {
     const meas = Render.measureLabel(m);
     let label = '';
-    if (m.type === 'pipe') label = [m.pipeSize, m.material, m.system].filter(Boolean).join(' · ');
+    if (m.type === 'fitting') {
+      const ft = Symbols.fittingById(m.fitId);
+      label = [ft ? ft.code : m.fitId, m.pipeSize, m.day].filter(Boolean).join(' · ');
+    }
+    else if (m.type === 'pipe') label = [m.pipeSize, m.material, m.system].filter(Boolean).join(' · ');
     else if (m.type === 'text' || m.type === 'callout') label = (m.text || '').replace(/\n/g, ' ');
     else if (m.type === 'count') { const g = State.countGroup(m.groupId); label = g ? g.name : ''; }
     else if (m.type === 'penet') label = [`Ø${m.penSize || '?'}`, m.penType, m.penFire ? 'FIRE-RATED' : ''].filter(Boolean).join(' · ');
@@ -97,15 +101,34 @@ const MarkupList = (() => {
 
   /* ================= takeoff computation ================= */
 
-  function computeTakeoff() {
+  const dayOf = m => m.day || (m.date || '').slice(0, 10);
+
+  /** filter: null = everything; { day: 'YYYY-MM-DD' } = that work day only. */
+  function computeTakeoff(filter) {
     const pipes = new Map();     // key size|material
     const symbols = new Map();
     const counts = new Map();
     const penetrations = new Map();  // key size|type|fire
+    const fittings = new Map();      // key fitId|size
     const otherMeasures = [];
     let pipeTotalFt = 0, pipeTotalKnown = true, pipeRunCount = 0;
 
-    for (const m of State.S.markups) {
+    const src = filter && filter.day
+      ? State.S.markups.filter(m => dayOf(m) === filter.day)
+      : State.S.markups;
+
+    for (const m of src) {
+      if (m.type === 'fitting') {
+        const ft = Symbols.fittingById(m.fitId);
+        const key = `${m.fitId}|${m.pipeSize || ''}`;
+        const cur = fittings.get(key) || {
+          fitId: m.fitId, code: ft ? ft.code : m.fitId, name: ft ? ft.name : 'Fitting',
+          size: m.pipeSize || '', count: 0,
+        };
+        cur.count++;
+        fittings.set(key, cur);
+        continue;
+      }
       if (m.type === 'pipe') {
         pipeRunCount++;
         const key = `${m.pipeSize}|${m.material || ''}`;
@@ -151,6 +174,8 @@ const MarkupList = (() => {
       symbols: [...symbols.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name)),
       counts: [...counts.values()],
       penetrations: [...penetrations.values()].sort((a, b) => a.size.localeCompare(b.size, undefined, { numeric: true }) || a.type.localeCompare(b.type)),
+      fittings: [...fittings.values()].sort((a, b) =>
+        a.name.localeCompare(b.name) || (sizeOrder.get(a.size) ?? 99) - (sizeOrder.get(b.size) ?? 99)),
       otherMeasures,
     };
   }
@@ -166,9 +191,13 @@ const MarkupList = (() => {
   const rowKeys = {
     pipes: p => `${p.size}|${p.material}`,
     fittings: s => s.name,
+    pressfit: f => `${f.fitId}|${f.size}`,
     penetrations: p => `${p.size}|${p.type}|${p.fire ? 1 : 0}`,
     counts: c => c.name,
   };
+
+  /** AroFlo-friendly material code for a press fitting row, e.g. IMPRESS-E90-54MM. */
+  const fittingCode = f => `IMPRESS-${f.code}-${String(f.size).replace(/[^0-9a-z.]/gi, '').toUpperCase() || 'NA'}`;
 
   /**
    * Export the schedule. `prefs` selects what goes in:
@@ -177,17 +206,20 @@ const MarkupList = (() => {
    * No prefs = everything (legacy behavior). Totals recompute over included rows.
    */
   function exportCsv(prefs) {
-    const P = prefs || { sections: { pipes: 1, fittings: 1, penetrations: 1, counts: 1, other: 1, list: 1 }, exclude: {}, note: '' };
-    const inc = sec => !!P.sections[sec];
+    const P = prefs || { sections: { pipes: 1, fittings: 1, pressfit: 1, penetrations: 1, counts: 1, other: 1, list: 1 }, exclude: {}, note: '' };
+    const inc = sec => P.sections[sec] === undefined ? true : !!P.sections[sec];
     const excluded = sec => new Set((P.exclude && P.exclude[sec]) || []);
+    const dayFilter = P.dayScope && P.dayScope.mode === 'day' ? { day: P.dayScope.day } : null;
 
     const fmt = State.S.unitFormat;
     const lines = [];
     lines.push(['AirMark markup export', State.S.fileName, new Date().toLocaleString()].map(csvCell).join(','));
+    if (State.S.jobRef) lines.push(csvCell('JOB/TASK: ' + State.S.jobRef));
+    if (dayFilter) lines.push(csvCell('SCOPE: work day ' + dayFilter.day + ' only'));
     if (P.note && P.note.trim()) lines.push(csvCell('NOTE: ' + P.note.trim()));
     lines.push('');
 
-    const to = computeTakeoff();
+    const to = computeTakeoff(dayFilter);
 
     if (inc('pipes')) {
       const ex = excluded('pipes');
@@ -215,6 +247,18 @@ const MarkupList = (() => {
         lines.push('FITTINGS & EQUIPMENT');
         lines.push('Item,Qty');
         for (const s of rows) lines.push([s.name, s.count].map(csvCell).join(','));
+        lines.push('');
+      }
+    }
+
+    if (inc('pressfit')) {
+      const ex = excluded('pressfit');
+      const rows = to.fittings.filter(f => !ex.has(rowKeys.pressfit(f)));
+      if (rows.length) {
+        lines.push('PRESS FITTINGS (IBEX IMPRESS)');
+        lines.push('Code,Fitting,Size,Qty');
+        for (const f of rows) lines.push([fittingCode(f), f.name, f.size, f.count].map(csvCell).join(','));
+        lines.push(['TOTAL', '', '', rows.reduce((a, r) => a + r.count, 0)].join(','));
         lines.push('');
       }
     }
@@ -250,11 +294,12 @@ const MarkupList = (() => {
     }
 
     if (inc('list')) {
-      lines.push('ALL MARKUPS');
-      lines.push(['#', 'Page', 'Type', 'Subject', 'Label/Comments', 'Measurement', 'Color', 'Author', 'Date'].join(','));
+      lines.push(dayFilter ? `MARKUPS — ${dayFilter.day}` : 'ALL MARKUPS');
+      lines.push(['#', 'Page', 'Type', 'Subject', 'Label/Comments', 'Measurement', 'Day', 'Color', 'Author', 'Date'].join(','));
       State.S.markups.forEach((m, i) => {
+        if (dayFilter && dayOf(m) !== dayFilter.day) return;
         const r = rowData(m, i);
-        lines.push([r.idx + 1, r.page, r.type, r.subject, r.label, r.measure, r.color, r.author, r.date].map(csvCell).join(','));
+        lines.push([r.idx + 1, r.page, r.type, r.subject, r.label, r.measure, dayOf(m), r.color, r.author, r.date].map(csvCell).join(','));
       });
     }
 
@@ -305,5 +350,5 @@ const MarkupList = (() => {
     render();
   }
 
-  return { init, render, computeTakeoff, exportCsv, rowKeys };
+  return { init, render, computeTakeoff, exportCsv, rowKeys, fittingCode, dayOf };
 })();
