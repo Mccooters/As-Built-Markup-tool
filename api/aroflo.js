@@ -212,15 +212,52 @@ const ACTIONS = {
     return relay(r, { businessUnits: bus });
   },
 
+  // Inventory categories, for the app's sync-scope picker.
+  async categories() {
+    const r = await aroGet('inventorycategories', { page: 1, pageSize: PAGE_SIZE });
+    const cats = (r.zoneresponse.inventorycategories || [])
+      .map(c => ({ id: str(c.categoryid), name: str(c.categoryname), parent: c.parentcategory ? str(c.parentcategory.categoryname) : '' }))
+      .filter(c => c.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return relay(r, { categories: cats });
+  },
+
+  // Every stock-level row on the site (paged). Cheap — only items that have
+  // ever held stock have rows — and used as a safety net so stock held on
+  // items outside a category-scoped sync still shows up.
+  async stockrows(q) {
+    const page = Math.min(20, Math.max(1, parseInt(q.page, 10) || 1));
+    const r = await aroGet('inventorystocklevels', {
+      where: ['and|lastupdatedutc|>|2000-01-01 00:00:00'],
+      page, pageSize: PAGE_SIZE,
+    });
+    const rows = (r.zoneresponse.inventorystocklevels || []).map(l => ({
+      itemid: str(l.itemid),
+      to: str(l.assignedto),
+      id: str(l.assignedtoid),
+      type: str(l.assignedtotype),
+      qty: num(l.quantity),
+    }));
+    return relay(r, { rows, ...pageMeta(r.zoneresponse, PAGE_SIZE) });
+  },
+
   // One page of the inventory list with stock levels joined.
-  // The explicit item-side where-clause (always true) overrides AroFlo's
-  // default "created in the last 30 days" filter so the whole catalogue
-  // comes back, without any risk of filtering the joined stock rows.
+  // With no category, the explicit item-side where-clause (always true)
+  // overrides AroFlo's default "created in the last 30 days" filter so the
+  // whole catalogue comes back, without any risk of filtering the joined
+  // stock rows. With ?cat=Name, only that category is returned — the fast
+  // path for sites that scope their sync to install categories.
   async inventory(q) {
     const page = Math.min(60, Math.max(1, parseInt(q.page, 10) || 1));
+    const cat = str(q.cat).replace(/\|/g, '').trim();
+    const itemid = str(q.itemid).trim();
+    let where;
+    if (itemid && /^[A-Za-z0-9+/=]{1,64}$/.test(itemid)) where = `and|itemid|=|${itemid}`;
+    else if (cat) where = `and|category|=|${cat}`;
+    else where = 'and|itemid|!=|0';
     const r = await aroGet('inventory', {
       join: ['stocklevels'],
-      where: ['and|itemid|!=|0'],
+      where: [where],
       order: ['description|asc'],
       page, pageSize: PAGE_SIZE,
     });

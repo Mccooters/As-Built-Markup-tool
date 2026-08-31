@@ -16,7 +16,7 @@ const Aro = (() => {
   const MAX_ROWS = 400;              // rendered rows cap (search narrows the rest)
 
   let root = null;
-  let cfg = { url: '/api/aroflo', token: '' };
+  let cfg = { url: '/api/aroflo', token: '', cats: [] }; // cats: [] = sync everything
   const st = {
     phase: 'idle',        // idle | loading | ready | error | unconfigured
     items: [],
@@ -46,7 +46,7 @@ const Aro = (() => {
   function loadCfg() {
     try {
       const c = JSON.parse(localStorage.getItem(CFG_KEY) || 'null');
-      if (c && typeof c === 'object') cfg = { url: c.url || '/api/aroflo', token: c.token || '' };
+      if (c && typeof c === 'object') cfg = { url: c.url || '/api/aroflo', token: c.token || '', cats: Array.isArray(c.cats) ? c.cats : [] };
     } catch (e) { /* defaults */ }
   }
   function saveCfg() {
@@ -143,21 +143,61 @@ const Aro = (() => {
     try {
       const items = [];
       st.capped = false;
-      for (let page = 1; page <= MAX_PAGES; page++) {
-        st.progress = 'Loading inventory — page ' + page + '… (' + items.length + ' items)';
-        renderStatus();
-        let r;
-        try {
-          r = await call('inventory', { page });
-        } catch (e) {
-          // keep what we have rather than losing the whole crawl
-          if (!items.length) throw e;
-          st.error = 'Stopped early at ' + items.length + ' items: ' + e.message;
-          break;
+      st.outside = 0;
+      const crawl = async (params) => {
+        for (let page = 1; page <= MAX_PAGES; page++) {
+          st.progress = 'Loading ' + (params.cat ? '“' + params.cat + '”' : 'inventory') + ' — page ' + page + '… (' + items.length + ' items)';
+          renderStatus();
+          let r;
+          try {
+            r = await call('inventory', { ...params, page });
+          } catch (e) {
+            // keep what we have rather than losing the whole crawl
+            if (!items.length) throw e;
+            st.error = 'Stopped early at ' + items.length + ' items: ' + e.message;
+            return;
+          }
+          items.push(...(r.items || []));
+          if (r.last || !(r.items || []).length) return;
+          if (page === MAX_PAGES) st.capped = true;
         }
-        items.push(...(r.items || []));
-        if (r.last || !(r.items || []).length) break;
-        if (page === MAX_PAGES) st.capped = true;
+      };
+      if (cfg.cats.length) {
+        // scoped sync: one small crawl per chosen category…
+        for (const cat of cfg.cats) await crawl({ cat });
+        // …then a sweep of ALL stock rows, so stock held on items outside the
+        // scope is never invisible. Rows are cheap; resolve the first few
+        // unknown items by id so they appear with their real names.
+        try {
+          const known = new Set(items.map(i => i.id));
+          const orphan = new Map();
+          for (let page = 1; page <= 8; page++) {
+            const r = await call('stockrows', { page });
+            for (const row of r.rows || []) {
+              if (row.qty !== 0 && row.itemid && !known.has(row.itemid)) {
+                if (!orphan.has(row.itemid)) orphan.set(row.itemid, []);
+                orphan.get(row.itemid).push({ to: row.to, id: row.id, type: row.type, qty: row.qty, updated: '' });
+              }
+            }
+            if (r.last) break;
+          }
+          st.outside = orphan.size;
+          let resolved = 0;
+          for (const [itemid, levels] of orphan) {
+            if (resolved < 10) {
+              st.progress = 'Naming stocked items outside the synced categories…';
+              renderStatus();
+              try {
+                const r = await call('inventory', { itemid });
+                if ((r.items || []).length) { items.push(r.items[0]); resolved++; continue; }
+              } catch (e) { /* fall through to stub */ }
+            }
+            items.push({ id: itemid, desc: '(item outside synced categories)', pn: '', cat: '', levels });
+          }
+        } catch (e) { /* sweep is best-effort */ }
+        items.sort((a, b) => a.desc.localeCompare(b.desc));
+      } else {
+        await crawl({});
       }
       st.items = items;
       // Also pull the full holder list, so a new site holder shows in the
@@ -309,7 +349,8 @@ const Aro = (() => {
       const mins = Math.round((Date.now() - Date.parse(st.asAt)) / 60000);
       const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : new Date(st.asAt).toLocaleString();
       h += `<span class="muted">${filteredItems().length} of ${st.items.length} items · as at ${esc(age)}</span>`;
-      if (st.capped) h += `<div class="aro-error">Catalogue is larger than ${st.items.length} items — the rest (late alphabet) is not loaded, so searches may miss items. Tell the developer if you hit this.</div>`;
+      if (cfg.cats.length) h += `<div class="muted" style="margin-top:2px">Scope: ${esc(cfg.cats.join(', '))}${st.outside ? ` · <b>${st.outside}</b> stocked item${st.outside === 1 ? '' : 's'} outside scope (shown anyway)` : ''}</div>`;
+      if (st.capped) h += `<div class="aro-error">Catalogue is larger than ${st.items.length} items — the rest (late alphabet) is not loaded, so searches may miss items. Scope the sync to your install categories in ⚙.</div>`;
     }
     el.innerHTML = h;
   }
@@ -546,6 +587,12 @@ const Aro = (() => {
         <input type="text" id="aro-url" value="${esc(cfg.url)}" placeholder="/api/aroflo" autocomplete="off"></div>
       <div class="form-row"><label>Proxy token</label>
         <input type="password" id="aro-token" value="${esc(cfg.token)}" placeholder="only if AROFLO_PROXY_TOKEN is set" autocomplete="off"></div>
+      <div class="form-row"><label>Sync scope</label>
+        <div style="flex:1;min-width:0">
+          <div class="muted" id="aro-cats-cur">${cfg.cats.length ? esc(cfg.cats.join(', ')) : 'All items (whole catalogue)'}</div>
+          <button class="mini-btn" id="aro-cats-edit" style="margin-top:4px">Choose categories…</button>
+          <div id="aro-cats-list" class="aro-cats-list" hidden></div>
+        </div></div>
       <p class="muted" id="aro-test-out"></p>
       <div class="modal-actions">
         <button class="mini-btn" id="aro-test">Test connection</button>
@@ -556,7 +603,35 @@ const Aro = (() => {
       const read = () => {
         cfg.url = box.querySelector('#aro-url').value.trim() || '/api/aroflo';
         cfg.token = box.querySelector('#aro-token').value.trim();
+        const list = box.querySelector('#aro-cats-list');
+        if (list && !list.hidden) {
+          cfg.cats = [...list.querySelectorAll('input:checked')].map(i => i.value);
+        }
       };
+      box.querySelector('#aro-cats-edit').addEventListener('click', async () => {
+        read(); saveCfg();
+        const list = box.querySelector('#aro-cats-list');
+        if (!list.hidden) { list.hidden = true; return; }
+        list.hidden = false;
+        list.innerHTML = '<span class="muted">Loading categories…</span>';
+        try {
+          const r = await call('categories');
+          const names = (r.categories || []).map(c => c.name);
+          for (const c of cfg.cats) if (!names.includes(c)) names.push(c); // keep stale picks visible
+          list.innerHTML = `<label class="chk"><input type="checkbox" id="aro-cats-none"${cfg.cats.length ? '' : ' checked'}> <b>All items</b> (no scope)</label>` +
+            names.map(n => `<label class="chk"><input type="checkbox" value="${esc(n)}"${cfg.cats.includes(n) ? ' checked' : ''}> ${esc(n)}</label>`).join('');
+          const none = list.querySelector('#aro-cats-none');
+          none.addEventListener('change', () => {
+            if (none.checked) list.querySelectorAll('input[value]').forEach(i => { i.checked = false; });
+          });
+          list.querySelectorAll('input[value]').forEach(i => i.addEventListener('change', () => {
+            if (i.checked) none.checked = false;
+            else if (![...list.querySelectorAll('input[value]')].some(x => x.checked)) none.checked = true;
+          }));
+        } catch (e) {
+          list.innerHTML = `<span class="aro-error">${esc(e.message)}</span>`;
+        }
+      });
       box.querySelector('#aro-test').addEventListener('click', async () => {
         read(); saveCfg();
         const out = box.querySelector('#aro-test-out');
