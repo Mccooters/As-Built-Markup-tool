@@ -612,6 +612,28 @@ const Aro = (() => {
     return out;
   }
 
+  // Thread/inch fragment — what separates a 15mm × ½" adaptor from the ¾"
+  // one. Handles 1/2", 3/4", 1", 1 1/2" and unicode fractions.
+  function catInchOf(it) {
+    const d = it.desc.replace(/½/g, '1/2').replace(/¾/g, '3/4').replace(/¼/g, '1/4');
+    const m = d.match(/(\d+\s+\d+\s*\/\s*\d+|\d+\s*\/\s*\d+|\d+(?:\.\d+)?)\s*(?:"|”|''|inch\b|in\b)/i);
+    return m ? m[1].replace(/\s*\/\s*/, '/').replace(/\s+/g, ' ').trim() + '"' : '';
+  }
+
+  function inchValue(label) {
+    const m = label.match(/^(?:(\d+)\s+)?(\d+)(?:\/(\d+))?/);
+    if (!m) return 0;
+    return (parseFloat(m[1]) || 0) + (m[3] ? parseFloat(m[2]) / parseFloat(m[3]) : parseFloat(m[2]) || 0);
+  }
+
+  function catLabelOf(it) {
+    const sizes = catSizesOf(it);
+    const inch = catInchOf(it);
+    let label = sizes.map(s => qty(s)).join('×');
+    if (inch) label = label ? label + '×' + inch : inch;
+    return label || it.pn || '—';
+  }
+
   function renderTakeCatalogue(el, items) {
     const groups = new Map(); // familyIndex -> items
     for (const it of items) {
@@ -625,16 +647,16 @@ const Aro = (() => {
       const list = groups.get(fi);
       list.sort((a, b) => {
         const sa = catSizesOf(a), sb = catSizesOf(b);
-        return (sa[0] || 9999) - (sb[0] || 9999) || (sa[1] || 0) - (sb[1] || 0) || a.desc.localeCompare(b.desc);
+        return (sa[0] || 9999) - (sb[0] || 9999) || (sa[1] || 0) - (sb[1] || 0)
+          || inchValue(catInchOf(a)) - inchValue(catInchOf(b)) || a.desc.localeCompare(b.desc);
       });
       h += `<div class="cat-group"><div class="cat-head">${fi === -1 ? 'Other' : esc(CAT_FAMILIES[fi].name)}</div><div class="cat-cells">`;
       for (const it of list) {
-        const sizes = catSizesOf(it);
-        const label = sizes.length ? sizes.map(s => qty(s)).join('×') : (it.pn || '—');
         const have = qtyAt(it, st.take.name);
         const val = st.take.counts[it.id] != null ? st.take.counts[it.id] : '';
         h += `<label class="cat-cell" title="${esc(it.desc)} — ${esc(it.pn)}">
-          <span class="cat-size">${esc(label)}</span>
+          <span class="cat-size">${esc(catLabelOf(it))}</span>
+          <span class="cat-pn">${esc(it.pn || '')}</span>
           <span class="cat-have">has ${qty(have)}</span>
           <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
         </label>`;
