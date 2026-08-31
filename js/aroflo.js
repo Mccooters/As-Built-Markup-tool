@@ -28,14 +28,22 @@ const Aro = (() => {
     filter: '',
     holder: '',           // '' = all locations
     hideZero: true,
+    lowOnly: false,       // only rows below their minimum at the holder
     shownOnce: false,
     refOpen: false,       // Impress reference card expanded
+    pickOpen: false,      // pick-list card expanded
+    pickDay: false,       // pick list scoped to the active work day
     expanded: null,       // itemid with the holder breakdown open
     take: { on: false, name: '', id: '', type: '', counts: {}, pushing: false },
     tm: { mode: 'task', job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false,
           progress: '', pQuery: '', pMatches: [], pId: '', pName: '', pTasks: [], agg: [] },
   };
   let projCache = null; // AroFlo project list, fetched once per session
+  let codeMap = {};     // learned barcode/QR → itemid links     (abmt:barcodes)
+  let pars = {};        // per-holder minimum levels {holder:{itemid:min}} (abmt:pars)
+  let itemMap = {};     // takeoff line → itemid links           (abmt:itemmap)
+  const loadJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
+  const saveJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* full */ } };
   let inflight = false;
 
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -272,8 +280,11 @@ const Aro = (() => {
       }
       if (st.holder && !(it.levels || []).some(l => l.to === st.holder)) continue;
       const q = itemQty(it);
-      if (st.hideZero && q <= 0) continue;
-      out.push({ it, q });
+      const min = st.holder ? parOf(st.holder, it.id) : null;
+      if (st.lowOnly && st.holder) {
+        if (min == null || q >= min) continue;
+      } else if (st.hideZero && q <= 0) continue;
+      out.push({ it, q, min });
     }
     return out;
   }
@@ -344,6 +355,7 @@ const Aro = (() => {
     }
     let h = `<div class="stock-controls"><div class="aro-bar">
         <input type="text" id="aro-search" placeholder="Search stock… (e.g. impress 54)" value="${esc(st.filter)}" autocomplete="off">
+        <button class="mini-btn" id="aro-scan" title="Scan a barcode or QR label">📷</button>
         <button class="mini-btn" id="aro-refresh" title="Re-load stock from AroFlo"${st.phase === 'loading' ? ' disabled' : ''}>⟳</button>
         <button class="mini-btn" id="aro-cfg" title="AroFlo connection settings">⚙</button>
       </div>`;
@@ -363,13 +375,16 @@ const Aro = (() => {
           ${holders().map(([to, type]) => `<option value="${esc(to)}"${st.holder === to ? ' selected' : ''}>${esc(to)} — ${esc(holderKind(type))}</option>`).join('')}
         </select>
         <label class="chk" title="Hide items with no stock at the selected location"><input type="checkbox" id="aro-zero"${st.hideZero ? ' checked' : ''}> In stock</label>
+        ${st.holder ? `<label class="chk" title="Only items below their minimum at this holder"><input type="checkbox" id="aro-low"${st.lowOnly ? ' checked' : ''}> Low</label>` : ''}
         <button class="mini-btn" id="aro-take" title="Count this location and push corrected quantities to AroFlo">Stocktake</button>
+        ${st.holder ? `<button class="mini-btn" id="aro-reorder" title="Everything below its minimum at this holder, as a reorder list">Reorder</button>` : ''}
+        <button class="mini-btn" id="aro-labels" title="Print QR labels for the items in the current view">Labels</button>
       </div>`;
     }
     h += `<div class="aro-status" id="aro-status"></div></div>
       <div class="aro-list" id="aro-list"></div>`;
     mainEl.innerHTML = h;
-    sideEl.innerHTML = `<div class="stock-card">${taskMaterialsHtml(true)}</div><div class="stock-card">${refCardHtml()}</div>`;
+    sideEl.innerHTML = `<div class="stock-card">${pickCardHtml()}</div><div class="stock-card">${taskMaterialsHtml(true)}</div><div class="stock-card">${refCardHtml()}</div>`;
 
     const search = mainEl.querySelector('#aro-search');
     let deb = 0;
@@ -379,6 +394,13 @@ const Aro = (() => {
     });
     mainEl.querySelector('#aro-refresh').addEventListener('click', refresh);
     mainEl.querySelector('#aro-cfg').addEventListener('click', settingsDialog);
+    mainEl.querySelector('#aro-scan').addEventListener('click', openScanner);
+    const lowChk = mainEl.querySelector('#aro-low');
+    if (lowChk) lowChk.addEventListener('change', e => { st.lowOnly = e.target.checked; renderList(); renderStatus(); });
+    const reorderBtn = mainEl.querySelector('#aro-reorder');
+    if (reorderBtn) reorderBtn.addEventListener('click', reorderDialog);
+    const labelsBtn = mainEl.querySelector('#aro-labels');
+    if (labelsBtn) labelsBtn.addEventListener('click', printLabels);
     if (st.take.on) {
       mainEl.querySelector('#aro-take-review').addEventListener('click', reviewStocktake);
       mainEl.querySelector('#aro-take-cancel').addEventListener('click', () => {
@@ -396,6 +418,7 @@ const Aro = (() => {
     }
     wireTaskMaterials(sideEl);
     wireRefCard();
+    wirePickCard();
     renderList();
     renderStatus();
   }
@@ -459,13 +482,14 @@ const Aro = (() => {
       return;
     }
     let h = '';
-    for (const { it, q } of rows.slice(0, MAX_ROWS)) {
+    for (const { it, q, min } of rows.slice(0, MAX_ROWS)) {
       const open = st.expanded === it.id;
+      const low = min != null && q < min;
       h += `<div class="aro-item${open ? ' open' : ''}" data-id="${esc(it.id)}">
         <div class="aro-row">
           <div class="aro-main">
-            <div class="aro-desc">${esc(it.desc)}</div>
-            <div class="aro-sub">${esc(it.pn)}${it.cat ? ' · ' + esc(it.cat) : ''}</div>
+            <div class="aro-desc">${esc(it.desc)}${low ? ' <span class="low-badge" title="Below the minimum of ' + qty(min) + ' set for ' + esc(st.holder) + '">LOW</span>' : ''}</div>
+            <div class="aro-sub">${esc(it.pn)}${it.cat ? ' · ' + esc(it.cat) : ''}${min != null ? ' · min ' + qty(min) : ''}</div>
           </div>
           <div class="aro-qty${q <= 0 ? ' zero' : ''}">${qty(q)}</div>
         </div>
@@ -486,6 +510,15 @@ const Aro = (() => {
         e.stopPropagation();
         transferDialog(btn.dataset.item, parseInt(btn.dataset.level, 10));
       }));
+    el.querySelectorAll('.aro-min').forEach(inp => {
+      inp.addEventListener('click', e => e.stopPropagation());
+      inp.addEventListener('change', e => {
+        e.stopPropagation();
+        const v = parseFloat(String(inp.value).replace(',', '.'));
+        setPar(st.holder, inp.dataset.id, Number.isFinite(v) ? v : null);
+        renderList(); renderStatus();
+      });
+    });
   }
 
   // Stocktake entry: every item (search-filtered), current qty at the holder,
@@ -521,12 +554,360 @@ const Aro = (() => {
 
   function aroLevelsHtml(it) {
     const levels = (it.levels || []).filter(l => l.to);
-    if (!levels.length) return `<div class="aro-levels"><span class="muted">No stock locations recorded.</span></div>`;
-    return `<div class="aro-levels">${levels.map((l, i) =>
+    // per-holder minimum editor, when a holder is filtered
+    const minRow = st.holder
+      ? `<div class="aro-level"><span class="muted">Minimum at ${esc(st.holder)}</span>
+          <input class="aro-min" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="—" value="${parOf(st.holder, it.id) != null ? qty(parOf(st.holder, it.id)) : ''}"></div>`
+      : '';
+    if (!levels.length) return `<div class="aro-levels"><span class="muted">No stock locations recorded.</span>${minRow}</div>`;
+    return `<div class="aro-levels">${minRow}${levels.map((l, i) =>
       `<div class="aro-level"><span>${esc(l.to)} <span class="muted">(${esc(holderKind(l.type))})</span></span>
         <span class="aro-level-r"><b>${qty(l.qty)}</b>${l.id ? ` <button class="mini-btn aro-move" data-item="${esc(it.id)}" data-level="${i}" title="Move stock from ${esc(l.to)} to another holder">⇄</button>` : ''}</span>
       </div>`).join('')}
     </div>`;
+  }
+
+  /* ---------------- barcode / QR scanning ---------------- */
+
+  let scanReader = null;
+
+  function stopScan() {
+    try { if (scanReader) scanReader.reset(); } catch (e) { /* ignore */ }
+    scanReader = null;
+  }
+
+  function openScanner() {
+    if (typeof ZXing === 'undefined') { App.toast('Scanner library not loaded.', 'err'); return; }
+    App.modal(`
+      <h3>Scan a label</h3>
+      <div class="scan-wrap"><video id="scan-video" playsinline muted autoplay></video></div>
+      <p class="muted" id="scan-msg">Point the camera at a barcode or QR label.</p>
+      <div class="modal-actions"><button class="mini-btn" id="scan-cancel">Cancel</button></div>`,
+      async (box, close) => {
+        box.querySelector('#scan-cancel').addEventListener('click', () => { stopScan(); close(); });
+        try {
+          scanReader = new ZXing.BrowserMultiFormatReader();
+          await scanReader.decodeFromVideoDevice(undefined, box.querySelector('#scan-video'), result => {
+            if (!result) return;
+            const text = result.getText();
+            stopScan(); close();
+            if (navigator.vibrate) navigator.vibrate(80);
+            onScan(text);
+          });
+        } catch (e) {
+          const msg = box.querySelector('#scan-msg');
+          if (msg) msg.textContent = 'Camera unavailable (' + (e.message || e.name) + ') — scanning needs HTTPS and camera permission.';
+        }
+      });
+  }
+
+  // A scanned code resolves via the learned link table first, then by exact
+  // part number, then by a code that contains a part number (supplier labels
+  // often wrap the part number in a longer string).
+  function resolveScan(code) {
+    const c = String(code || '').trim();
+    if (!c) return null;
+    const linked = codeMap[c] && st.items.find(i => i.id === codeMap[c]);
+    if (linked) return linked;
+    const lower = c.toLowerCase();
+    return st.items.find(i => i.pn && i.pn.toLowerCase() === lower)
+      || st.items.find(i => i.pn && i.pn.length >= 4 && lower.includes(i.pn.toLowerCase()))
+      || null;
+  }
+
+  function onScan(code) {
+    const it = resolveScan(code);
+    if (it) { focusItem(it); return; }
+    itemPickerDialog(
+      'Link this label',
+      `“${esc(String(code).slice(0, 60))}” isn't linked to an item yet — pick the item it belongs to. The link is remembered on this device.`,
+      it2 => {
+        codeMap[String(code).trim()] = it2.id;
+        saveJson('abmt:barcodes', codeMap);
+        focusItem(it2);
+      });
+  }
+
+  function focusItem(it) {
+    st.filter = it.pn || it.desc;
+    const inp = mainEl && mainEl.querySelector('#aro-search');
+    if (inp) inp.value = st.filter;
+    if (!st.take.on) st.expanded = it.id;
+    renderList(); renderStatus();
+    if (st.take.on) {
+      const cnt = mainEl && mainEl.querySelector(`.aro-count[data-id="${CSS.escape(it.id)}"]`);
+      if (cnt) { cnt.focus(); cnt.select(); }
+    }
+    App.toast('Scanned: ' + it.desc, 'ok', 2500);
+  }
+
+  // Printable QR label sheet for the current filter/holder view.
+  function printLabels() {
+    if (typeof ZXing === 'undefined') { App.toast('Scanner library not loaded.', 'err'); return; }
+    const rows = (st.take.on ? st.items.filter(i => !i.stub) : filteredItems().map(r => r.it)).slice(0, 120);
+    if (!rows.length) { App.toast('Nothing in the list to label.', 'warn'); return; }
+    const writer = new ZXing.BrowserQRCodeSvgWriter();
+    const cells = rows.map(it => {
+      const el = writer.write(it.pn || it.id, 110, 110);
+      const svg = new XMLSerializer().serializeToString(el);
+      return `<div class="lbl"><div class="lbl-qr">${svg}</div><div class="lbl-txt"><b>${esc(it.pn)}</b><br>${esc(it.desc)}</div></div>`;
+    }).join('');
+    const w = window.open('', '_blank');
+    if (!w) { App.toast('Pop-up blocked — allow pop-ups to print labels.', 'warn'); return; }
+    w.document.write(`<!doctype html><title>AirMark labels</title><style>
+      body{font-family:system-ui,sans-serif;margin:8mm}
+      .sheet{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}
+      .lbl{display:flex;gap:3mm;align-items:center;border:1px dashed #bbb;padding:3mm;break-inside:avoid}
+      .lbl-qr svg{width:22mm;height:22mm}
+      .lbl-txt{font-size:9pt;line-height:1.25}
+      @media print{.lbl{border-color:#eee}}
+    </style><div class="sheet">${cells}</div><script>setTimeout(()=>print(),300)</${'script'}>`);
+    w.document.close();
+  }
+
+  /* ---------------- generic item picker ---------------- */
+
+  function itemPickerDialog(title, note, onPick) {
+    App.modal(`
+      <h3>${esc(title)}</h3>
+      <p class="muted">${note}</p>
+      <div class="form-row"><input type="text" id="pick-q" placeholder="Search items…" autocomplete="off"></div>
+      <div id="pick-list" style="max-height:44vh;overflow:auto"></div>
+      <div class="modal-actions"><button class="mini-btn" id="pick-cancel">Cancel</button></div>`,
+      (box, close) => {
+        const listEl = box.querySelector('#pick-list');
+        const qEl = box.querySelector('#pick-q');
+        const draw = () => {
+          const terms = qEl.value.toLowerCase().split(/\s+/).filter(Boolean);
+          const hits = st.items.filter(i => !i.stub &&
+            (!terms.length || terms.every(t => (i.desc + ' ' + i.pn + ' ' + i.cat).toLowerCase().includes(t)))).slice(0, 30);
+          listEl.innerHTML = hits.map(i =>
+            `<div class="aro-item" data-id="${esc(i.id)}"><div class="aro-row"><div class="aro-main">
+              <div class="aro-desc">${esc(i.desc)}</div><div class="aro-sub">${esc(i.pn)}</div>
+            </div></div></div>`).join('') || '<p class="prop-note">No matches.</p>';
+          listEl.querySelectorAll('.aro-item').forEach(div =>
+            div.addEventListener('click', () => {
+              const it = st.items.find(x => x.id === div.dataset.id);
+              close();
+              if (it) onPick(it);
+            }));
+        };
+        qEl.addEventListener('input', draw);
+        qEl.focus();
+        draw();
+        box.querySelector('#pick-cancel').addEventListener('click', close);
+      });
+  }
+
+  /* ---------------- minimum levels + reorder list ---------------- */
+
+  const parOf = (holder, id) => {
+    const v = pars[holder] && pars[holder][id];
+    return Number.isFinite(v) ? v : null;
+  };
+
+  function setPar(holder, id, min) {
+    if (!pars[holder]) pars[holder] = {};
+    if (min == null || !Number.isFinite(min) || min <= 0) delete pars[holder][id];
+    else pars[holder][id] = min;
+    saveJson('abmt:pars', pars);
+  }
+
+  function lowRows() {
+    if (!st.holder) return [];
+    const out = [];
+    for (const it of st.items) {
+      if (it.stub) continue;
+      const min = parOf(st.holder, it.id);
+      if (min == null) continue;
+      const have = qtyAt(it, st.holder);
+      if (have < min) out.push({ it, have, min, order: Math.round((min - have) * 100) / 100 });
+    }
+    return out.sort((a, b) => a.it.desc.localeCompare(b.it.desc));
+  }
+
+  function reorderDialog() {
+    if (!st.holder) { App.toast('Pick a location first — minimums are per holder.', 'warn'); return; }
+    const rows = lowRows();
+    const holder = st.holder;
+    if (!rows.length) {
+      App.toast('Nothing below its minimum at ' + holder + '. Set minimums in an item’s expanded row.', 'info', 6000);
+      return;
+    }
+    const body = rows.map(r => `<tr><td>${esc(r.it.desc)}<div class="aro-sub">${esc(r.it.pn)}</div></td>
+      <td class="num">${qty(r.have)}</td><td class="num">${qty(r.min)}</td>
+      <td class="num" style="font-weight:700">${qty(r.order)}</td></tr>`).join('');
+    App.modal(`
+      <h3>Reorder list — ${esc(holder)}</h3>
+      <div style="max-height:50vh;overflow:auto"><table class="to-table">
+        <tr><th>Item</th><th style="text-align:right">Have</th><th style="text-align:right">Min</th><th style="text-align:right">Order</th></tr>${body}
+      </table></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="ro-copy">Copy</button>
+        <button class="mini-btn" id="ro-csv">Download CSV</button>
+        <span style="flex:1"></span>
+        <button class="mini-btn primary" id="ro-close">Done</button>
+      </div>`, (box, close) => {
+      const text = rows.map(r => `${r.order} x ${r.it.pn || r.it.desc} (have ${qty(r.have)}, min ${qty(r.min)})`).join('\n');
+      box.querySelector('#ro-copy').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(`Reorder — ${holder}\n` + text); App.toast('Copied.', 'ok'); } catch (e) { App.toast('Copy blocked by the browser.', 'warn'); }
+      });
+      box.querySelector('#ro-csv').addEventListener('click', () => {
+        const csv = 'Item,Part number,Have,Min,Order\n' + rows.map(r =>
+          `"${r.it.desc.replace(/"/g, '""')}","${r.it.pn}",${r.have},${r.min},${r.order}`).join('\n');
+        App.download(new Blob([csv], { type: 'text/csv' }), 'reorder-' + holder.replace(/\W+/g, '-') + '.csv');
+      });
+      box.querySelector('#ro-close').addEventListener('click', close);
+    });
+  }
+
+  /* ---------------- pick list from the drawing takeoff ---------------- */
+
+  let pick = null; // active pick-list session {lines, source, dest, dayOnly}
+
+  function fitTerms(f) {
+    const stop = { equal: 1, 'm/f': 1, press: 1, '(press)': 1 };
+    const words = f.name.toLowerCase().replace(/[°()]/g, ' ').split(/\s+/).filter(w => w && !stop[w]);
+    return [...words, String(parseFloat(f.size) || f.size).replace('mm', '')];
+  }
+
+  function takeoffLines(dayOnly) {
+    const to = MarkupList.computeTakeoff(dayOnly ? { day: State.S.workDay } : null);
+    const lines = [];
+    for (const f of to.fittings) {
+      lines.push({ kind: 'fit', key: f.code + '|' + f.size, label: `${f.code} ${f.name} ${f.size}`, qty: f.count, terms: fitTerms(f) });
+    }
+    for (const p of to.pipes) {
+      if (p.totalFt == null) continue;
+      const m = p.totalFt * 0.3048;
+      lines.push({
+        kind: 'pipe', key: p.size + '|' + p.material,
+        label: `${p.size} ${p.material} tube — ${m.toFixed(1)} m`,
+        qty: Math.max(1, Math.ceil(m / 6)), qtyNote: '6 m lengths',
+        terms: ['tube', String(parseFloat(p.size) || p.size).replace('mm', '')],
+      });
+    }
+    return lines;
+  }
+
+  function matchItem(line) {
+    const rememberedId = itemMap[line.kind + '|' + line.key];
+    if (rememberedId) {
+      const it = st.items.find(i => i.id === rememberedId);
+      if (it) return { it, how: 'linked' };
+    }
+    const hits = st.items.filter(i => !i.stub &&
+      line.terms.every(t => (i.desc + ' ' + i.pn).toLowerCase().includes(t)));
+    if (hits.length === 1) return { it: hits[0], how: 'auto' };
+    return { it: null, how: hits.length ? hits.length + ' matches' : 'no match' };
+  }
+
+  function pickCardHtml() {
+    if (!State.S.pdf) return '';
+    let h = `<div class="prop-cap aro-tm-cap" id="aro-pick-toggle">${st.pickOpen ? '▾' : '▸'} Pick list from takeoff</div>`;
+    if (!st.pickOpen) return h;
+    const all = takeoffLines(false), day = takeoffLines(true);
+    if (!all.length) return h + `<p class="prop-note">Draw pipe runs and fittings on the sheet and they show up here as a pick list.</p>`;
+    h += `<p class="prop-note">Turn the drawing's takeoff into a warehouse pick list, then push the picked stock onto the site holder in one move.</p>
+      <div class="aro-bar"><label class="chk"><input type="checkbox" id="aro-pick-day"${st.pickDay ? ' checked' : ''}> Active day only (${esc(State.S.workDay)}, ${day.length} line${day.length === 1 ? '' : 's'})</label></div>
+      <div class="aro-bar"><button class="mini-btn primary" id="aro-pick-build">Build pick list — ${(st.pickDay ? day : all).length} lines…</button></div>`;
+    return h;
+  }
+
+  function wirePickCard() {
+    const t = sideEl.querySelector('#aro-pick-toggle');
+    if (t) t.addEventListener('click', () => { st.pickOpen = !st.pickOpen; render(); });
+    const d = sideEl.querySelector('#aro-pick-day');
+    if (d) d.addEventListener('change', e => { st.pickDay = e.target.checked; render(); });
+    const b = sideEl.querySelector('#aro-pick-build');
+    if (b) b.addEventListener('click', () => {
+      const lines = takeoffLines(st.pickDay);
+      if (!lines.length) { App.toast('Nothing in the takeoff for that scope.', 'warn'); return; }
+      const withIds = st.allHolders.filter(h => h.id);
+      pick = {
+        lines: lines.map(l => ({ ...l, checked: true })),
+        source: (pick && pick.source) || loadJson('abmt:picksource', null) || (withIds.find(h => h.type === 'org') || withIds[0] || {}).name || '',
+        dest: (pick && pick.dest) || (State.S.aroSite && State.S.aroSite.holder) || st.holder || '',
+      };
+      pickListDialog();
+    });
+  }
+
+  function pickListDialog() {
+    if (!pick) return;
+    const withIds = st.allHolders.filter(h => h.id);
+    const holderOpts = sel => withIds.map(h => `<option value="${esc(h.name)}"${h.name === sel ? ' selected' : ''}>${esc(h.name)} — ${esc(holderKind(h.type))}</option>`).join('');
+    const rows = pick.lines.map((l, i) => {
+      const m = matchItem(l);
+      l.item = m.it;
+      const src = m.it && pick.source ? qty(qtyAt(m.it, pick.source)) : '—';
+      return `<tr>
+        <td><input type="checkbox" class="pk-chk" data-i="${i}"${l.checked ? ' checked' : ''}></td>
+        <td>${esc(l.label)}${l.qtyNote ? `<div class="aro-sub">${esc(l.qtyNote)}</div>` : ''}</td>
+        <td class="num">${qty(l.qty)}</td>
+        <td>${m.it
+          ? `${esc(m.it.desc)}<div class="aro-sub">${esc(m.it.pn)}${m.how === 'auto' ? ' · matched' : ''}</div>`
+          : `<button class="mini-btn pk-link" data-i="${i}">Link… <span class="muted">(${esc(m.how)})</span></button>`}</td>
+        <td class="num">${src}</td>
+      </tr>`;
+    }).join('');
+    const ready = pick.lines.filter(l => l.checked && l.item).length;
+    App.modal(`
+      <h3>Pick list — ${pick.lines.length} lines</h3>
+      <div class="aro-bar"><label style="flex:0 0 auto" class="muted">From</label><select id="pk-src">${holderOpts(pick.source)}</select>
+        <label style="flex:0 0 auto" class="muted">to</label><select id="pk-dst">${holderOpts(pick.dest)}</select></div>
+      <div style="max-height:46vh;overflow:auto"><table class="to-table">
+        <tr><th></th><th>Needed</th><th style="text-align:right">Qty</th><th>AroFlo item</th><th style="text-align:right">At source</th></tr>${rows}
+      </table></div>
+      <p class="muted">Ticked lines with a linked item are moved. Links are remembered for next time.</p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="pk-copy">Copy list</button>
+        <span style="flex:1"></span>
+        <button class="mini-btn" id="pk-cancel">Close</button>
+        <button class="mini-btn primary" id="pk-move"${ready ? '' : ' disabled'}>Move ${ready} line${ready === 1 ? '' : 's'} to site</button>
+      </div>`, (box, close) => {
+      box.querySelector('#pk-src').addEventListener('change', e => { pick.source = e.target.value; saveJson('abmt:picksource', pick.source); pickListDialog(); });
+      box.querySelector('#pk-dst').addEventListener('change', e => { pick.dest = e.target.value; pickListDialog(); });
+      box.querySelectorAll('.pk-chk').forEach(c => c.addEventListener('change', () => { pick.lines[+c.dataset.i].checked = c.checked; pickListDialog(); }));
+      box.querySelectorAll('.pk-link').forEach(b => b.addEventListener('click', () => {
+        const line = pick.lines[+b.dataset.i];
+        itemPickerDialog('Link takeoff line', `Pick the AroFlo item for <b>${esc(line.label)}</b>.`, it => {
+          itemMap[line.kind + '|' + line.key] = it.id;
+          saveJson('abmt:itemmap', itemMap);
+          pickListDialog();
+        });
+      }));
+      box.querySelector('#pk-copy').addEventListener('click', async () => {
+        const text = 'Pick list — ' + (State.S.jobRef || State.S.fileName) + '\n' +
+          pick.lines.filter(l => l.checked).map(l => `${qty(l.qty)} x ${l.item ? (l.item.pn || l.item.desc) : l.label}${l.qtyNote ? ' (' + l.qtyNote + ')' : ''}`).join('\n');
+        try { await navigator.clipboard.writeText(text); App.toast('Copied.', 'ok'); } catch (e) { App.toast('Copy blocked by the browser.', 'warn'); }
+      });
+      box.querySelector('#pk-cancel').addEventListener('click', close);
+      box.querySelector('#pk-move').addEventListener('click', async () => {
+        const srcH = withIds.find(h => h.name === pick.source);
+        const dstH = withIds.find(h => h.name === pick.dest);
+        if (!srcH || !dstH) { App.toast('Pick source and destination holders.', 'warn'); return; }
+        if (srcH.name === dstH.name) { App.toast('Source and destination are the same holder.', 'warn'); return; }
+        const moves = [];
+        for (const l of pick.lines) {
+          if (!l.checked || !l.item) continue;
+          moves.push({ itemid: l.item.id, toId: srcH.id, toType: srcH.type, delta: -l.qty });
+          moves.push({ itemid: l.item.id, toId: dstH.id, toType: dstH.type, delta: l.qty });
+        }
+        if (!moves.length) return;
+        const btn = box.querySelector('#pk-move');
+        btn.disabled = true; btn.textContent = 'Moving…';
+        try {
+          for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
+          close();
+          App.toast(`Pick list moved — ${moves.length / 2} line${moves.length === 2 ? '' : 's'} → ${dstH.name}. Re-reading…`, 'good', 6000);
+          await refresh();
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Move to site';
+          App.toast('Move failed: ' + e.message, 'error', 9000);
+        }
+      });
+    });
   }
 
   /* ---------------- Impress reference ---------------- */
@@ -1046,6 +1427,9 @@ const Aro = (() => {
     sideEl = document.getElementById('stockSide');
     if (!root || !pageEl) return;
     loadCfg();
+    codeMap = loadJson('abmt:barcodes', {});
+    pars = loadJson('abmt:pars', {});
+    itemMap = loadJson('abmt:itemmap', {});
     if (loadCache()) st.phase = 'ready';
     render();
     const tabBtn = document.querySelector('#rightPanel .tab[data-tab="stock"]');
@@ -1061,5 +1445,5 @@ const Aro = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { refresh, settingsDialog, call, openPage, closePage, _state: st };
+  return { refresh, settingsDialog, call, openPage, closePage, _state: st, _onScan: onScan, _resolveScan: resolveScan };
 })();

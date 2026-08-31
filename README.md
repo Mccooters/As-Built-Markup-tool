@@ -111,6 +111,12 @@ AroFlo's API is signed with a **secret HMAC key that must never be shipped in br
 
 Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected — refreshes fetch 500-item pages on demand (up to 20,000 items) and stop early on small catalogues. **Big catalogue?** Scope the sync in **Stock → ⚙ → Sync scope** to just your install categories (Impress, Fittings, Hose & Tube…) — refreshes then take a couple of calls instead of a full crawl, and a safety sweep still surfaces any stock held on items outside the scope so nothing on site is ever invisible. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
 
+### Scan, minimums, and pick lists
+
+- **Barcode / QR scanning** — the 📷 button opens the camera (HTTPS + camera permission). Scan a label and the list jumps to that item — mid-stocktake it lands you straight in that line's count box. Codes resolve by part number; an unknown code (e.g. a supplier EAN) asks once which item it belongs to and the link is remembered on the device. **Labels** prints a QR label sheet for the current view, so bins can be labelled once and scanned forever.
+- **Minimum levels & reorder lists** — with a holder selected, expand any item and set its **minimum at that holder** (stored on the device). Items below minimum wear a red **LOW** badge, the **Low** filter shows only shortfalls, and **Reorder** produces the shopping list (item, have, min, order qty) as clipboard text or CSV.
+- **Pick list from the takeoff** — the killer flow: the drawing's fittings and pipe become a warehouse pick list (side column → *Pick list from takeoff*, optionally scoped to the active day). Lines auto-match to AroFlo inventory items (unique-match only; anything ambiguous is linked by hand once and remembered), pipe converts to 6 m lengths, and **Move to site** pushes the whole list as transfers from the warehouse holder onto the site holder in one confirmed action. Drawing → van, one button.
+
 ### On-site stocktakes & transfers
 
 The Stock tab can also **write stock adjustments back to AroFlo** — deliberately narrow, and only when `AROFLO_PROXY_TOKEN` is set (a deployment without the token is strictly read-only; writes are refused server-side).

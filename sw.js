@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const CACHE = 'abmt-shell-v1';
+const CACHE = 'abmt-shell-v2';
 const CORE = [
   './',
   'index.html',
@@ -16,7 +16,7 @@ const CORE = [
   'js/store.js', 'js/viewer.js', 'js/render.js', 'js/tools.js',
   'js/props.js', 'js/markuplist.js', 'js/project.js', 'js/export.js',
   'js/aroflo.js', 'js/app.js',
-  'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js',
+  'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js', 'vendor/zxing.min.js',
   'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
