@@ -35,6 +35,7 @@ const Aro = (() => {
     pickDay: false,       // pick list scoped to the active work day
     expanded: null,       // itemid with the holder breakdown open
     take: { on: false, name: '', id: '', type: '', counts: {}, pushing: false },
+    catView: false,       // stocktake laid out like the press-fitting catalogue
     tm: { mode: 'task', job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false,
           progress: '', pQuery: '', pMatches: [], pId: '', pName: '', pTasks: [], agg: [] },
   };
@@ -363,6 +364,7 @@ const Aro = (() => {
       h += `
       <div class="aro-take-bar">
         <span class="aro-take-cap">Stocktake — <b>${esc(st.take.name)}</b></span>
+        <button class="mini-btn${st.catView ? ' primary' : ''}" id="aro-take-cat" title="Lay the count out like the press-fitting catalogue — families down, sizes across">Catalogue</button>
         <button class="mini-btn primary" id="aro-take-review">Review &amp; push…</button>
         <button class="mini-btn" id="aro-take-cancel">Cancel</button>
       </div>
@@ -402,6 +404,11 @@ const Aro = (() => {
     const labelsBtn = mainEl.querySelector('#aro-labels');
     if (labelsBtn) labelsBtn.addEventListener('click', printLabels);
     if (st.take.on) {
+      mainEl.querySelector('#aro-take-cat').addEventListener('click', () => {
+        st.catView = !st.catView;
+        saveJson('abmt:catview', st.catView);
+        render();
+      });
       mainEl.querySelector('#aro-take-review').addEventListener('click', reviewStocktake);
       mainEl.querySelector('#aro-take-cancel').addEventListener('click', () => {
         st.take = { on: false, name: '', id: '', type: '', counts: {}, pushing: false };
@@ -528,6 +535,7 @@ const Aro = (() => {
     const items = st.items.filter(it =>
       !it.stub && (!terms.length || terms.every(t => (it.desc + ' ' + it.pn + ' ' + it.cat).toLowerCase().includes(t))));
     if (!items.length) { el.innerHTML = `<p class="prop-note">Nothing matches the search.</p>`; return; }
+    if (st.catView) { renderTakeCatalogue(el, items); return; }
     let h = '';
     for (const it of items.slice(0, MAX_ROWS)) {
       const have = qtyAt(it, st.take.name);
@@ -544,12 +552,97 @@ const Aro = (() => {
     }
     if (items.length > MAX_ROWS) h += `<p class="prop-note">…and ${items.length - MAX_ROWS} more — refine the search.</p>`;
     el.innerHTML = h;
+    wireCountInputs(el);
+  }
+
+  function wireCountInputs(el) {
     el.querySelectorAll('.aro-count').forEach(inp => {
       inp.addEventListener('input', () => {
         st.take.counts[inp.dataset.id] = inp.value;
         renderStatus();
       });
     });
+  }
+
+  // Catalogue layout for stocktakes: the shelf order of a press-fitting
+  // catalogue — one group per fitting family, one cell per size, with
+  // AroFlo's figure above the count box. Families are parsed from the item
+  // descriptions, most-specific first; anything unrecognised lands in Other.
+  const CAT_FAMILIES = [
+    { name: 'Coupling', all: ['coupling'], not: ['slip', 'reducing', 'repair'] },
+    { name: 'Slip / Repair Coupling', all: ['coupling'], any: ['slip', 'repair'] },
+    { name: 'Reducing Coupling', all: ['reducing', 'coupling'] },
+    { name: 'Elbow 90°', all: ['elbow', '90'] },
+    { name: 'Elbow 45°', all: ['elbow', '45'] },
+    { name: 'Bend', all: ['bend'] },
+    { name: 'Equal Tee', all: ['tee'], not: ['reducing'] },
+    { name: 'Reducing Tee', all: ['reducing', 'tee'] },
+    { name: 'Reducer', all: ['reducer'] },
+    { name: 'Union', all: ['union'] },
+    { name: 'Male Adaptor', all: ['male'] },
+    { name: 'Female Adaptor', all: ['female'] },
+    { name: 'End Cap', all: ['cap'] },
+    { name: 'Ball Valve', all: ['ball', 'valve'] },
+    { name: 'Flange', all: ['flange'] },
+    { name: 'Wall Plate', all: ['wall', 'plate'] },
+    { name: 'Tube', all: ['tube'] },
+    { name: 'Bracket / Clamp', any: ['bracket', 'clamp', 'clip'] },
+  ];
+
+  function catFamilyOf(it) {
+    // whole-word matching — 'tee' must not match inside 'steel'; numeric
+    // terms match by prefix so '90' finds '90deg'
+    const words = (it.desc + ' ' + it.pn).toLowerCase().split(/[^a-z0-9.]+/);
+    const has = w => (/^\d/.test(w) ? words.some(x => x.startsWith(w)) : words.includes(w));
+    for (let i = 0; i < CAT_FAMILIES.length; i++) {
+      const f = CAT_FAMILIES[i];
+      if (f.all && !f.all.every(has)) continue;
+      if (f.any && !f.any.some(has)) continue;
+      if (f.not && f.not.some(has)) continue;
+      return i;
+    }
+    return -1;
+  }
+
+  function catSizesOf(it) {
+    const out = [];
+    const re = /(\d+(?:\.\d+)?)\s*mm/gi;
+    let m;
+    while ((m = re.exec(it.desc)) && out.length < 3) out.push(parseFloat(m[1]));
+    return out;
+  }
+
+  function renderTakeCatalogue(el, items) {
+    const groups = new Map(); // familyIndex -> items
+    for (const it of items) {
+      const fi = catFamilyOf(it);
+      if (!groups.has(fi)) groups.set(fi, []);
+      groups.get(fi).push(it);
+    }
+    let h = '';
+    const order = [...groups.keys()].sort((a, b) => (a === -1 ? 999 : a) - (b === -1 ? 999 : b));
+    for (const fi of order) {
+      const list = groups.get(fi);
+      list.sort((a, b) => {
+        const sa = catSizesOf(a), sb = catSizesOf(b);
+        return (sa[0] || 9999) - (sb[0] || 9999) || (sa[1] || 0) - (sb[1] || 0) || a.desc.localeCompare(b.desc);
+      });
+      h += `<div class="cat-group"><div class="cat-head">${fi === -1 ? 'Other' : esc(CAT_FAMILIES[fi].name)}</div><div class="cat-cells">`;
+      for (const it of list) {
+        const sizes = catSizesOf(it);
+        const label = sizes.length ? sizes.map(s => qty(s)).join('×') : (it.pn || '—');
+        const have = qtyAt(it, st.take.name);
+        const val = st.take.counts[it.id] != null ? st.take.counts[it.id] : '';
+        h += `<label class="cat-cell" title="${esc(it.desc)} — ${esc(it.pn)}">
+          <span class="cat-size">${esc(label)}</span>
+          <span class="cat-have">has ${qty(have)}</span>
+          <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
+        </label>`;
+      }
+      h += `</div></div>`;
+    }
+    el.innerHTML = h;
+    wireCountInputs(el);
   }
 
   function aroLevelsHtml(it) {
@@ -1430,6 +1523,7 @@ const Aro = (() => {
     codeMap = loadJson('abmt:barcodes', {});
     pars = loadJson('abmt:pars', {});
     itemMap = loadJson('abmt:itemmap', {});
+    st.catView = !!loadJson('abmt:catview', false);
     if (loadCache()) st.phase = 'ready';
     render();
     const tabBtn = document.querySelector('#rightPanel .tab[data-tab="stock"]');

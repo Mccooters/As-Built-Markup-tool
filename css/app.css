@@ -476,3 +476,14 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
   font-size: 10px; font-weight: 700; padding: 1px 5px; margin-left: 6px; letter-spacing: .5px; vertical-align: 1px; }
 .aro-min { width: 64px; text-align: right; background: var(--bg-inset, #16181c); color: var(--txt);
   border: 1px solid var(--edge); border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+/* catalogue-layout stocktake */
+.cat-group { margin-bottom: 14px; }
+.cat-head { font-size: 11px; letter-spacing: .7px; text-transform: uppercase; color: var(--txt-dim);
+  border-bottom: 1px solid var(--edge); padding-bottom: 3px; margin-bottom: 7px; }
+.cat-cells { display: flex; flex-wrap: wrap; gap: 7px; }
+.cat-cell { display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 6px; padding: 6px 7px; min-width: 78px; }
+.cat-size { font-size: 13.5px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
+.cat-have { font-size: 10.5px; color: var(--txt-dim); text-align: center; }
+.cat-cell .aro-count { width: 100%; box-sizing: border-box; }
+.cat-cell:focus-within { border-color: var(--accent); }
