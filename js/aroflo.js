@@ -266,7 +266,7 @@ const Aro = (() => {
       if (!v.set) return `<div class="aro-diag-row bad">⚠ ${esc(short)}: <b>not set</b></div>`;
       const flags = [];
       if (v.innerWhitespace) flags.push('contains a line break or space — re-paste it');
-      if (v.badChars && v.badChars.length) flags.push('contains ' + v.badChars.join(' ') + ' — check what was pasted');
+      if (v.badChars && v.badChars.length) flags.push('contains ' + v.badChars.join(' ') + (v.badAt ? ' at position ' + v.badAt + ' of ' + v.len : '') + ' — re-paste this value');
       const note = v.invisibles ? ` (${v.invisibles} hidden character${v.invisibles > 1 ? 's' : ''} removed automatically)` : '';
       return `<div class="aro-diag-row${flags.length ? ' bad' : ''}">${flags.length ? '⚠' : '·'} ${esc(short)}: ${v.len} chars, “${esc(v.ends)}”${esc(note)}${flags.length ? ' — ' + esc(flags.join('; ')) : ''}</div>`;
     }).join('');

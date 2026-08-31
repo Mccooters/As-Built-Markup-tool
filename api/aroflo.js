@@ -141,6 +141,7 @@ const ACTIONS = {
       if (!v) return { set: false };
       const badChars = [...new Set(v.match(/[^A-Za-z0-9+/=]/g) || [])].slice(0, 3)
         .map(c => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'));
+      const badAt = v.search(/[^A-Za-z0-9+/=]/);
       return {
         set: true,
         len: v.length,
@@ -148,6 +149,7 @@ const ACTIONS = {
         invisibles: (raw.match(INVISIBLE) || []).length,
         innerWhitespace: /\s/.test(v),
         badChars,
+        badAt: badAt >= 0 ? badAt + 1 : 0,
       };
     };
     const r = await aroGet('businessunits', { page: 1, pageSize: 1 });
