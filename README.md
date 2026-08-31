@@ -4,7 +4,7 @@ A Bluebeam-style PDF markup and measurement tool built for one job: **marking up
 
 ![AirMark screenshot](docs/screenshot.png)
 
-Everything runs client-side. Drawings never leave your computer — there is no server, no upload, no account.
+Everything runs client-side. Drawings never leave your computer — there is no server, no upload, no account. (The optional [AroFlo site-stock connection](#live-site-stock-aroflo) is the one exception: inventory queries go through a small read-only proxy so API keys stay off the browser.)
 
 ## Quick start
 
@@ -83,11 +83,26 @@ The **Report** button generates the day's handover in one go:
 - a **materials CSV** for the day — pipe lengths, IBEX Impress fittings (`IMPRESS-E90-54MM` style codes) and core-drill counts, ready to attach or import into AroFlo
 - a formatted **work summary copied to the clipboard**, ready to paste straight into the AroFlo task note
 
-The AroFlo task / job ref is remembered per project and printed on everything. The Takeoff tab and the CSV schedule export can also be scoped to the active day only.
+The AroFlo task / job ref is remembered per project and printed on everything. The Takeoff tab and the CSV schedule export can also be scoped to the active day only. And with the [AroFlo connection](#live-site-stock-aroflo) set up, the **Stock** tab shows live on-site inventory and the materials already booked to the job's task.
 
 ## Press fittings (IBEX Impress)
 
 The **Fittings** tab holds a press-fitting palette — elbows 90°/45°, bends, equal/reducing tees, couplings, slip couplings, reducers, unions, BSP adaptors, end caps, press ball valves, flange adaptors, wall plate elbows — at any pipe size (press sizes 15–108 mm included). Tap a fitting, then tap the drawing where it goes; the tool **stays armed** so you can tap-tap-tap through an install, and each palette button shows today's running count. Fittings appear as small coded badges (`E90`, `TEE`…) colored by size, total into a fittings schedule in the Takeoff tab, and export with material codes in the CSV and daily report.
+
+## Live site stock (AroFlo)
+
+The **Stock** tab shows your live AroFlo inventory — every item with its part number, category and **quantity at each holding location** (warehouse business units, users/vans, and custom holders like site containers), so you can check what's actually on site before ordering. Search by any words (`impress 54`), filter to one location, tap a row for the full per-holder breakdown, and hit ⟳ to re-pull. The last snapshot is cached in the browser, so the tab still answers offline (stamped "as at …"). Below it, **Job materials used** looks up the AroFlo task by job number (pre-filled from the project's job ref) and lists the materials already recorded against it.
+
+AroFlo's API is signed with a **secret HMAC key that must never be shipped in browser code**, so the app talks to a tiny read-only proxy — `api/aroflo.js`, a serverless function that deploys automatically when this repo is hosted on **Vercel**. Setup:
+
+1. In AroFlo: **Site Administration → Settings → General → AroFlo API** — generate/copy the **Secret Key** (copy it *before* saving; it's shown once) and the three encoded credential strings.
+2. In Vercel: **Project → Settings → Environment Variables**, add:
+   - `AROFLO_SECRET` — the secret key
+   - `AROFLO_UENCODED`, `AROFLO_PENCODED`, `AROFLO_ORGENCODED` — the encoded strings from the same page
+   - `AROFLO_PROXY_TOKEN` — *(strongly recommended)* any random string; anyone who finds your deployment URL can otherwise read your inventory through the proxy. Enter the same token in the app under **Stock → ⚙**.
+3. Redeploy. The app finds the proxy at `/api/aroflo` on the same host automatically — open **Stock**, hit **⚙ → Test connection**, and it should greet you with your business-unit name.
+
+The proxy exposes only **read-only** queries (inventory + stock levels, task lookup by job number, task materials) — it cannot write to AroFlo. Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected by fetching at most a dozen 250-item pages per refresh, on demand. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
 
 ## Files & saving
 
@@ -117,7 +132,9 @@ js/props.js         right panel: properties / symbols / takeoff
 js/markuplist.js    markups list + takeoff computation + CSV
 js/project.js       .airmark save/load, autosave
 js/export.js        flattened PDF export, sample floor plan
+js/aroflo.js        Stock tab: live AroFlo inventory via the proxy
 js/app.js           toolbar, shortcuts, modals, wiring
+api/aroflo.js       Vercel serverless proxy that signs AroFlo API calls (keys stay server-side)
 ```
 
 Markup geometry is stored in PDF page units (points), so markups stay put at any zoom and export at exact scale.
