@@ -18,9 +18,9 @@
  *   AROFLO_BASE_URL     optional override of https://api.aroflo.com/ (testing)
  *
  * Read actions: ping, diag, holders, inventory, stocklevels, task,
- * taskmaterials. The single write action — adjuststock, for stocktakes and
- * holder-to-holder transfers — only runs when AROFLO_PROXY_TOKEN is set and
- * presented, and only posts per-holder stock movequantity adjustments.
+ * taskmaterials. Two write actions — adjuststock (stocktakes and
+ * holder-to-holder transfers) and usedmaterials (book used parts to a task's
+ * Used Items) — only run when AROFLO_PROXY_TOKEN is set and presented.
  */
 'use strict';
 
@@ -435,6 +435,62 @@ const ACTIONS = {
     });
   },
 
+  // The other write action — record USED materials against a task, the way a
+  // tech books fittings to the job at the end of a run. Each line lands in
+  // the task's Used Items (taskmaterials zone) with today's date, the part
+  // number + description, and the stock holder it was taken from. Gated the
+  // same way as adjuststock: POST only, refused without AROFLO_PROXY_TOKEN.
+  async usedmaterials(q, bodyJson) {
+    const ID = /^[A-Za-z0-9+/=]{1,64}$/;
+    const taskid = str(bodyJson && bodyJson.taskid).trim();
+    if (!ID.test(taskid)) return { ok: false, httpStatus: 400, statusmessage: 'taskid required' };
+    const lines = bodyJson && Array.isArray(bodyJson.lines) ? bodyJson.lines : null;
+    if (!lines || !lines.length) return { ok: false, httpStatus: 400, statusmessage: 'lines[] required' };
+    if (lines.length > 60) return { ok: false, httpStatus: 400, statusmessage: 'Too many lines in one call (max 60)' };
+
+    let takenfrom = '';
+    const tf = bodyJson.takenfrom;
+    if (tf && tf.id != null) {
+      const tfId = str(tf.id).trim(), tfType = str(tf.type).trim();
+      // AroFlo only accepts user/cholder here; business-unit lines omit the
+      // element and AroFlo books them against the task's own business unit.
+      if (!ID.test(tfId) || (tfType !== 'user' && tfType !== 'cholder'))
+        return { ok: false, httpStatus: 400, statusmessage: 'Bad takenfrom holder' };
+      takenfrom = `<takenfrom><takenfromid>${tfId}</takenfromid><takenfromtype>${tfType}</takenfromtype></takenfrom>`;
+    }
+
+    // CDATA-safe text: control characters stripped, the CDATA terminator broken
+    const cd = (v, max) => str(v)
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+      .replace(/\]\]>/g, ']] >').trim().slice(0, max);
+    const d = new Date();
+    const dateused = d.getUTCFullYear() + '/' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + String(d.getUTCDate()).padStart(2, '0');
+    let xml = '<materials>';
+    for (const l of lines) {
+      const desc = cd(l && l.desc, 1000);
+      const pn = cd(l && l.pn, 50);
+      const qv = Math.round(Number(l && l.qty) * 10000) / 10000;
+      if (!desc && !pn) return { ok: false, httpStatus: 400, statusmessage: 'Each line needs a description or part number' };
+      if (!Number.isFinite(qv) || qv <= 0 || qv > 100000) return { ok: false, httpStatus: 400, statusmessage: 'Bad quantity' };
+      xml += '<material>'
+        + (pn ? `<partnumber><![CDATA[${pn}]]></partnumber>` : '')
+        + (desc ? `<item><![CDATA[${desc}]]></item>` : '')
+        + `<quantity>${qv}</quantity><dateused>${dateused}</dateused>`
+        + takenfrom
+        + `<task><taskid>${taskid}</taskid></task></material>`;
+    }
+    xml += '</materials>';
+
+    const r = await aroPost('taskmaterials', xml);
+    const pr = r.zoneresponse.postresults || {};
+    return relay(r, {
+      inserted: num(pr.inserttotal),
+      sent: lines.length,
+      postErrors: (Array.isArray(pr.errors) ? pr.errors : []).slice(0, 5)
+        .map(e => str(typeof e === 'object' ? JSON.stringify(e) : e).slice(0, 300)),
+    });
+  },
+
   // Materials recorded against a task (what the job has used).
   async taskmaterials(q) {
     const taskid = str(q.taskid).trim();
@@ -459,7 +515,7 @@ const ACTIONS = {
 
 /* ---------------- HTTP handler ---------------- */
 
-const WRITE_ACTIONS = { adjuststock: 1 };
+const WRITE_ACTIONS = { adjuststock: 1, usedmaterials: 1 };
 
 function send(res, code, obj) {
   const body = JSON.stringify(obj);

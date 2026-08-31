@@ -44,6 +44,9 @@ const Aro = (() => {
   let codeMap = {};     // learned barcode/QR → itemid links     (abmt:barcodes)
   let pars = {};        // per-holder minimum levels {holder:{itemid:min}} (abmt:pars)
   let itemMap = {};     // takeoff line → itemid links           (abmt:itemmap)
+  let sysPresets = [];  // material-system presets [{id,name,cats}] (abmt:syspresets)
+  let jobSys = {};      // job → preset id                        (abmt:jobsys)
+  let usedDrafts = {};  // job → {counts:{itemid:qty}, sys, at} — unsent tallies (abmt:used)
   const loadJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
   const saveJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* full */ } };
   let inflight = false;
@@ -635,24 +638,34 @@ const Aro = (() => {
     return label || it.pn || '—';
   }
 
-  function renderTakeCatalogue(el, items) {
+  function catCmp(a, b) {
+    const sa = catSizesOf(a), sb = catSizesOf(b);
+    return (sa[0] || 9999) - (sb[0] || 9999) || (sa[1] || 0) - (sb[1] || 0)
+      || inchValue(catInchOf(a)) - inchValue(catInchOf(b)) || a.desc.localeCompare(b.desc);
+  }
+
+  // Group + order items the way the printed catalogue does — family rows,
+  // sizes ascending within each row. Shared by the stocktake layout and the
+  // used-parts logger.
+  function catGroups(items) {
     const groups = new Map(); // familyIndex -> items
     for (const it of items) {
       const fi = catFamilyOf(it);
       if (!groups.has(fi)) groups.set(fi, []);
       groups.get(fi).push(it);
     }
-    let h = '';
     const order = [...groups.keys()].sort((a, b) => (a === -1 ? 999 : a) - (b === -1 ? 999 : b));
-    for (const fi of order) {
-      const list = groups.get(fi);
-      list.sort((a, b) => {
-        const sa = catSizesOf(a), sb = catSizesOf(b);
-        return (sa[0] || 9999) - (sb[0] || 9999) || (sa[1] || 0) - (sb[1] || 0)
-          || inchValue(catInchOf(a)) - inchValue(catInchOf(b)) || a.desc.localeCompare(b.desc);
-      });
-      h += `<div class="cat-group"><div class="cat-head">${fi === -1 ? 'Other' : esc(CAT_FAMILIES[fi].name)}</div><div class="cat-cells">`;
-      for (const it of list) {
+    return order.map(fi => ({
+      name: fi === -1 ? 'Other' : CAT_FAMILIES[fi].name,
+      list: groups.get(fi).sort(catCmp),
+    }));
+  }
+
+  function renderTakeCatalogue(el, items) {
+    let h = '';
+    for (const g of catGroups(items)) {
+      h += `<div class="cat-group"><div class="cat-head">${esc(g.name)}</div><div class="cat-cells">`;
+      for (const it of g.list) {
         const have = qtyAt(it, st.take.name);
         const val = st.take.counts[it.id] != null ? st.take.counts[it.id] : '';
         h += `<label class="cat-cell" title="${esc(it.desc)} — ${esc(it.pn)}">
@@ -786,7 +799,13 @@ const Aro = (() => {
         <button class="mini-btn" id="zp-edit" title="Change the linked tasks">Links</button>
         <button class="mini-btn" id="zp-close">✕</button></div>
       <div class="zp-body">${jobs.length
-        ? jobs.map(j => `<div class="zp-job" data-job="${esc(j)}"><div class="zp-jobhead">#${esc(j)}</div><div class="zp-mats muted">Loading…</div></div>`).join('')
+        ? jobs.map(j => {
+          const d = draftLines(String(j));
+          return `<div class="zp-job" data-job="${esc(j)}">
+            <div class="zp-jobhead"><span class="zp-jobname">#${esc(j)}</span>
+              <button class="mini-btn zp-log${d ? ' primary' : ''}" data-job="${esc(j)}" title="Tap-count the parts used in this area and book them to the task">${d ? 'Draft · ' + d + ' — save…' : '+ Log parts'}</button></div>
+            <div class="zp-mats muted">Loading…</div></div>`;
+        }).join('')
         : '<p class="prop-note">No tasks linked yet — hit Links to pick them.</p>'}</div>`;
     document.body.appendChild(popEl);
 
@@ -804,13 +823,15 @@ const Aro = (() => {
 
     popEl.querySelector('#zp-close').addEventListener('click', closeZonePopover);
     popEl.querySelector('#zp-edit').addEventListener('click', () => { closeZonePopover(); zoneLinkDialog(m); });
+    popEl.querySelectorAll('.zp-log').forEach(b =>
+      b.addEventListener('click', () => usedDialog(b.dataset.job, { zone: m })));
 
     for (const j of jobs) {
       const cell = popEl.querySelector(`.zp-job[data-job="${CSS.escape(String(j))}"] .zp-mats`);
       jobMaterials(String(j)).then(({ task, materials }) => {
         if (!popEl || !cell) return;
-        const head = popEl.querySelector(`.zp-job[data-job="${CSS.escape(String(j))}"] .zp-jobhead`);
-        if (head && task) head.innerHTML = `#${esc(task.job)} ${esc(task.name)} <span class="muted">(${esc(task.status)})</span>`;
+        const nameEl = popEl.querySelector(`.zp-job[data-job="${CSS.escape(String(j))}"] .zp-jobname`);
+        if (nameEl && task) nameEl.innerHTML = `#${esc(task.job)} ${esc(task.name)} <span class="muted">(${esc(task.status)})</span>`;
         if (!task) { cell.textContent = 'No AroFlo task found for this job number.'; return; }
         if (!materials.length) { cell.innerHTML = '<span class="muted">No materials recorded yet.</span>'; return; }
         cell.classList.remove('muted');
@@ -819,6 +840,247 @@ const Aro = (() => {
           <tr class="total"><td>Lines</td><td class="num">${materials.length}</td></tr></table>`;
       }).catch(e => { if (cell) cell.textContent = 'Couldn’t load: ' + e.message; });
     }
+  }
+
+  /* ---------------- log used parts to a task ---------------- */
+
+  const saveDrafts = () => saveJson('abmt:used', usedDrafts);
+  const draftLines = job =>
+    Object.values((usedDrafts[job] || {}).counts || {}).filter(q => q > 0).length;
+
+  function categoriesInStock() {
+    const seen = new Set();
+    for (const it of st.items) if (!it.stub && it.cat) seen.add(it.cat);
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }
+
+  // Tap-to-count logger: catalogue-layout tiles filtered by the job's
+  // material-system preset (e.g. “Stainless Impress” = the Impress
+  // categories). The tally persists per job until it's saved, so a dropped
+  // signal or a closed tab never loses the count.
+  async function usedDialog(job, opts = {}) {
+    job = String(job);
+    closeZonePopover();
+    if (!st.items.length) { App.toast('Load the stock list first — open the stock manager and hit ⟳.', 'warn'); return; }
+    let task = opts.task || null;
+    if (!task) {
+      try { task = (await jobMaterials(job)).task; }
+      catch (e) { App.toast('Couldn’t look up job ' + job + ': ' + e.message, 'error'); return; }
+    }
+    if (!task) { App.toast('No AroFlo task found for job ' + job + '.', 'error'); return; }
+    if (!usedDrafts[job]) usedDrafts[job] = { counts: {}, sys: jobSys[job] || '' };
+    const draft = usedDrafts[job];
+    if (jobSys[job] && !draft.sys) draft.sys = jobSys[job];
+
+    App.modal(`
+      <h3>Log parts used — #${esc(task.job)} ${esc(task.name)}</h3>
+      <div class="aro-bar">
+        <select id="us-sys" title="Material system — narrows the tiles to that system's categories">
+          <option value="">All synced items</option>
+          ${sysPresets.map(p => `<option value="${esc(p.id)}"${draft.sys === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+        <button class="mini-btn" id="us-newsys" title="Create a material-system preset (e.g. Stainless Impress)">New…</button>
+      </div>
+      <div class="aro-bar"><input type="text" id="us-q" placeholder="Search… (e.g. elbow 54)" autocomplete="off"></div>
+      <p class="muted">Tap a tile once per part used — the − corner takes one back. Quantities can still be edited at the review step.</p>
+      <div id="us-grid" class="used-grid"></div>
+      <div class="used-bar">
+        <span class="muted" id="us-tot"></span>
+        <span style="flex:1"></span>
+        <button class="mini-btn" id="us-clear" title="Wipe this job's unsent tally">Clear</button>
+        <button class="mini-btn" id="us-close">Close</button>
+        <button class="mini-btn primary" id="us-review">Review &amp; save…</button>
+      </div>`, (box, close) => {
+      const grid = box.querySelector('#us-grid');
+      const qEl = box.querySelector('#us-q');
+      const totEl = box.querySelector('#us-tot');
+
+      const pool = () => {
+        const p = sysPresets.find(x => x.id === draft.sys);
+        const cats = p ? new Set(p.cats) : null;
+        const terms = qEl.value.toLowerCase().split(/\s+/).filter(Boolean);
+        return st.items.filter(it => !it.stub
+          && (!cats || cats.has(it.cat))
+          && (!terms.length || terms.every(t => (it.desc + ' ' + it.pn + ' ' + it.cat).toLowerCase().includes(t))));
+      };
+      const tally = () => {
+        const lines = Object.values(draft.counts).filter(q => q > 0);
+        const parts = lines.reduce((a, q) => a + q, 0);
+        totEl.textContent = lines.length
+          ? qty(parts) + ' part' + (parts === 1 ? '' : 's') + ' · ' + lines.length + ' line' + (lines.length === 1 ? '' : 's')
+          : 'Nothing tallied yet';
+        box.querySelector('#us-review').disabled = !lines.length;
+      };
+      const draw = () => {
+        const items = pool();
+        const sc = grid.scrollTop;
+        if (!items.length) {
+          grid.innerHTML = '<p class="prop-note">Nothing matches — clear the search or widen the system preset.</p>';
+          tally();
+          return;
+        }
+        let h = '';
+        for (const g of catGroups(items.slice(0, 600))) {
+          h += `<div class="cat-group"><div class="cat-head">${esc(g.name)}</div><div class="cat-cells">`;
+          for (const it of g.list) {
+            const n = draft.counts[it.id] || 0;
+            h += `<button type="button" class="cat-cell used-cell${n ? ' sel' : ''}" data-id="${esc(it.id)}" title="${esc(it.desc)} — ${esc(it.pn)}">
+              <span class="cat-size">${esc(catLabelOf(it))}</span>
+              <span class="cat-pn">${esc(it.pn || '')}</span>
+              ${n ? `<span class="used-n">${qty(n)}</span><span class="used-minus" data-id="${esc(it.id)}">−</span>` : ''}
+            </button>`;
+          }
+          h += `</div></div>`;
+        }
+        if (items.length > 600) h += `<p class="prop-note">…and ${items.length - 600} more — search, or pick a system preset.</p>`;
+        grid.innerHTML = h;
+        grid.scrollTop = sc;
+        grid.querySelectorAll('.used-cell').forEach(cell => cell.addEventListener('click', e => {
+          const id = cell.dataset.id;
+          const minus = e.target.classList && e.target.classList.contains('used-minus');
+          const cur = draft.counts[id] || 0;
+          if (minus) { if (cur <= 1) delete draft.counts[id]; else draft.counts[id] = cur - 1; }
+          else draft.counts[id] = cur + 1;
+          draft.at = Date.now();
+          saveDrafts();
+          draw();
+        }));
+        tally();
+      };
+      let deb = 0;
+      qEl.addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 120); });
+      box.querySelector('#us-sys').addEventListener('change', e => {
+        draft.sys = e.target.value;
+        jobSys[job] = draft.sys;
+        saveJson('abmt:jobsys', jobSys);
+        saveDrafts();
+        draw();
+      });
+      box.querySelector('#us-newsys').addEventListener('click', () => { close(); newSystemDialog(job, opts); });
+      box.querySelector('#us-clear').addEventListener('click', () => { draft.counts = {}; saveDrafts(); draw(); });
+      box.querySelector('#us-close').addEventListener('click', () => {
+        close();
+        if (opts.zone) zonePopover(opts.zone);
+      });
+      box.querySelector('#us-review').addEventListener('click', () => { close(); usedReview(job, task, opts); });
+      draw();
+    });
+  }
+
+  function newSystemDialog(job, opts) {
+    const cats = categoriesInStock();
+    App.modal(`
+      <h3>New material system</h3>
+      <p class="muted">Name the system and tick the AroFlo categories it draws from — e.g. “Stainless Impress” with the Impress categories ticked. Each job remembers the system you pick for it.</p>
+      <div class="form-row"><label>Name</label>
+        <input type="text" id="ns-name" placeholder="e.g. Stainless Impress" autocomplete="off"></div>
+      <div class="form-row"><label>Categories</label>
+        <div class="aro-cats-list" style="display:block">${cats.length
+          ? cats.map(c => `<label class="chk"><input type="checkbox" value="${esc(c)}"> ${esc(c)}</label>`).join('')
+          : '<span class="muted">No categories in the synced stock list yet — hit ⟳ first.</span>'}</div></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="ns-cancel">Cancel</button>
+        <button class="mini-btn primary" id="ns-save">Save</button>
+      </div>`, (box, close) => {
+      box.querySelector('#ns-cancel').addEventListener('click', () => { close(); usedDialog(job, opts); });
+      box.querySelector('#ns-save').addEventListener('click', () => {
+        const name = box.querySelector('#ns-name').value.trim();
+        const ticked = [...box.querySelectorAll('.aro-cats-list input:checked')].map(i => i.value);
+        if (!name) { App.toast('Give the system a name.', 'warn'); return; }
+        if (!ticked.length) { App.toast('Tick at least one category.', 'warn'); return; }
+        const p = { id: 'sys' + Date.now().toString(36), name, cats: ticked };
+        sysPresets.push(p);
+        saveJson('abmt:syspresets', sysPresets);
+        jobSys[job] = p.id;
+        saveJson('abmt:jobsys', jobSys);
+        if (usedDrafts[job]) { usedDrafts[job].sys = p.id; saveDrafts(); }
+        close();
+        usedDialog(job, opts);
+      });
+    });
+  }
+
+  function usedReview(job, task, opts) {
+    const draft = usedDrafts[job] || { counts: {} };
+    const lines = Object.entries(draft.counts)
+      .map(([id, q]) => ({ it: st.items.find(i => i.id === id), q }))
+      .filter(l => l.it && l.q > 0)
+      .sort((a, b) => {
+        const fa = catFamilyOf(a.it), fb = catFamilyOf(b.it);
+        return (fa === -1 ? 999 : fa) - (fb === -1 ? 999 : fb) || catCmp(a.it, b.it);
+      });
+    if (!lines.length) { usedDialog(job, opts); return; }
+    const holdersW = st.allHolders.filter(h => h.id);
+    const defFrom = (State.S.aroSite && State.S.aroSite.holder) || st.holder || (holdersW[0] || {}).name || '';
+    const deductDef = loadJson('abmt:useddeduct', true);
+    const rows = lines.map(l => `<tr>
+      <td>${esc(l.it.desc)}<div class="aro-sub">${esc(l.it.pn)}</div></td>
+      <td class="num"><input class="aro-count ur-qty" data-id="${esc(l.it.id)}" type="text" inputmode="decimal" value="${qty(l.q)}" autocomplete="off"></td>
+      <td><button class="mini-btn ur-x" data-id="${esc(l.it.id)}" title="Remove this line">✕</button></td>
+    </tr>`).join('');
+    App.modal(`
+      <h3>Save to AroFlo — #${esc(task.job)} ${esc(task.name)}</h3>
+      <div style="max-height:38vh;overflow:auto"><table class="to-table">
+        <tr><th>Part</th><th style="text-align:right">Qty</th><th></th></tr>${rows}
+      </table></div>
+      <div class="form-row" style="margin-top:10px"><label>Taken from (stock holder)</label>
+        <select id="ur-from">${holdersW.map(h => `<option value="${esc(h.name)}"${h.name === defFrom ? ' selected' : ''}>${esc(h.name)} — ${esc(holderKind(h.type))}</option>`).join('')}</select></div>
+      <label class="chk"><input type="checkbox" id="ur-deduct"${deductDef ? ' checked' : ''}> Also deduct these quantities from the holder's site stock</label>
+      <p class="muted">The lines land in the task's <b>Used Items</b> in AroFlo, dated today. AroFlo doesn't move inventory for API-booked lines by itself, so leave the deduction on to keep the site holder's counts true — if your AroFlo shows a double deduction after the first save, untick it from then on.</p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="ur-back">Back</button>
+        <button class="mini-btn primary" id="ur-save">Save ${lines.length} line${lines.length === 1 ? '' : 's'} to task</button>
+      </div>`, (box, close) => {
+      box.querySelectorAll('.ur-qty').forEach(inp => inp.addEventListener('change', () => {
+        const v = parseFloat(String(inp.value).replace(',', '.'));
+        if (Number.isFinite(v) && v > 0) draft.counts[inp.dataset.id] = v;
+        else delete draft.counts[inp.dataset.id];
+        saveDrafts();
+        close(); usedReview(job, task, opts);
+      }));
+      box.querySelectorAll('.ur-x').forEach(b => b.addEventListener('click', () => {
+        delete draft.counts[b.dataset.id];
+        saveDrafts();
+        close(); usedReview(job, task, opts);
+      }));
+      box.querySelector('#ur-back').addEventListener('click', () => { close(); usedDialog(job, opts); });
+      box.querySelector('#ur-save').addEventListener('click', async () => {
+        const from = holdersW.find(h => h.name === box.querySelector('#ur-from').value) || null;
+        const deduct = box.querySelector('#ur-deduct').checked;
+        saveJson('abmt:useddeduct', deduct);
+        const btn = box.querySelector('#ur-save');
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+          const payload = { taskid: task.taskid, lines: lines.map(l => ({ pn: l.it.pn, desc: l.it.desc, qty: l.q })) };
+          if (from && (from.type === 'user' || from.type === 'cholder')) payload.takenfrom = { id: from.id, type: from.type };
+          for (let i = 0; i < payload.lines.length; i += 50)
+            await postCall('usedmaterials', { ...payload, lines: payload.lines.slice(i, i + 50) });
+          if (deduct && from) {
+            const moves = lines.map(l => ({ itemid: l.it.id, toId: from.id, toType: from.type, delta: -l.q }));
+            for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
+            // reflect the deduction locally straight away — the next full ⟳
+            // re-reads the true figures
+            for (const l of lines) {
+              let row = (l.it.levels || []).find(x => x.to === from.name);
+              if (!row) { row = { to: from.name, id: from.id, type: from.type, qty: 0, updated: '' }; (l.it.levels = l.it.levels || []).push(row); }
+              row.qty = Math.round((row.qty - l.q) * 10000) / 10000;
+            }
+            saveCache();
+          }
+          delete usedDrafts[job];
+          saveDrafts();
+          delete jobCache[job];
+          close();
+          App.toast(`Booked ${lines.length} line${lines.length === 1 ? '' : 's'} to #${task.job}${deduct && from ? ' and deducted from ' + from.name : ''}. ✔`, 'good', 6000);
+          if (st.tm.taskid === task.taskid) loadMaterialsFor(task.taskid);
+          else render();
+          if (opts.zone) zonePopover(opts.zone);
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Save to task';
+          App.toast('Save failed: ' + e.message + ' — the tally is kept.', 'error', 9000);
+        }
+      });
+    });
   }
 
   /* ---------------- barcode / QR scanning ---------------- */
@@ -1505,6 +1767,9 @@ const Aro = (() => {
       } else if (tm.taskid && tm.phase === 'ready') {
         h += `<p class="prop-note">No materials recorded on this task yet.</p>`;
       }
+      if (tm.taskid && tm.phase === 'ready') {
+        h += `<div class="aro-bar" style="margin-top:6px"><button class="mini-btn" id="aro-tm-log" title="Tap-count parts and book them to this task's Used Items">+ Log parts used…</button></div>`;
+      }
     } else {
       if (tm.pMatches.length > 1) {
         h += `<div class="aro-bar"><select id="aro-tm-proj">${tm.pMatches.map(p =>
@@ -1577,6 +1842,11 @@ const Aro = (() => {
     if (sel) sel.addEventListener('change', async () => {
       st.tm.taskid = sel.value;
       await loadMaterialsFor(st.tm.taskid);
+    });
+    const logBtn = root.querySelector('#aro-tm-log');
+    if (logBtn) logBtn.addEventListener('click', () => {
+      const t = st.tm.tasks.find(x => x.taskid === st.tm.taskid);
+      if (t) usedDialog(t.job, { task: t });
     });
     const mt = root.querySelector('#aro-tm-mtask'), mp = root.querySelector('#aro-tm-mproj');
     if (mt) mt.addEventListener('click', () => { st.tm.mode = 'task'; render(); });
@@ -1718,6 +1988,9 @@ const Aro = (() => {
     codeMap = loadJson('abmt:barcodes', {});
     pars = loadJson('abmt:pars', {});
     itemMap = loadJson('abmt:itemmap', {});
+    sysPresets = loadJson('abmt:syspresets', []);
+    jobSys = loadJson('abmt:jobsys', {});
+    usedDrafts = loadJson('abmt:used', {});
     st.catView = !!loadJson('abmt:catview', false);
     if (loadCache()) st.phase = 'ready';
     render();
@@ -1742,7 +2015,7 @@ const Aro = (() => {
 
   return {
     refresh, settingsDialog, call, openPage, closePage,
-    zonePopover, zoneLinkDialog, closeZonePopover,
+    zonePopover, zoneLinkDialog, closeZonePopover, usedDialog,
     _state: st, _onScan: onScan, _resolveScan: resolveScan,
   };
 })();
