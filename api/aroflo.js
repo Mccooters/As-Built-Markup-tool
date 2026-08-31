@@ -27,7 +27,7 @@
 const crypto = require('node:crypto');
 
 const ACCEPT = 'text/json';
-const PAGE_SIZE = 250; // modest pages keep well under AroFlo's 3.5 MB response cap
+const PAGE_SIZE = 500; // AroFlo's own default page size
 
 // Values copied from AroFlo's wrapping key boxes can pick up invisible
 // formatting characters (zero-width spaces, bidi marks, BOM, soft hyphens) —
@@ -213,13 +213,14 @@ const ACTIONS = {
   },
 
   // One page of the inventory list with stock levels joined.
-  // The explicit createdutc where-clause overrides AroFlo's default
-  // "created in the last 30 days" filter so the whole catalogue comes back.
+  // The explicit item-side where-clause (always true) overrides AroFlo's
+  // default "created in the last 30 days" filter so the whole catalogue
+  // comes back, without any risk of filtering the joined stock rows.
   async inventory(q) {
     const page = Math.min(60, Math.max(1, parseInt(q.page, 10) || 1));
     const r = await aroGet('inventory', {
       join: ['stocklevels'],
-      where: ['and|createdutc|>|2000-01-01'],
+      where: ['and|itemid|!=|0'],
       order: ['description|asc'],
       page, pageSize: PAGE_SIZE,
     });

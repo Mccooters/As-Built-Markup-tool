@@ -12,7 +12,7 @@ const Aro = (() => {
   const CFG_KEY = 'abmt:aroflo';
   const CACHE_KEY = 'abmt:aroflo:cache';
   const STALE_MS = 15 * 60 * 1000;   // auto-refresh when shown and older than this
-  const MAX_PAGES = 12;              // safety cap: 12 × 250 = 3000 items
+  const MAX_PAGES = 40;              // safety cap: 40 × 500 = 20,000 items
   const MAX_ROWS = 400;              // rendered rows cap (search narrows the rest)
 
   let root = null;
@@ -65,7 +65,13 @@ const Aro = (() => {
   }
   function saveCache() {
     try {
-      const s = JSON.stringify({ items: st.items, asAt: st.asAt, allHolders: st.allHolders });
+      let s = JSON.stringify({ items: st.items, asAt: st.asAt, allHolders: st.allHolders });
+      if (s.length >= 2_500_000) {
+        // big catalog: persist just the items that hold stock somewhere, so
+        // the offline snapshot still answers "what's on site"
+        const stocked = st.items.filter(it => (it.levels || []).some(l => l.qty !== 0));
+        s = JSON.stringify({ items: stocked, asAt: st.asAt, allHolders: st.allHolders, partial: true });
+      }
       if (s.length < 2_500_000) localStorage.setItem(CACHE_KEY, s);
     } catch (e) { /* storage full — snapshot just won't persist */ }
   }
@@ -136,12 +142,22 @@ const Aro = (() => {
     render();
     try {
       const items = [];
+      st.capped = false;
       for (let page = 1; page <= MAX_PAGES; page++) {
         st.progress = 'Loading inventory — page ' + page + '… (' + items.length + ' items)';
         renderStatus();
-        const r = await call('inventory', { page });
+        let r;
+        try {
+          r = await call('inventory', { page });
+        } catch (e) {
+          // keep what we have rather than losing the whole crawl
+          if (!items.length) throw e;
+          st.error = 'Stopped early at ' + items.length + ' items: ' + e.message;
+          break;
+        }
         items.push(...(r.items || []));
         if (r.last || !(r.items || []).length) break;
+        if (page === MAX_PAGES) st.capped = true;
       }
       st.items = items;
       // Also pull the full holder list, so a new site holder shows in the
@@ -293,6 +309,7 @@ const Aro = (() => {
       const mins = Math.round((Date.now() - Date.parse(st.asAt)) / 60000);
       const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : new Date(st.asAt).toLocaleString();
       h += `<span class="muted">${filteredItems().length} of ${st.items.length} items · as at ${esc(age)}</span>`;
+      if (st.capped) h += `<div class="aro-error">Catalogue is larger than ${st.items.length} items — the rest (late alphabet) is not loaded, so searches may miss items. Tell the developer if you hit this.</div>`;
     }
     el.innerHTML = h;
   }

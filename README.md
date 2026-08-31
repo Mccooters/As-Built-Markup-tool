@@ -102,7 +102,7 @@ AroFlo's API is signed with a **secret HMAC key that must never be shipped in br
    - `AROFLO_PROXY_TOKEN` — *(strongly recommended)* any random string; anyone who finds your deployment URL can otherwise read your inventory through the proxy. Enter the same token in the app under **Stock → ⚙**.
 3. Redeploy. The app finds the proxy at `/api/aroflo` on the same host automatically — open **Stock**, hit **⚙ → Test connection**, and it should greet you with your business-unit name.
 
-Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected by fetching at most a dozen 250-item pages per refresh, on demand. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
+Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected — refreshes fetch 500-item pages on demand (up to 20,000 items) and stop early on small catalogues. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
 
 ### On-site stocktakes & transfers
 
