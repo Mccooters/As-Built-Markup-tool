@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>AirMark — As-Built Markup for Compressed Air Piping</title>
 <link rel="stylesheet" href="css/app.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128295;</text></svg>">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#101216">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AirMark">
 </head>
 <body>
 
@@ -240,6 +246,7 @@
         <h2>Drop a PDF drawing here</h2>
         <p>or use <b>Open</b> — or try the <b>Sample</b> plant floor plan</p>
         <p class="drop-sub">Everything runs in your browser. Drawings never leave this computer.</p>
+        <div id="recentList"></div>
       </div>
     </div>
   </div>
@@ -343,6 +350,7 @@
 <script src="js/units.js"></script>
 <script src="js/symbols.js"></script>
 <script src="js/state.js"></script>
+<script src="js/store.js"></script>
 <script src="js/viewer.js"></script>
 <script src="js/render.js"></script>
 <script src="js/tools.js"></script>

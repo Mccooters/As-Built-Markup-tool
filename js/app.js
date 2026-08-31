@@ -750,9 +750,41 @@ const App = (() => {
       $('docName').title = State.S.fileName;
       Render.drawPage();
       updatePageUi(); updateScaleStatus(); updateZoomLabel(); updateHint();
+      // per-project URL: Add to Home Screen from here gives this drawing its
+      // own icon that reopens it directly (offline included)
+      if (State.S.fingerprint) {
+        try { history.replaceState(null, '', '?proj=' + encodeURIComponent(State.S.fingerprint)); } catch (e) { /* file:// etc. */ }
+      }
+      setTimeout(renderRecents, 2000);
     });
 
     updateScaleStatus(); updateHint(); updateHistoryUi();
+
+    // offline: service worker caches the app shell
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+    // reopen a project pinned to the home screen (?proj=<fingerprint>)
+    const proj = new URLSearchParams(location.search).get('proj');
+    if (proj) Project.openFromStore(proj);
+    renderRecents();
+  }
+
+  /* ---------------- recent projects (on-device, offline) ---------------- */
+
+  async function renderRecents() {
+    const el = $('recentList');
+    if (!el || typeof Store === 'undefined') return;
+    const recents = await Store.list();
+    if (!recents.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="recent-cap">Recent projects on this device</div>' +
+      recents.map(r => {
+        const mins = Math.round((Date.now() - r.savedAt) / 60000);
+        const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' h ago' : Math.round(mins / 1440) + ' d ago';
+        return `<button class="recent-chip" data-fp="${r.fingerprint.replace(/"/g, '&quot;')}">${(r.name || 'drawing').replace(/</g, '&lt;')}<span>${age}</span></button>`;
+      }).join('');
+    el.querySelectorAll('.recent-chip').forEach(b =>
+      b.addEventListener('click', e => { e.stopPropagation(); Project.openFromStore(b.dataset.fp); }));
   }
 
   document.addEventListener('DOMContentLoaded', init);

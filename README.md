@@ -21,6 +21,13 @@ Everything runs client-side. Drawings never leave your computer — there is no 
 
 Then drop a PDF drawing onto the window, or click **Sample** to load a built-in plant floor plan (pre-calibrated at 1/4" = 1'-0") and try everything immediately.
 
+## Install it on your phone or iPad — works offline
+
+AirMark is an installable web app. Open your deployment in Safari/Chrome, then **Share → Add to Home Screen** — you get a real app icon that launches full screen. Two things make this field-proof:
+
+- **Per-project icons.** The URL becomes project-specific the moment a drawing is open (`?proj=…`), so *Add to Home Screen while a job is open* gives that job its own icon — tap it in the morning and the drawing opens directly, markups and all.
+- **No internet needed.** The app shell is cached on the device (service worker), and the last 8 projects — including their PDFs — are stored on-device (IndexedDB). Basement, ceiling space, tin shed: the icon still opens, the drawing still loads, markups still autosave locally. The front page lists **Recent projects on this device** for one-tap reopening. Live AroFlo actions (refresh, stocktake pushes) need signal, but the last stock snapshot is kept for offline reference.
+
 ## The field workflow
 
 1. **Open** the drawing (PDF, any page size, multi-page sets supported).
@@ -141,9 +148,12 @@ js/props.js         right panel: properties / symbols / takeoff
 js/markuplist.js    markups list + takeoff computation + CSV
 js/project.js       .airmark save/load, autosave
 js/export.js        flattened PDF export, sample floor plan
-js/aroflo.js        Stock tab: live AroFlo inventory via the proxy
+js/store.js         on-device project store (IndexedDB) for offline reopening
+js/aroflo.js        Stock manager: live AroFlo inventory via the proxy
 js/app.js           toolbar, shortcuts, modals, wiring
 api/aroflo.js       Vercel serverless proxy that signs AroFlo API calls (keys stay server-side)
+sw.js               service worker: offline app shell
+manifest.webmanifest + icons/   installable-app metadata
 ```
 
 Markup geometry is stored in PDF page units (points), so markups stay put at any zoom and export at exact scale.

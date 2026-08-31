@@ -39,6 +39,7 @@ const State = (() => {
     workDay: new Date().toISOString().slice(0, 10),   // active day, YYYY-MM-DD
     dayMode: false,          // true = gray out earlier days, hide future days
     jobRef: '',              // AroFlo task / job reference for reports
+    aroSite: null,           // remembered stock context {holder, project} for this drawing
     activeFitting: 'e90',    // armed press-fitting id
 
     idCounter: 1,
@@ -273,6 +274,7 @@ const State = (() => {
   function resetDoc() {
     S.markups = []; S.countGroups = []; S.pageScales = {}; S.defaultScale = null;
     S.images = {};
+    S.aroSite = null;
     S.selection.clear(); S.idCounter = 1; S.dirty = false;
     clearHistory();
   }

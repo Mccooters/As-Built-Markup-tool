@@ -1,0 +1,13 @@
+{
+  "name": "AirMark — As-Built Markup",
+  "short_name": "AirMark",
+  "description": "Site drawing markup, takeoffs, daily reports and live AroFlo site stock for compressed air pipe work.",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101216",
+  "theme_color": "#101216",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -26,6 +26,7 @@ const Project = (() => {
       defaults: S.defaults, activeCountGroup: S.activeCountGroup,
       exportPrefs: S.exportPrefs,
       workDay: S.workDay, dayMode: S.dayMode, jobRef: S.jobRef, activeFitting: S.activeFitting,
+      aroSite: S.aroSite,
     };
     if (includePdf && S.pdfBytes && S.pdfBytes.length < EMBED_LIMIT) {
       data.pdfBase64 = bytesToBase64(S.pdfBytes);
@@ -43,6 +44,7 @@ const Project = (() => {
     S.activeCountGroup = data.activeCountGroup || (S.countGroups[0] && S.countGroups[0].id) || null;
     if (data.exportPrefs) S.exportPrefs = data.exportPrefs;
     if (data.jobRef != null) S.jobRef = data.jobRef;
+    if (data.aroSite) S.aroSite = data.aroSite;
     if (data.activeFitting) S.activeFitting = data.activeFitting;
     if (data.workDay) S.workDay = data.workDay;
     if (data.dayMode != null) S.dayMode = !!data.dayMode;
@@ -135,6 +137,8 @@ const Project = (() => {
   /** Called after any PDF opens: attach pending project or offer autosave restore. */
   function onDocOpened() {
     const S = State.S;
+    // stash the PDF on the device so a home-screen icon can reopen it offline
+    if (S.fingerprint && S.pdfBytes) Store.savePdf(S.fingerprint, S.pdfBytes);
     if (pendingData) {
       const d = pendingData;
       pendingData = null;
@@ -169,6 +173,8 @@ const Project = (() => {
   function autosave() {
     const k = key();
     if (!k) return;
+    // offline copy first — IndexedDB has its own (much larger) quota
+    Store.saveProject(State.S.fingerprint, State.S.fileName, serialize(false));
     try {
       localStorage.setItem(k, JSON.stringify(serialize(false)));
       App.savedIndicator();
@@ -180,10 +186,23 @@ const Project = (() => {
     }
   }
 
+  /** Reopen a project from the on-device store (works offline). */
+  async function openFromStore(fingerprint) {
+    const rec = await Store.get(fingerprint);
+    if (!rec || !rec.pdf) {
+      App.toast('That project is no longer stored on this device — open its PDF or .airmark file.', 'warn', 7000);
+      return false;
+    }
+    pendingData = rec.data; // onDocOpened applies it and skips the restore offer
+    await Viewer.openPdf(new Uint8Array(rec.pdf), (rec.data && rec.data.fileName) || rec.name || 'drawing.pdf');
+    App.toast(`“${rec.name}” reopened from this device.`, 'ok');
+    return true;
+  }
+
   function init() {
     State.on('autosave', autosave);
     State.on('doc', onDocOpened);
   }
 
-  return { init, saveProject, openProjectFile, serialize, applyData };
+  return { init, saveProject, openProjectFile, serialize, applyData, openFromStore };
 })();

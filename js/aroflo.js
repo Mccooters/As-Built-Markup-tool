@@ -29,6 +29,7 @@ const Aro = (() => {
     holder: '',           // '' = all locations
     hideZero: true,
     shownOnce: false,
+    refOpen: false,       // Impress reference card expanded
     expanded: null,       // itemid with the holder breakdown open
     take: { on: false, name: '', id: '', type: '', counts: {}, pushing: false },
     tm: { mode: 'task', job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false,
@@ -283,10 +284,23 @@ const Aro = (() => {
 
   const pageOpen = () => pageEl && !pageEl.classList.contains('hidden');
 
+  // Stock context remembered per drawing project: the holder you filter to
+  // and the AroFlo project you load travel with the .airmark / autosave.
+  function rememberSite(patch) {
+    if (!State.S.pdf) return;
+    State.S.aroSite = Object.assign({}, State.S.aroSite || {}, patch);
+    State.emit('autosave');
+  }
+
   function openPage() {
     if (!pageEl) return;
     pageEl.classList.remove('hidden');
     document.body.classList.remove('panel-open');
+    const site = State.S.aroSite;
+    if (site) {
+      if (site.holder && !st.holder) st.holder = site.holder;
+      if (site.project && !st.tm.pQuery) { st.tm.pQuery = site.project; st.tm.mode = 'project'; }
+    }
     const fresh = st.asAt && (Date.now() - Date.parse(st.asAt) < STALE_MS);
     render();
     if (st.phase !== 'loading' && !(st.phase === 'ready' && fresh)) refresh();
@@ -355,7 +369,7 @@ const Aro = (() => {
     h += `<div class="aro-status" id="aro-status"></div></div>
       <div class="aro-list" id="aro-list"></div>`;
     mainEl.innerHTML = h;
-    sideEl.innerHTML = `<div class="stock-card">${taskMaterialsHtml(true)}</div>`;
+    sideEl.innerHTML = `<div class="stock-card">${taskMaterialsHtml(true)}</div><div class="stock-card">${refCardHtml()}</div>`;
 
     const search = mainEl.querySelector('#aro-search');
     let deb = 0;
@@ -372,11 +386,16 @@ const Aro = (() => {
         render();
       });
     } else {
-      mainEl.querySelector('#aro-holder').addEventListener('change', e => { st.holder = e.target.value; renderList(); renderStatus(); });
+      mainEl.querySelector('#aro-holder').addEventListener('change', e => {
+        st.holder = e.target.value;
+        rememberSite({ holder: st.holder });
+        renderList(); renderStatus();
+      });
       mainEl.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
       mainEl.querySelector('#aro-take').addEventListener('click', startStocktake);
     }
     wireTaskMaterials(sideEl);
+    wireRefCard();
     renderList();
     renderStatus();
   }
@@ -508,6 +527,39 @@ const Aro = (() => {
         <span class="aro-level-r"><b>${qty(l.qty)}</b>${l.id ? ` <button class="mini-btn aro-move" data-item="${esc(it.id)}" data-level="${i}" title="Move stock from ${esc(l.to)} to another holder">⇄</button>` : ''}</span>
       </div>`).join('')}
     </div>`;
+  }
+
+  /* ---------------- Impress reference ---------------- */
+
+  // The IBEX Impress 316L press range — every fitting family × tube size.
+  // A tap searches the live stock for that family/size, so counting a shelf
+  // means: find it here, tap, see the AroFlo figure, type the real count.
+  const IMPRESS_SIZES = ['15', '22', '28', '35', '42', '54', '76.1', '88.9', '108', '139.7', '168.3'];
+
+  function refCardHtml() {
+    let h = `<div class="prop-cap aro-tm-cap" id="aro-ref-toggle">${st.refOpen ? '▾' : '▸'} Impress range reference</div>`;
+    if (!st.refOpen) return h;
+    h += `<p class="prop-note">Tap a size to search the stock list for that fitting. Sizes are tube OD (mm).</p>`;
+    for (const f of Symbols.FITTINGS) {
+      const term = f.name.toLowerCase().replace(/[°()]/g, ' ').replace(/\s+/g, ' ').trim();
+      h += `<div class="ref-row"><div class="ref-name"><b>${esc(f.code)}</b> ${esc(f.name)}</div><div>` +
+        IMPRESS_SIZES.map(s => `<button class="ref-chip" data-q="${esc(term + ' ' + s)}">${esc(s)}</button>`).join('') +
+        `</div></div>`;
+    }
+    return h;
+  }
+
+  function wireRefCard() {
+    const toggle = sideEl.querySelector('#aro-ref-toggle');
+    if (toggle) toggle.addEventListener('click', () => { st.refOpen = !st.refOpen; render(); });
+    sideEl.querySelectorAll('.ref-chip').forEach(b =>
+      b.addEventListener('click', () => {
+        st.filter = b.dataset.q;
+        const inp = mainEl.querySelector('#aro-search');
+        if (inp) inp.value = st.filter;
+        renderList(); renderStatus();
+        mainEl.scrollTo({ top: 0, behavior: 'smooth' });
+      }));
   }
 
   /* ---------------- stocktake push + transfers ---------------- */
@@ -917,6 +969,7 @@ const Aro = (() => {
     try {
       const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
       tm.pTasks = rt.tasks || [];
+      rememberSite({ project: p.number || tm.pQuery });
       if (!tm.pTasks.length) {
         const s = rt.scan || {};
         tm.phase = 'ready';
