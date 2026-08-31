@@ -303,7 +303,6 @@ const ACTIONS = {
     const page = Math.min(10, Math.max(1, parseInt(q.page, 10) || 1));
     const r = await aroGet('projects', {
       where: ['and|createdutc|>|2000-01-01'],
-      order: ['projectnumber|desc'],
       page, pageSize: PAGE_SIZE,
     });
     const projects = (r.zoneresponse.projects || []).map(p => ({
@@ -311,31 +310,51 @@ const ACTIONS = {
       number: str(p.projectnumber),
       name: str(p.projectname),
       client: p.client ? str(p.client.orgname || p.client.clientname) : '',
+      clientId: p.client ? str(p.client.orgid || p.client.clientid) : '',
     }));
     return relay(r, { projects, ...pageMeta(r.zoneresponse, PAGE_SIZE) });
   },
 
   // All tasks belonging to one project. The tasks zone has no project WHERE
-  // filter, so this crawls recent-first task pages and matches each row's
-  // project field server-side (bounded crawl).
+  // filter, so: narrow to the project's client when we can (clientid is
+  // API-supported though undocumented), join=project (the project field only
+  // fills when joined), order by daterequested desc (a valid ORDER field —
+  // jobnumber is not), and match each row's project by id or exact name.
+  // The scan summary comes back so an empty result is diagnosable.
   async projecttasks(q) {
+    const ID = /^[A-Za-z0-9+/=]{1,64}$/;
     const projectid = str(q.projectid).trim();
-    if (!/^[A-Za-z0-9+/=]{1,64}$/.test(projectid)) return { ok: false, httpStatus: 400, statusmessage: 'projectid required' };
+    if (!ID.test(projectid)) return { ok: false, httpStatus: 400, statusmessage: 'projectid required' };
+    const clientid = str(q.clientid).trim();
+    const pname = str(q.name).trim().toLowerCase();
+    const where = ['and|createdutc|>|2000-01-01'];
+    if (clientid && ID.test(clientid)) where.push(`and|clientid|=|${clientid}`);
+
     const tasks = [];
+    let scanned = 0, withProject = 0;
+    const sample = new Map();
     let last = { ok: true, httpStatus: 200, status: 0, statusmessage: 'OK', rateLimits: {}, varString: '' };
-    for (let page = 1; page <= 8; page++) {
+    const maxPages = where.length > 1 ? 4 : 12;
+    for (let page = 1; page <= maxPages; page++) {
       if (page > 1) await sleep(360); // 3-requests-per-second limit
       const r = await aroGet('tasks', {
-        where: ['and|createdutc|>|2000-01-01'],
-        order: ['jobnumber|desc'],
-        join: ['project'],   // the task rows' project field only fills when joined
+        where,
+        order: ['daterequested|desc'],
+        join: ['project'],
         page, pageSize: PAGE_SIZE,
       });
       last = r;
       if (!r.ok) break;
       const rows = r.zoneresponse.tasks || [];
       for (const t of rows) {
-        if (t.project && str(t.project.projectid) === projectid) {
+        scanned++;
+        const pj = t.project || {};
+        const pid = str(pj.projectid), pnm = str(pj.projectname);
+        if (pid || pnm) {
+          withProject++;
+          if (pid && !sample.has(pid) && sample.size < 6) sample.set(pid, pnm || pid);
+        }
+        if ((pid && pid === projectid) || (pname && pnm.toLowerCase() === pname)) {
           tasks.push({
             taskid: str(t.taskid),
             name: str(t.taskname),
@@ -344,9 +363,12 @@ const ACTIONS = {
           });
         }
       }
-      if (num(r.zoneresponse.currentpageresults) < PAGE_SIZE) break;
+      if (rows.length < PAGE_SIZE) break;
     }
-    return relay(last, { tasks });
+    return relay(last, {
+      tasks,
+      scan: { scanned, withProject, narrowed: where.length > 1, samples: [...sample.values()] },
+    });
   },
 
   // Find task(s) by job number (or a specific taskid) so materials can be listed.

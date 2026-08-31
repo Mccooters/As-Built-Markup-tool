@@ -915,9 +915,16 @@ const Aro = (() => {
     tm.progress = 'Finding “' + p.name + '” tasks…';
     render();
     try {
-      const rt = await call('projecttasks', { projectid: p.id });
+      const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
       tm.pTasks = rt.tasks || [];
-      if (!tm.pTasks.length) { tm.phase = 'ready'; tm.error = 'No tasks found on this project.'; render(); return; }
+      if (!tm.pTasks.length) {
+        const s = rt.scan || {};
+        tm.phase = 'ready';
+        tm.error = 'No tasks found on this project. Scanned ' + (s.scanned || 0) + ' task' + (s.scanned === 1 ? '' : 's')
+          + (s.narrowed ? ' for this client' : '') + '; ' + (s.withProject || 0) + ' had project links'
+          + (s.samples && s.samples.length ? ' (e.g. ' + s.samples.slice(0, 3).join(', ') + ')' : '') + '.';
+        render(); return;
+      }
       // aggregate materials across every task of the project
       const agg = new Map();
       for (let i = 0; i < tm.pTasks.length; i++) {
