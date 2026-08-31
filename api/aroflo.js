@@ -26,7 +26,14 @@ const crypto = require('node:crypto');
 
 const ACCEPT = 'text/json';
 const PAGE_SIZE = 250; // modest pages keep well under AroFlo's 3.5 MB response cap
-const env = n => (process.env[n] || '').trim();
+
+// Values copied from AroFlo's wrapping key boxes can pick up invisible
+// formatting characters (zero-width spaces, bidi marks, BOM, soft hyphens) —
+// especially when pasted on iOS. Real AroFlo values are plain base64, so
+// strip the invisibles along with ordinary padding whitespace; one stray
+// hidden character otherwise breaks the HMAC with "Signatures do not match".
+const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
+const env = n => (process.env[n] || '').replace(INVISIBLE, '').trim();
 
 /* ---------------- AroFlo request signing ---------------- */
 
@@ -132,13 +139,15 @@ const ACTIONS = {
       const raw = process.env[n] || '';
       const v = env(n);
       if (!v) return { set: false };
+      const badChars = [...new Set(v.match(/[^A-Za-z0-9+/=]/g) || [])].slice(0, 3)
+        .map(c => 'U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0'));
       return {
         set: true,
         len: v.length,
         ends: v.slice(0, 2) + '…' + v.slice(-2),
+        invisibles: (raw.match(INVISIBLE) || []).length,
         innerWhitespace: /\s/.test(v),
-        hadPadding: raw !== v,
-        base64ish: /^[A-Za-z0-9+/=]+$/.test(v),
+        badChars,
       };
     };
     const r = await aroGet('businessunits', { page: 1, pageSize: 1 });

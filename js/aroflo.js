@@ -266,8 +266,9 @@ const Aro = (() => {
       if (!v.set) return `<div class="aro-diag-row bad">⚠ ${esc(short)}: <b>not set</b></div>`;
       const flags = [];
       if (v.innerWhitespace) flags.push('contains a line break or space — re-paste it');
-      if (!v.base64ish) flags.push('unexpected characters — check what was pasted');
-      return `<div class="aro-diag-row${flags.length ? ' bad' : ''}">${flags.length ? '⚠' : '·'} ${esc(short)}: ${v.len} chars, “${esc(v.ends)}”${flags.length ? ' — ' + esc(flags.join('; ')) : ''}</div>`;
+      if (v.badChars && v.badChars.length) flags.push('contains ' + v.badChars.join(' ') + ' — check what was pasted');
+      const note = v.invisibles ? ` (${v.invisibles} hidden character${v.invisibles > 1 ? 's' : ''} removed automatically)` : '';
+      return `<div class="aro-diag-row${flags.length ? ' bad' : ''}">${flags.length ? '⚠' : '·'} ${esc(short)}: ${v.len} chars, “${esc(v.ends)}”${esc(note)}${flags.length ? ' — ' + esc(flags.join('; ')) : ''}</div>`;
     }).join('');
     return `<div class="aro-diag"><div class="aro-diag-cap">What the server has stored (lengths only — never the keys):</div>${rows}
       ${d.hostIpConfigured ? '<div class="aro-diag-row">· AROFLO_HOST_IP is set — remove it unless your AroFlo setup uses a fixed Host IP.</div>' : ''}
