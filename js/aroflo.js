@@ -349,7 +349,10 @@ const Aro = (() => {
       const mins = Math.round((Date.now() - Date.parse(st.asAt)) / 60000);
       const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : new Date(st.asAt).toLocaleString();
       h += `<span class="muted">${filteredItems().length} of ${st.items.length} items · as at ${esc(age)}</span>`;
-      if (cfg.cats.length) h += `<div class="muted" style="margin-top:2px">Scope: ${esc(cfg.cats.join(', '))}${st.outside ? ` · <b>${st.outside}</b> stocked item${st.outside === 1 ? '' : 's'} outside scope (shown anyway)` : ''}</div>`;
+      if (cfg.cats.length) {
+        const scope = cfg.cats.length > 3 ? cfg.cats.slice(0, 3).join(', ') + ' +' + (cfg.cats.length - 3) + ' more' : cfg.cats.join(', ');
+        h += `<div class="muted" style="margin-top:2px">Scope: ${esc(scope)}${st.outside ? ` · <b>${st.outside}</b> stocked item${st.outside === 1 ? '' : 's'} outside scope (shown anyway)` : ''}</div>`;
+      }
       if (st.capped) h += `<div class="aro-error">Catalogue is larger than ${st.items.length} items — the rest (late alphabet) is not loaded, so searches may miss items. Scope the sync to your install categories in ⚙.</div>`;
     }
     el.innerHTML = h;
@@ -616,17 +619,52 @@ const Aro = (() => {
         list.innerHTML = '<span class="muted">Loading categories…</span>';
         try {
           const r = await call('categories');
-          const names = (r.categories || []).map(c => c.name);
-          for (const c of cfg.cats) if (!names.includes(c)) names.push(c); // keep stale picks visible
-          list.innerHTML = `<label class="chk"><input type="checkbox" id="aro-cats-none"${cfg.cats.length ? '' : ' checked'}> <b>All items</b> (no scope)</label>` +
-            names.map(n => `<label class="chk"><input type="checkbox" value="${esc(n)}"${cfg.cats.includes(n) ? ' checked' : ''}> ${esc(n)}</label>`).join('');
+          const cats = r.categories || [];
+          // Categories are a tree — render it indented, parents first, so
+          // "Flange" under "Impress" reads as what it is.
+          const byId = new Map(cats.map(c => [c.id, c]));
+          const kids = new Map();
+          const roots = [];
+          for (const c of cats) {
+            if (c.parentId && byId.has(c.parentId)) {
+              if (!kids.has(c.parentId)) kids.set(c.parentId, []);
+              kids.get(c.parentId).push(c);
+            } else roots.push(c);
+          }
+          const byName = (a, b) => a.name.localeCompare(b.name);
+          const row = (c, depth) => {
+            const children = (kids.get(c.id) || []).sort(byName);
+            return `<label class="chk aro-cat${children.length ? ' aro-cat-parent' : ''}" style="padding-left:${depth * 18}px">
+              <input type="checkbox" value="${esc(c.name)}" data-id="${esc(c.id)}"${cfg.cats.includes(c.name) ? ' checked' : ''}> ${esc(c.name)}</label>`
+              + children.map(k => row(k, depth + 1)).join('');
+          };
+          const known = new Set(cats.map(c => c.name));
+          const stale = cfg.cats.filter(n => !known.has(n));
+          list.innerHTML = `<label class="chk"><input type="checkbox" id="aro-cats-none"${cfg.cats.length ? '' : ' checked'}> <b>All items</b> (no scope)</label>`
+            + roots.sort(byName).map(c => row(c, 0)).join('')
+            + stale.map(n => `<label class="chk aro-cat"><input type="checkbox" value="${esc(n)}" checked> ${esc(n)} <span class="muted">(no longer in AroFlo)</span></label>`).join('');
+
           const none = list.querySelector('#aro-cats-none');
+          const boxes = [...list.querySelectorAll('input[value]')];
+          const descendants = id => {
+            const out = [];
+            for (const k of kids.get(id) || []) { out.push(k.id); out.push(...descendants(k.id)); }
+            return out;
+          };
           none.addEventListener('change', () => {
-            if (none.checked) list.querySelectorAll('input[value]').forEach(i => { i.checked = false; });
+            if (none.checked) boxes.forEach(i => { i.checked = false; });
           });
-          list.querySelectorAll('input[value]').forEach(i => i.addEventListener('change', () => {
-            if (i.checked) none.checked = false;
-            else if (![...list.querySelectorAll('input[value]')].some(x => x.checked)) none.checked = true;
+          boxes.forEach(i => i.addEventListener('change', () => {
+            // ticking a parent takes its whole branch along — AroFlo's filter
+            // only matches an item's own category, so children must be
+            // queried individually
+            const id = i.dataset.id;
+            if (id) for (const d of descendants(id)) {
+              const box = list.querySelector(`input[data-id="${CSS.escape(d)}"]`);
+              if (box) box.checked = i.checked;
+            }
+            if (boxes.some(x => x.checked)) none.checked = false;
+            else none.checked = true;
           }));
         } catch (e) {
           list.innerHTML = `<span class="aro-error">${esc(e.message)}</span>`;

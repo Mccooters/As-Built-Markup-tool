@@ -216,7 +216,12 @@ const ACTIONS = {
   async categories() {
     const r = await aroGet('inventorycategories', { page: 1, pageSize: PAGE_SIZE });
     const cats = (r.zoneresponse.inventorycategories || [])
-      .map(c => ({ id: str(c.categoryid), name: str(c.categoryname), parent: c.parentcategory ? str(c.parentcategory.categoryname) : '' }))
+      .map(c => ({
+        id: str(c.categoryid),
+        name: str(c.categoryname),
+        parent: c.parentcategory ? str(c.parentcategory.categoryname) : '',
+        parentId: c.parentcategory ? str(c.parentcategory.categoryid) : '',
+      }))
       .filter(c => c.name)
       .sort((a, b) => a.name.localeCompare(b.name));
     return relay(r, { categories: cats });
