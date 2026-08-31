@@ -29,6 +29,7 @@ const Aro = (() => {
     hideZero: true,
     shownOnce: false,
     expanded: null,       // itemid with the holder breakdown open
+    take: { on: false, name: '', id: '', type: '', counts: {}, pushing: false },
     tm: { job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false },
   };
   let inflight = false;
@@ -98,6 +99,36 @@ const Aro = (() => {
     return body;
   }
 
+  // Write path: JSON POST to the proxy (used by stocktake pushes & transfers).
+  async function postCall(action, payload) {
+    const u = new URL(cfg.url, location.href);
+    u.searchParams.set('action', action);
+    const headers = { 'Content-Type': 'application/json' };
+    if (cfg.token) headers['X-Proxy-Token'] = cfg.token;
+    let resp;
+    try {
+      resp = await fetch(u, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
+    } catch (e) { throw new Error('Could not reach the AroFlo proxy.'); }
+    if (resp.status === 401) throw new Error('Proxy token rejected — check the token in Settings.');
+    let body;
+    try { body = await resp.json(); } catch (e) { throw new Error('Unexpected proxy response (HTTP ' + resp.status + ').'); }
+    if (!body.ok) throw new Error(body.statusmessage || ('AroFlo error (HTTP ' + (body.httpStatus || resp.status) + ')'));
+    return body;
+  }
+
+  // Resolve a holder name to its AroFlo id/type — from the holders list the
+  // proxy supplies, else from any stock row that names it.
+  function resolveHolder(name) {
+    const h = st.allHolders.find(x => x.name === name && x.id);
+    if (h) return { id: h.id, type: h.type };
+    for (const it of st.items) for (const l of it.levels || []) {
+      if (l.to === name && l.id) return { id: l.id, type: l.type };
+    }
+    return null;
+  }
+
+  const qtyAt = (it, name) => (it.levels || []).reduce((a, l) => a + (l.to === name ? l.qty : 0), 0);
+
   async function refresh() {
     if (inflight) return;
     inflight = true;
@@ -117,10 +148,12 @@ const Aro = (() => {
       // location filter before any stock has been assigned to it.
       try {
         const h = await call('holders');
-        st.allHolders = [
-          ...(h.holders || []).map(name => ({ name, type: 'cholder' })),
-          ...(h.businessUnits || []).map(name => ({ name, type: 'org' })),
-        ];
+        st.allHolders = Array.isArray(h.locations) && h.locations.length
+          ? h.locations
+          : [
+            ...(h.holders || []).map(name => ({ name, type: 'cholder' })),
+            ...(h.businessUnits || []).map(name => ({ name, type: 'org' })),
+          ];
       } catch (e) { /* non-fatal — fall back to holders seen on stock rows */ }
       st.asAt = new Date().toISOString();
       st.phase = 'ready';
@@ -177,14 +210,27 @@ const Aro = (() => {
         <input type="text" id="aro-search" placeholder="Search stock… (e.g. impress 54)" value="${esc(st.filter)}" autocomplete="off">
         <button class="mini-btn" id="aro-refresh" title="Re-load stock from AroFlo"${st.phase === 'loading' ? ' disabled' : ''}>⟳</button>
         <button class="mini-btn" id="aro-cfg" title="AroFlo connection settings">⚙</button>
+      </div>`;
+    if (st.take.on) {
+      h += `
+      <div class="aro-take-bar">
+        <span class="aro-take-cap">Stocktake — <b>${esc(st.take.name)}</b></span>
+        <button class="mini-btn primary" id="aro-take-review">Review &amp; push…</button>
+        <button class="mini-btn" id="aro-take-cancel">Cancel</button>
       </div>
+      <p class="prop-note">Type what you actually counted into each line — leave a line blank to skip it. Nothing is sent to AroFlo until you review and confirm.</p>`;
+    } else {
+      h += `
       <div class="aro-bar">
         <select id="aro-holder" title="Show stock held by">
           <option value="">All locations</option>
           ${holders().map(([to, type]) => `<option value="${esc(to)}"${st.holder === to ? ' selected' : ''}>${esc(to)} — ${esc(holderKind(type))}</option>`).join('')}
         </select>
         <label class="chk" title="Hide items with no stock at the selected location"><input type="checkbox" id="aro-zero"${st.hideZero ? ' checked' : ''}> In stock</label>
-      </div>
+        <button class="mini-btn" id="aro-take" title="Count this location and push corrected quantities to AroFlo">Stocktake</button>
+      </div>`;
+    }
+    h += `
       <div class="aro-status" id="aro-status"></div>
       <div class="aro-list" id="aro-list"></div>`;
     h += taskMaterialsHtml();
@@ -198,11 +244,29 @@ const Aro = (() => {
     });
     root.querySelector('#aro-refresh').addEventListener('click', refresh);
     root.querySelector('#aro-cfg').addEventListener('click', settingsDialog);
-    root.querySelector('#aro-holder').addEventListener('change', e => { st.holder = e.target.value; renderList(); renderStatus(); });
-    root.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
+    if (st.take.on) {
+      root.querySelector('#aro-take-review').addEventListener('click', reviewStocktake);
+      root.querySelector('#aro-take-cancel').addEventListener('click', () => {
+        st.take = { on: false, name: '', id: '', type: '', counts: {}, pushing: false };
+        render();
+      });
+    } else {
+      root.querySelector('#aro-holder').addEventListener('change', e => { st.holder = e.target.value; renderList(); renderStatus(); });
+      root.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
+      root.querySelector('#aro-take').addEventListener('click', startStocktake);
+    }
     wireTaskMaterials();
     renderList();
     renderStatus();
+  }
+
+  function startStocktake() {
+    if (!st.holder) { App.toast('Pick a location first — a stocktake counts one holder at a time.', 'warn'); return; }
+    const res = resolveHolder(st.holder);
+    if (!res) { App.toast('AroFlo did not give an id for this holder — hit ⟳ and try again.', 'error'); return; }
+    st.take = { on: true, name: st.holder, id: res.id, type: res.type, counts: {}, pushing: false };
+    st.expanded = null;
+    render();
   }
 
   function renderStatus() {
@@ -211,6 +275,11 @@ const Aro = (() => {
     if (st.phase === 'loading') { el.innerHTML = `<span class="aro-busy">${esc(st.progress)}</span>`; return; }
     let h = '';
     if (st.error) h += `<div class="aro-error">${esc(st.error)}</div>`;
+    if (st.take.on) {
+      const counted = Object.values(st.take.counts).filter(v => String(v).trim() !== '').length;
+      el.innerHTML = h + `<span class="muted"><b>${counted}</b> line${counted === 1 ? '' : 's'} counted</span>`;
+      return;
+    }
     if (st.asAt) {
       const mins = Math.round((Date.now() - Date.parse(st.asAt)) / 60000);
       const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : new Date(st.asAt).toLocaleString();
@@ -222,6 +291,7 @@ const Aro = (() => {
   function renderList() {
     const el = root && root.querySelector('#aro-list');
     if (!el) return;
+    if (st.take.on) { renderTakeList(el); return; }
     const rows = filteredItems();
     if (!rows.length) {
       let msg;
@@ -254,14 +324,161 @@ const Aro = (() => {
         st.expanded = st.expanded === id ? null : id;
         renderList();
       }));
+    el.querySelectorAll('.aro-move').forEach(btn =>
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        transferDialog(btn.dataset.item, parseInt(btn.dataset.level, 10));
+      }));
+  }
+
+  // Stocktake entry: every item (search-filtered), current qty at the holder,
+  // and a count input. Blank input = line not counted, no change pushed.
+  function renderTakeList(el) {
+    const terms = st.filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const items = st.items.filter(it =>
+      !terms.length || terms.every(t => (it.desc + ' ' + it.pn + ' ' + it.cat).toLowerCase().includes(t)));
+    if (!items.length) { el.innerHTML = `<p class="prop-note">Nothing matches the search.</p>`; return; }
+    let h = '';
+    for (const it of items.slice(0, MAX_ROWS)) {
+      const have = qtyAt(it, st.take.name);
+      const val = st.take.counts[it.id] != null ? st.take.counts[it.id] : '';
+      h += `<div class="aro-item aro-take-item">
+        <div class="aro-row">
+          <div class="aro-main">
+            <div class="aro-desc">${esc(it.desc)}</div>
+            <div class="aro-sub">${esc(it.pn)}${it.cat ? ' · ' + esc(it.cat) : ''} · AroFlo has <b>${qty(have)}</b></div>
+          </div>
+          <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
+        </div>
+      </div>`;
+    }
+    if (items.length > MAX_ROWS) h += `<p class="prop-note">…and ${items.length - MAX_ROWS} more — refine the search.</p>`;
+    el.innerHTML = h;
+    el.querySelectorAll('.aro-count').forEach(inp => {
+      inp.addEventListener('input', () => {
+        st.take.counts[inp.dataset.id] = inp.value;
+        renderStatus();
+      });
+    });
   }
 
   function aroLevelsHtml(it) {
     const levels = (it.levels || []).filter(l => l.to);
     if (!levels.length) return `<div class="aro-levels"><span class="muted">No stock locations recorded.</span></div>`;
-    return `<div class="aro-levels">${levels.map(l =>
-      `<div class="aro-level"><span>${esc(l.to)} <span class="muted">(${esc(holderKind(l.type))})</span></span><b>${qty(l.qty)}</b></div>`).join('')}
+    return `<div class="aro-levels">${levels.map((l, i) =>
+      `<div class="aro-level"><span>${esc(l.to)} <span class="muted">(${esc(holderKind(l.type))})</span></span>
+        <span class="aro-level-r"><b>${qty(l.qty)}</b>${l.id ? ` <button class="mini-btn aro-move" data-item="${esc(it.id)}" data-level="${i}" title="Move stock from ${esc(l.to)} to another holder">⇄</button>` : ''}</span>
+      </div>`).join('')}
     </div>`;
+  }
+
+  /* ---------------- stocktake push + transfers ---------------- */
+
+  function takeDeltas() {
+    const out = [];
+    for (const it of st.items) {
+      const raw = st.take.counts[it.id];
+      if (raw == null || String(raw).trim() === '') continue;
+      const counted = parseFloat(String(raw).replace(',', '.'));
+      if (!Number.isFinite(counted) || counted < 0) continue;
+      const have = qtyAt(it, st.take.name);
+      const delta = Math.round((counted - have) * 10000) / 10000;
+      if (delta !== 0) out.push({ it, have, counted, delta });
+    }
+    return out;
+  }
+
+  function reviewStocktake() {
+    const deltas = takeDeltas();
+    const counted = Object.values(st.take.counts).filter(v => String(v).trim() !== '').length;
+    if (!counted) { App.toast('Nothing counted yet — type quantities into the lines first.', 'warn'); return; }
+    if (!deltas.length) { App.toast('All counted lines already match AroFlo — nothing to push. ✔', 'info'); return; }
+    const rows = deltas.map(d => `
+      <tr><td>${esc(d.it.desc)}<div class="aro-sub">${esc(d.it.pn)}</div></td>
+      <td class="num">${qty(d.have)}</td><td class="num">${qty(d.counted)}</td>
+      <td class="num" style="color:${d.delta > 0 ? '#39b54a' : '#e05555'};font-weight:700">${d.delta > 0 ? '+' : ''}${qty(d.delta)}</td></tr>`).join('');
+    App.modal(`
+      <h3>Push stocktake — ${esc(st.take.name)}</h3>
+      <p class="muted">${deltas.length} line${deltas.length === 1 ? '' : 's'} differ from AroFlo (${counted} counted). Confirming posts these adjustments to your live AroFlo inventory.</p>
+      <div style="max-height:45vh;overflow:auto"><table class="to-table">
+        <tr><th>Item</th><th style="text-align:right">AroFlo</th><th style="text-align:right">Counted</th><th style="text-align:right">Adjust</th></tr>${rows}
+      </table></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="take-cancel">Back</button>
+        <button class="mini-btn primary" id="take-push">Push ${deltas.length} adjustment${deltas.length === 1 ? '' : 's'} to AroFlo</button>
+      </div>`, (box, close) => {
+      box.querySelector('#take-cancel').addEventListener('click', close);
+      box.querySelector('#take-push').addEventListener('click', async () => {
+        const btn = box.querySelector('#take-push');
+        btn.disabled = true; btn.textContent = 'Pushing…';
+        try {
+          const moves = deltas.map(d => ({ itemid: d.it.id, toId: st.take.id, toType: st.take.type, delta: d.delta }));
+          for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
+          close();
+          st.take = { on: false, name: '', id: '', type: '', counts: {}, pushing: false };
+          App.toast(`Stocktake pushed — ${moves.length} adjustment${moves.length === 1 ? '' : 's'} sent to AroFlo. Re-reading…`, 'good', 6000);
+          await refresh();
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Push to AroFlo';
+          App.toast('Push failed: ' + e.message, 'error', 9000);
+        }
+      });
+    });
+  }
+
+  function transferDialog(itemId, levelIndex) {
+    const it = st.items.find(x => x.id === itemId);
+    const from = it && (it.levels || [])[levelIndex];
+    if (!it || !from || !from.id) return;
+    const dests = [];
+    const seen = new Set([from.to]);
+    for (const h of st.allHolders) if (h.id && !seen.has(h.name)) { seen.add(h.name); dests.push(h); }
+    for (const item of st.items) for (const l of item.levels || []) {
+      if (l.id && l.to && !seen.has(l.to)) { seen.add(l.to); dests.push({ name: l.to, id: l.id, type: l.type }); }
+    }
+    dests.sort((a, b) => a.name.localeCompare(b.name));
+    if (!dests.length) { App.toast('No other holders to move to — hit ⟳ first.', 'warn'); return; }
+    App.modal(`
+      <h3>Move stock</h3>
+      <p class="muted">${esc(it.desc)}<br>From <b>${esc(from.to)}</b> — ${qty(from.qty)} on hand.</p>
+      <div class="form-row"><label>Quantity</label>
+        <input type="text" id="mv-qty" inputmode="decimal" placeholder="e.g. 10" autocomplete="off"></div>
+      <div class="form-row"><label>To</label>
+        <select id="mv-dest">${dests.map(d => `<option value="${esc(d.name)}">${esc(d.name)} — ${esc(holderKind(d.type))}</option>`).join('')}</select></div>
+      <p class="muted" id="mv-note"></p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="mv-cancel">Cancel</button>
+        <button class="mini-btn primary" id="mv-ok">Move</button>
+      </div>`, (box, close) => {
+      box.querySelector('#mv-cancel').addEventListener('click', close);
+      box.querySelector('#mv-qty').focus();
+      box.querySelector('#mv-ok').addEventListener('click', async () => {
+        const qv = parseFloat(String(box.querySelector('#mv-qty').value).replace(',', '.'));
+        const note = box.querySelector('#mv-note');
+        if (!Number.isFinite(qv) || qv <= 0) { note.textContent = 'Enter a quantity greater than zero.'; return; }
+        const dest = dests.find(d => d.name === box.querySelector('#mv-dest').value);
+        if (!dest) return;
+        if (qv > from.qty && !note.dataset.warned) {
+          note.dataset.warned = '1';
+          note.textContent = `That's more than the ${qty(from.qty)} recorded at ${from.to} — tap Move again if the count there is just out of date.`;
+          return;
+        }
+        const btn = box.querySelector('#mv-ok');
+        btn.disabled = true; btn.textContent = 'Moving…';
+        try {
+          await postCall('adjuststock', { moves: [
+            { itemid: it.id, toId: from.id, toType: from.type, delta: -qv },
+            { itemid: it.id, toId: dest.id, toType: dest.type, delta: qv },
+          ] });
+          close();
+          App.toast(`Moved ${qty(qv)} × ${it.desc} → ${dest.name}. Re-reading…`, 'good', 6000);
+          await refresh();
+        } catch (e) {
+          btn.disabled = false; btn.textContent = 'Move';
+          note.textContent = 'Move failed: ' + e.message;
+        }
+      });
+    });
   }
 
   /* ---------------- intro / setup ---------------- */

@@ -102,7 +102,16 @@ AroFlo's API is signed with a **secret HMAC key that must never be shipped in br
    - `AROFLO_PROXY_TOKEN` — *(strongly recommended)* any random string; anyone who finds your deployment URL can otherwise read your inventory through the proxy. Enter the same token in the app under **Stock → ⚙**.
 3. Redeploy. The app finds the proxy at `/api/aroflo` on the same host automatically — open **Stock**, hit **⚙ → Test connection**, and it should greet you with your business-unit name.
 
-The proxy exposes only **read-only** queries (inventory + stock levels, task lookup by job number, task materials) — it cannot write to AroFlo. Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected by fetching at most a dozen 250-item pages per refresh, on demand. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
+Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected by fetching at most a dozen 250-item pages per refresh, on demand. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
+
+### On-site stocktakes & transfers
+
+The Stock tab can also **write stock adjustments back to AroFlo** — deliberately narrow, and only when `AROFLO_PROXY_TOKEN` is set (a deployment without the token is strictly read-only; writes are refused server-side).
+
+- **Stocktake** — pick a location, tap **Stocktake**, and walk the shelves typing what you actually counted into each line (blank = skipped; every line shows what AroFlo currently has). Nothing is sent until **Review & push** shows you every difference — *AroFlo says / you counted / adjustment* — and you confirm. The app then posts the movequantity adjustments in one batched call, re-reads AroFlo, and shows the corrected numbers. Counting a brand-new holder creates its first stock records.
+- **Transfers** — expand any item's holder breakdown and tap **⇄** on a location to move a quantity to another holder (warehouse → site container, container → ute…). Posted as a matched −/+ pair, so totals never drift.
+
+Everything else about the proxy stays read-only (inventory, stock levels, task lookup, task materials); the write path accepts nothing but per-holder quantity adjustments, capped and validated. On the first real push, spot-check the result in AroFlo (the app re-reads and shows the new figures immediately) — adjustments land in AroFlo's stock history like any manual adjustment, so they're auditable.
 
 ## Files & saving
 

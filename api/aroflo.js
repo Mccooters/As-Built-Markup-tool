@@ -17,8 +17,10 @@
  *   AROFLO_HOST_IP      optional, only if your AroFlo API setup specifies a Host IP
  *   AROFLO_BASE_URL     optional override of https://api.aroflo.com/ (testing)
  *
- * Only GET (read) actions are exposed: ping, inventory, stocklevels, task,
- * taskmaterials. Nothing here can write to AroFlo.
+ * Read actions: ping, diag, holders, inventory, stocklevels, task,
+ * taskmaterials. The single write action — adjuststock, for stocktakes and
+ * holder-to-holder transfers — only runs when AROFLO_PROXY_TOKEN is set and
+ * presented, and only posts per-holder stock movequantity adjustments.
  */
 'use strict';
 
@@ -61,11 +63,10 @@ function buildVarString(zone, opts = {}) {
   return parts.join('&');
 }
 
-async function aroGet(zone, opts) {
-  const varString = buildVarString(zone, opts);
+async function aroSend(method, varString) {
   const afDateTimeUtc = new Date().toISOString();
   const authorization = authorizationHeader();
-  const signature = signPayload('GET', varString, authorization, afDateTimeUtc);
+  const signature = signPayload(method, varString, authorization, afDateTimeUtc);
 
   const headers = {
     Authentication: `HMAC ${signature}`,
@@ -77,9 +78,17 @@ async function aroGet(zone, opts) {
   if (hostIp) headers.HostIP = hostIp;
 
   const url = new URL(env('AROFLO_BASE_URL') || 'https://api.aroflo.com/');
-  url.search = varString;
+  let reqBody;
+  if (method === 'POST') {
+    // AroFlo POSTs carry the varString (zone + postxml) as the form body;
+    // the signature is computed over that same string.
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    reqBody = varString;
+  } else {
+    url.search = varString;
+  }
 
-  const resp = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(20000) });
+  const resp = await fetch(url, { method, headers, body: reqBody, signal: AbortSignal.timeout(20000) });
   const text = await resp.text();
   let body = null;
   try { body = JSON.parse(text); } catch (e) { /* leave null */ }
@@ -99,6 +108,10 @@ async function aroGet(zone, opts) {
   };
 }
 
+const aroGet = (zone, opts) => aroSend('GET', buildVarString(zone, opts));
+const aroPost = (zone, postxml) =>
+  aroSend('POST', `zone=${encodeURIComponent(zone)}&postxml=${encodeURIComponent(postxml)}`);
+
 /* ---------------- response slimming ---------------- */
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
@@ -107,6 +120,7 @@ const str = v => (v == null ? '' : String(v));
 function slimLevels(levels) {
   return (Array.isArray(levels) ? levels : []).map(l => ({
     to: str(l.assignedto),
+    id: str(l.assignedtoid),
     type: str(l.assignedtotype),
     qty: num(l.quantity),
     updated: str(l.lastupdated || l.lastupdatedutc),
@@ -174,13 +188,21 @@ const ACTIONS = {
       where: ['and|archived|=|false'],
       page: 1, pageSize: PAGE_SIZE,
     });
-    const holders = (r.zoneresponse.customholders || []).map(h => str(h.customholdername)).filter(Boolean);
-    let businessUnits = [];
+    const cholders = (r.zoneresponse.customholders || [])
+      .map(h => ({ name: str(h.customholdername), id: str(h.customholderid), type: 'cholder' }))
+      .filter(h => h.name);
+    let bus = [];
     try {
       const r2 = await aroGet('businessunits', { page: 1, pageSize: 50 });
-      businessUnits = (r2.zoneresponse.businessunits || []).map(b => str(b.orgname)).filter(Boolean);
+      bus = (r2.zoneresponse.businessunits || [])
+        .map(b => ({ name: str(b.orgname), id: str(b.orgid), type: 'org' }))
+        .filter(h => h.name);
     } catch (e) { /* best-effort — holder list still useful without BUs */ }
-    return relay(r, { holders, businessUnits });
+    return relay(r, {
+      locations: [...cholders, ...bus],
+      holders: cholders.map(h => h.name),          // kept for older cached clients
+      businessUnits: bus.map(h => h.name),
+    });
   },
 
   // Connection test: returns the business unit name(s).
@@ -242,6 +264,50 @@ const ACTIONS = {
     return relay(r, { tasks });
   },
 
+  // THE ONE WRITE ACTION — stock movequantity adjustments, used for on-site
+  // stocktakes (delta = counted − recorded) and holder-to-holder transfers
+  // (a matched −/+ pair). HTTP POST only, and refused outright unless
+  // AROFLO_PROXY_TOKEN is configured. Every value is strictly validated
+  // before it goes anywhere near the postxml.
+  async adjuststock(q, bodyJson) {
+    const moves = bodyJson && Array.isArray(bodyJson.moves) ? bodyJson.moves : null;
+    if (!moves || !moves.length) return { ok: false, httpStatus: 400, statusmessage: 'moves[] required' };
+    if (moves.length > 100) return { ok: false, httpStatus: 400, statusmessage: 'Too many moves in one call (max 100)' };
+
+    const ID = /^[A-Za-z0-9+/=]{1,64}$/;
+    const TYPES = { org: 1, user: 1, cholder: 1 };
+    const perItem = new Map();
+    for (const m of moves) {
+      const itemid = str(m.itemid).trim();
+      const toId = str(m.toId).trim();
+      const toType = str(m.toType).trim();
+      const delta = Math.round(Number(m.delta) * 10000) / 10000;
+      if (!ID.test(itemid)) return { ok: false, httpStatus: 400, statusmessage: 'Bad itemid' };
+      if (!ID.test(toId)) return { ok: false, httpStatus: 400, statusmessage: 'Bad holder id' };
+      if (!TYPES[toType]) return { ok: false, httpStatus: 400, statusmessage: 'Bad holder type' };
+      if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 100000)
+        return { ok: false, httpStatus: 400, statusmessage: 'Bad quantity delta' };
+      if (!perItem.has(itemid)) perItem.set(itemid, []);
+      perItem.get(itemid).push({ toId, toType, delta });
+    }
+
+    let xml = '<items>';
+    for (const [itemid, levels] of perItem) {
+      xml += `<item><itemid>${itemid}</itemid><stocklevels>`;
+      for (const l of levels) {
+        xml += `<stocklevel><assignedtoid>${l.toId}</assignedtoid><assignedtotype>${l.toType}</assignedtotype><movequantity>${l.delta}</movequantity></stocklevel>`;
+      }
+      xml += '</stocklevels></item>';
+    }
+    xml += '</items>';
+
+    const r = await aroPost('inventory', xml);
+    return relay(r, {
+      updated: num(r.zoneresponse.updatetotal),
+      movesSent: moves.length,
+    });
+  },
+
   // Materials recorded against a task (what the job has used).
   async taskmaterials(q) {
     const taskid = str(q.taskid).trim();
@@ -266,27 +332,45 @@ const ACTIONS = {
 
 /* ---------------- HTTP handler ---------------- */
 
+const WRITE_ACTIONS = { adjuststock: 1 };
+
 function send(res, code, obj) {
   const body = JSON.stringify(obj);
   res.statusCode = code;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-Proxy-Token, Content-Type');
   res.end(body);
+}
+
+// JSON request body, whether the platform pre-parsed it (Vercel) or not.
+async function readBody(req) {
+  if (req.body !== undefined) {
+    if (typeof req.body === 'object' && req.body !== null) return req.body;
+    try { return JSON.parse(String(req.body)); } catch (e) { return null; }
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const c of req) {
+    size += c.length;
+    if (size > 262144) return null; // 256 KB is far beyond any legitimate call
+    chunks.push(c);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { return null; }
 }
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'X-Proxy-Token, Content-Type');
     res.end();
     return;
   }
-  if (req.method !== 'GET') { send(res, 405, { ok: false, statusmessage: 'GET only' }); return; }
+  if (req.method !== 'GET' && req.method !== 'POST') { send(res, 405, { ok: false, statusmessage: 'GET or POST only' }); return; }
 
   // query params (works under Vercel and plain node:http alike)
   const u = new URL(req.url, 'http://local');
@@ -310,11 +394,26 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const action = ACTIONS[str(q.action || 'ping')];
+  const actionName = str(q.action || 'ping');
+  const action = ACTIONS[actionName];
   if (!action) { send(res, 400, { ok: false, statusmessage: 'Unknown action' }); return; }
 
+  let bodyJson = null;
+  if (WRITE_ACTIONS[actionName]) {
+    // Writes are held to a stricter bar than reads: they must be POSTs, and
+    // they are refused entirely on a deployment with no proxy token — an
+    // unauthenticated proxy may show stock, but it must never change it.
+    if (req.method !== 'POST') { send(res, 405, { ok: false, statusmessage: 'This action requires POST' }); return; }
+    if (!gate) { send(res, 403, { ok: false, statusmessage: 'Writes are disabled: set AROFLO_PROXY_TOKEN on the deployment (and enter it in the app) to enable stock adjustments.' }); return; }
+    bodyJson = await readBody(req);
+    if (!bodyJson) { send(res, 400, { ok: false, statusmessage: 'JSON body required' }); return; }
+  } else if (req.method !== 'GET') {
+    send(res, 405, { ok: false, statusmessage: 'This action requires GET' });
+    return;
+  }
+
   try {
-    const out = await action(q);
+    const out = await action(q, bodyJson);
     if (!str(q.debug)) delete out.varString;
     send(res, 200, out);
   } catch (err) {
