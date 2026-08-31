@@ -260,11 +260,15 @@ const Aro = (() => {
     renderStatus();
   }
 
-  function startStocktake() {
+  async function startStocktake() {
     if (!st.holder) { App.toast('Pick a location first — a stocktake counts one holder at a time.', 'warn'); return; }
-    const res = resolveHolder(st.holder);
-    if (!res) { App.toast('AroFlo did not give an id for this holder — hit ⟳ and try again.', 'error'); return; }
-    st.take = { on: true, name: st.holder, id: res.id, type: res.type, counts: {}, pushing: false };
+    const holderName = st.holder;
+    // Always count against fresh figures — deltas computed from a stale
+    // snapshot would push wrong adjustments.
+    await refresh();
+    const res = resolveHolder(holderName);
+    if (!res) { App.toast('AroFlo did not give an id for this holder — check it exists and try again.', 'error'); return; }
+    st.take = { on: true, name: holderName, id: res.id, type: res.type, counts: {}, pushing: false };
     st.expanded = null;
     render();
   }
@@ -277,7 +281,12 @@ const Aro = (() => {
     if (st.error) h += `<div class="aro-error">${esc(st.error)}</div>`;
     if (st.take.on) {
       const counted = Object.values(st.take.counts).filter(v => String(v).trim() !== '').length;
-      el.innerHTML = h + `<span class="muted"><b>${counted}</b> line${counted === 1 ? '' : 's'} counted</span>`;
+      let age = '';
+      if (st.asAt) {
+        const mins = Math.round((Date.now() - Date.parse(st.asAt)) / 60000);
+        age = ' · figures ' + (mins < 1 ? 'fresh' : mins + ' min old — cancel and restart if AroFlo changed');
+      }
+      el.innerHTML = h + `<span class="muted"><b>${counted}</b> line${counted === 1 ? '' : 's'} counted${esc(age)}</span>`;
       return;
     }
     if (st.asAt) {
