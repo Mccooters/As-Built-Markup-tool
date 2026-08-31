@@ -30,8 +30,10 @@ const Aro = (() => {
     shownOnce: false,
     expanded: null,       // itemid with the holder breakdown open
     take: { on: false, name: '', id: '', type: '', counts: {}, pushing: false },
-    tm: { job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false },
+    tm: { mode: 'task', job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false,
+          progress: '', pQuery: '', pMatches: [], pId: '', pName: '', pTasks: [], agg: [] },
   };
+  let projCache = null; // AroFlo project list, fetched once per session
   let inflight = false;
 
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -699,31 +701,74 @@ const Aro = (() => {
 
   /* ---------------- task materials ---------------- */
 
+  function onHandOf(itemid) {
+    const it = st.items.find(x => x.id === itemid);
+    if (!it) return null;
+    let total = 0;
+    const parts = [];
+    for (const l of it.levels || []) if (l.to) { total += l.qty; if (l.qty) parts.push(l.to + ': ' + qty(l.qty)); }
+    return { total, tip: parts.join(' · ') || 'no stock recorded' };
+  }
+
   function taskMaterialsHtml() {
     const tm = st.tm;
-    let h = `<div class="prop-cap aro-tm-cap" id="aro-tm-toggle">${tm.open ? '▾' : '▸'} Job materials used (AroFlo task)</div>`;
+    let h = `<div class="prop-cap aro-tm-cap" id="aro-tm-toggle">${tm.open ? '▾' : '▸'} Job materials used (AroFlo)</div>`;
     if (!tm.open) return h;
     h += `<div class="aro-bar">
-      <input type="text" id="aro-job" placeholder="Job number" value="${esc(tm.job)}" autocomplete="off" style="max-width:110px">
-      <button class="mini-btn" id="aro-tm-load"${tm.phase === 'loading' ? ' disabled' : ''}>Load</button>
+      <button class="mini-btn${tm.mode === 'task' ? ' primary' : ''}" id="aro-tm-mtask">Task</button>
+      <button class="mini-btn${tm.mode === 'project' ? ' primary' : ''}" id="aro-tm-mproj">Project</button>
     </div>`;
-    if (tm.phase === 'loading') h += `<div class="aro-status"><span class="aro-busy">Loading…</span></div>`;
-    if (tm.error) h += `<div class="aro-error">${esc(tm.error)}</div>`;
-    if (tm.tasks.length > 1) {
-      h += `<div class="aro-bar"><select id="aro-tm-task">${tm.tasks.map(t =>
-        `<option value="${esc(t.taskid)}"${t.taskid === tm.taskid ? ' selected' : ''}>#${esc(t.job)} ${esc(t.name)} (${esc(t.status)})</option>`).join('')}</select></div>`;
-    } else if (tm.tasks.length === 1) {
-      const t = tm.tasks[0];
-      h += `<p class="prop-note">#${esc(t.job)} ${esc(t.name)}${t.client ? ' — ' + esc(t.client) : ''} (${esc(t.status)})</p>`;
+    if (tm.mode === 'task') {
+      h += `<div class="aro-bar">
+        <input type="text" id="aro-job" placeholder="Job number" value="${esc(tm.job)}" autocomplete="off" style="max-width:110px">
+        <button class="mini-btn" id="aro-tm-load"${tm.phase === 'loading' ? ' disabled' : ''}>Load</button>
+      </div>`;
+    } else {
+      h += `<div class="aro-bar">
+        <input type="text" id="aro-proj" placeholder="Project number or name" value="${esc(tm.pQuery)}" autocomplete="off">
+        <button class="mini-btn" id="aro-tm-pload"${tm.phase === 'loading' ? ' disabled' : ''}>Load</button>
+      </div>`;
     }
-    if (tm.materials.length) {
-      h += `<table class="to-table"><tr><th>Item</th><th style="text-align:right">Qty</th></tr>`;
-      for (const m of tm.materials) {
-        h += `<tr><td title="${esc(m.pn)} · ${esc(m.date)}">${esc(m.item)}</td><td class="num">${qty(m.qty)}</td></tr>`;
+    if (tm.phase === 'loading') h += `<div class="aro-status"><span class="aro-busy">${esc(tm.progress || 'Loading…')}</span></div>`;
+    if (tm.error) h += `<div class="aro-error">${esc(tm.error)}</div>`;
+
+    if (tm.mode === 'task') {
+      if (tm.tasks.length > 1) {
+        h += `<div class="aro-bar"><select id="aro-tm-task">${tm.tasks.map(t =>
+          `<option value="${esc(t.taskid)}"${t.taskid === tm.taskid ? ' selected' : ''}>#${esc(t.job)} ${esc(t.name)} (${esc(t.status)})</option>`).join('')}</select></div>`;
+      } else if (tm.tasks.length === 1) {
+        const t = tm.tasks[0];
+        h += `<p class="prop-note">#${esc(t.job)} ${esc(t.name)}${t.client ? ' — ' + esc(t.client) : ''} (${esc(t.status)})</p>`;
       }
-      h += `<tr class="total"><td>Lines</td><td class="num">${tm.materials.length}</td></tr></table>`;
-    } else if (tm.taskid && tm.phase === 'ready') {
-      h += `<p class="prop-note">No materials recorded on this task yet.</p>`;
+      if (tm.materials.length) {
+        h += `<table class="to-table"><tr><th>Item</th><th style="text-align:right">Qty</th></tr>`;
+        for (const m of tm.materials) {
+          h += `<tr><td title="${esc(m.pn)} · ${esc(m.date)}">${esc(m.item)}</td><td class="num">${qty(m.qty)}</td></tr>`;
+        }
+        h += `<tr class="total"><td>Lines</td><td class="num">${tm.materials.length}</td></tr></table>`;
+      } else if (tm.taskid && tm.phase === 'ready') {
+        h += `<p class="prop-note">No materials recorded on this task yet.</p>`;
+      }
+    } else {
+      if (tm.pMatches.length > 1) {
+        h += `<div class="aro-bar"><select id="aro-tm-proj">${tm.pMatches.map(p =>
+          `<option value="${esc(p.id)}"${p.id === tm.pId ? ' selected' : ''}>#${esc(p.number)} ${esc(p.name)}</option>`).join('')}</select></div>`;
+      }
+      if (tm.pId && tm.phase === 'ready') {
+        h += `<p class="prop-note">#${esc((tm.pMatches.find(p => p.id === tm.pId) || {}).number || '')} ${esc(tm.pName)} — ${tm.pTasks.length} task${tm.pTasks.length === 1 ? '' : 's'} (${esc(tm.pTasks.map(t => '#' + t.job).join(', '))})</p>`;
+        if (tm.agg.length) {
+          h += `<table class="to-table"><tr><th>Item</th><th style="text-align:right" title="Total used across all the project's tasks">Used</th><th style="text-align:right" title="Currently on hand across all stock locations">On hand</th></tr>`;
+          for (const a of tm.agg) {
+            const oh = onHandOf(a.itemid);
+            h += `<tr><td title="${esc(a.pn)}${a.perTask ? ' · ' + esc(a.perTask) : ''}">${esc(a.item)}</td>
+              <td class="num">${qty(a.qty)}</td>
+              <td class="num"${oh ? ` title="${esc(oh.tip)}"` : ''}>${oh ? qty(oh.total) : '<span class="muted" title="Not in the synced stock list — widen the sync scope to see on-hand">—</span>'}</td></tr>`;
+          }
+          h += `<tr class="total"><td>Lines</td><td class="num">${tm.agg.length}</td><td></td></tr></table>`;
+        } else {
+          h += `<p class="prop-note">No materials recorded on this project's tasks yet.</p>`;
+        }
+      }
     }
     return h;
   }
@@ -750,6 +795,80 @@ const Aro = (() => {
       st.tm.taskid = sel.value;
       await loadMaterialsFor(st.tm.taskid);
     });
+    const mt = root.querySelector('#aro-tm-mtask'), mp = root.querySelector('#aro-tm-mproj');
+    if (mt) mt.addEventListener('click', () => { st.tm.mode = 'task'; render(); });
+    if (mp) mp.addEventListener('click', () => { st.tm.mode = 'project'; render(); });
+    const pload = root.querySelector('#aro-tm-pload');
+    if (pload) pload.addEventListener('click', loadProjectMaterials);
+    const projIn = root.querySelector('#aro-proj');
+    if (projIn) {
+      projIn.addEventListener('input', () => { st.tm.pQuery = projIn.value; });
+      projIn.addEventListener('keydown', e => { if (e.key === 'Enter') loadProjectMaterials(); });
+    }
+    const psel = root.querySelector('#aro-tm-proj');
+    if (psel) psel.addEventListener('change', () => {
+      const p = st.tm.pMatches.find(x => x.id === psel.value);
+      if (p) loadProjectFrom(p);
+    });
+  }
+
+  async function loadProjectMaterials() {
+    const tm = st.tm;
+    const query = String(tm.pQuery || '').trim();
+    if (!query) { tm.error = 'Type the AroFlo project number or part of its name.'; render(); return; }
+    tm.phase = 'loading'; tm.error = ''; tm.progress = 'Finding the project…';
+    tm.pMatches = []; tm.pId = ''; tm.pName = ''; tm.pTasks = []; tm.agg = [];
+    render();
+    try {
+      if (!projCache) {
+        const all = [];
+        for (let page = 1; page <= 4; page++) {
+          const r = await call('projects', { page });
+          all.push(...(r.projects || []));
+          if (r.last) break;
+        }
+        projCache = all;
+      }
+      const digits = query.replace(/\D+/g, '');
+      const matches = digits && digits === query.replace(/\s+/g, '')
+        ? projCache.filter(p => p.number === digits)
+        : projCache.filter(p => p.name.toLowerCase().includes(query.toLowerCase()));
+      if (!matches.length) { tm.phase = 'ready'; tm.error = 'No AroFlo project matches “' + query + '”.'; render(); return; }
+      tm.pMatches = matches;
+      await loadProjectFrom(matches[0]);
+    } catch (e) { tm.phase = 'ready'; tm.error = e.message; render(); }
+  }
+
+  async function loadProjectFrom(p) {
+    const tm = st.tm;
+    tm.phase = 'loading'; tm.error = ''; tm.pId = p.id; tm.pName = p.name; tm.pTasks = []; tm.agg = [];
+    tm.progress = 'Finding “' + p.name + '” tasks…';
+    render();
+    try {
+      const rt = await call('projecttasks', { projectid: p.id });
+      tm.pTasks = rt.tasks || [];
+      if (!tm.pTasks.length) { tm.phase = 'ready'; tm.error = 'No tasks found on this project.'; render(); return; }
+      // aggregate materials across every task of the project
+      const agg = new Map();
+      for (let i = 0; i < tm.pTasks.length; i++) {
+        const t = tm.pTasks[i];
+        tm.progress = 'Materials — task ' + (i + 1) + ' of ' + tm.pTasks.length + ' (#' + t.job + ')…';
+        render();
+        const rm = await call('taskmaterials', { taskid: t.taskid });
+        for (const m of rm.materials || []) {
+          const key = m.itemid || (m.pn + '|' + m.item);
+          if (!agg.has(key)) agg.set(key, { itemid: m.itemid, item: m.item, pn: m.pn, qty: 0, byTask: new Map() });
+          const a = agg.get(key);
+          a.qty += m.qty;
+          a.byTask.set(t.job, (a.byTask.get(t.job) || 0) + m.qty);
+        }
+      }
+      tm.agg = [...agg.values()]
+        .map(a => ({ ...a, perTask: [...a.byTask.entries()].map(([job, q]) => '#' + job + ': ' + qty(q)).join(' · ') }))
+        .sort((x, y) => x.item.localeCompare(y.item));
+      tm.phase = 'ready';
+    } catch (e) { tm.phase = 'ready'; tm.error = e.message; }
+    render();
   }
 
   async function loadTaskMaterials() {

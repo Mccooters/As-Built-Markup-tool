@@ -287,6 +287,56 @@ const ACTIONS = {
     return relay(r, { levels: slimLevels(r.zoneresponse.inventorystocklevels) });
   },
 
+  // Project list (slim), for picking a project in the app. The explicit
+  // createdutc clause overrides the 30-day default so old projects show.
+  async projects(q) {
+    const page = Math.min(10, Math.max(1, parseInt(q.page, 10) || 1));
+    const r = await aroGet('projects', {
+      where: ['and|createdutc|>|2000-01-01'],
+      order: ['projectnumber|desc'],
+      page, pageSize: PAGE_SIZE,
+    });
+    const projects = (r.zoneresponse.projects || []).map(p => ({
+      id: str(p.projectid),
+      number: str(p.projectnumber),
+      name: str(p.projectname),
+      client: p.client ? str(p.client.orgname || p.client.clientname) : '',
+    }));
+    return relay(r, { projects, ...pageMeta(r.zoneresponse, PAGE_SIZE) });
+  },
+
+  // All tasks belonging to one project. The tasks zone has no project WHERE
+  // filter, so this crawls recent-first task pages and matches each row's
+  // project field server-side (bounded crawl).
+  async projecttasks(q) {
+    const projectid = str(q.projectid).trim();
+    if (!/^[A-Za-z0-9+/=]{1,64}$/.test(projectid)) return { ok: false, httpStatus: 400, statusmessage: 'projectid required' };
+    const tasks = [];
+    let last = { ok: true, httpStatus: 200, status: 0, statusmessage: 'OK', rateLimits: {}, varString: '' };
+    for (let page = 1; page <= 8; page++) {
+      const r = await aroGet('tasks', {
+        where: ['and|createdutc|>|2000-01-01'],
+        order: ['jobnumber|desc'],
+        page, pageSize: PAGE_SIZE,
+      });
+      last = r;
+      if (!r.ok) break;
+      const rows = r.zoneresponse.tasks || [];
+      for (const t of rows) {
+        if (t.project && str(t.project.projectid) === projectid) {
+          tasks.push({
+            taskid: str(t.taskid),
+            name: str(t.taskname),
+            job: str(t.jobnumber),
+            status: str(t.status),
+          });
+        }
+      }
+      if (num(r.zoneresponse.currentpageresults) < PAGE_SIZE) break;
+    }
+    return relay(last, { tasks });
+  },
+
   // Find task(s) by job number (or a specific taskid) so materials can be listed.
   async task(q) {
     const where = ['and|daterequested|>|2000-01-01'];
