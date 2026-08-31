@@ -351,3 +351,65 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 .aro-move { padding: 1px 7px; font-size: 12px; }
 .aro-cats-list { max-height: 190px; overflow-y: auto; border: 1px solid var(--edge); border-radius: 4px;
   padding: 7px 9px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
+
+/* ================= mobile (phones) ================= */
+#panelFab, #panelBackdrop { display: none; }
+
+@media (max-width: 760px) {
+  /* toolbar: one horizontally-scrollable strip */
+  #toolbar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; gap: 2px; padding: 4px 6px; }
+  #toolbar::-webkit-scrollbar { display: none; }
+  #toolbar > * { flex: 0 0 auto; }
+  .brand .logo { font-size: 15px; padding: 0 4px 0 0; }
+  .doc-name { display: none; }
+  .tb-btn { padding: 7px 8px; }
+  .tb-flex { flex: 0 0 2px; }
+
+  /* tool rail becomes a horizontal strip above the canvas */
+  #main { flex-direction: column; }
+  #toolRail {
+    flex: 0 0 auto; width: 100%; flex-direction: row; align-items: center;
+    overflow-x: auto; overflow-y: hidden; padding: 3px 6px;
+    border-right: none; border-bottom: 1px solid var(--edge);
+  }
+  #toolRail .tool-btn { width: 40px; height: 38px; flex: 0 0 auto; }
+  .rail-sep { width: 1px; height: 28px; margin: 0 5px; align-self: center; flex: 0 0 auto; }
+  .rail-cap { display: none; }
+
+  /* right panel: slide-in drawer, toggled by the floating button */
+  #rightPanel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(92vw, 400px); z-index: 70;
+    transform: translateX(105%); transition: transform .22s ease;
+    box-shadow: -14px 0 34px rgba(0,0,0,.55); border-left: 1px solid var(--edge);
+  }
+  body.panel-open #rightPanel { transform: none; }
+  body.panel-open #panelBackdrop { display: block; position: fixed; inset: 0; z-index: 65; background: rgba(0,0,0,.45); }
+  #panelFab {
+    display: flex; position: fixed; right: 14px; bottom: calc(50px + env(safe-area-inset-bottom)); z-index: 72;
+    width: 48px; height: 48px; border-radius: 50%; align-items: center; justify-content: center;
+    background: var(--accent); color: #fff; border: none; cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0,0,0,.5);
+  }
+  #panelFab svg { width: 22px; height: 22px; }
+  .tabs .tab { padding: 11px 2px; font-size: 12px; }
+  .tab-page { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
+
+  /* markups list + status bar */
+  #listPanel { max-height: 34vh; }
+  #statusBar { overflow-x: auto; scrollbar-width: none; gap: 8px; padding-bottom: calc(3px + env(safe-area-inset-bottom)); }
+  #statusBar::-webkit-scrollbar { display: none; }
+  #statusBar > * { flex: 0 0 auto; }
+  #statusHint { display: none; }
+
+  /* modals & toasts fit the screen */
+  #modalBox { min-width: 0; width: calc(100vw - 24px); max-width: 560px; max-height: 86vh; padding: 16px 14px; }
+  #toastRoot { left: 10px; right: 10px; top: auto; bottom: calc(108px + env(safe-area-inset-bottom)); align-items: stretch; }
+  .toast { max-width: none; }
+
+  /* inputs: 16px stops iOS zoom-on-focus; bigger touch targets in the panel */
+  #rightPanel input[type="text"], #rightPanel input[type="password"], #rightPanel select,
+  #modalBox input[type="text"], #modalBox input[type="password"], #modalBox select { font-size: 16px; }
+  .aro-count { width: 88px; padding: 9px 8px; font-size: 16px; }
+  .aro-bar input[type="text"], .aro-bar select { padding: 8px; }
+  .mini-btn { padding: 7px 11px; }
+}

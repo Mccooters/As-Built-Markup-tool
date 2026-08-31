@@ -721,6 +721,12 @@ const App = (() => {
     wireDragDrop();
     wireShortcuts();
 
+    // mobile: right panel is a drawer behind the floating button
+    $('panelFab').addEventListener('click', () => document.body.classList.toggle('panel-open'));
+    $('panelBackdrop').addEventListener('click', () => document.body.classList.remove('panel-open'));
+    // phones: start with the markups list tucked away
+    if (window.matchMedia('(max-width: 760px)').matches) $('listPanel').classList.add('collapsed');
+
     // render pipeline events
     State.on('markups', d => {
       if (d && d.changed) Render.refresh(d.changed);
