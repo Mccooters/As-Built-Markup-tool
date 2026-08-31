@@ -165,6 +165,24 @@ const ACTIONS = {
     });
   },
 
+  // Every stock-holding location, even ones with nothing assigned yet:
+  // active custom holders (site containers, utes) plus business units.
+  // Stock-level rows only exist once stock is moved onto a holder, so the
+  // app needs this list to show brand-new holders in its location filter.
+  async holders() {
+    const r = await aroGet('customholders', {
+      where: ['and|archived|=|false'],
+      page: 1, pageSize: PAGE_SIZE,
+    });
+    const holders = (r.zoneresponse.customholders || []).map(h => str(h.customholdername)).filter(Boolean);
+    let businessUnits = [];
+    try {
+      const r2 = await aroGet('businessunits', { page: 1, pageSize: 50 });
+      businessUnits = (r2.zoneresponse.businessunits || []).map(b => str(b.orgname)).filter(Boolean);
+    } catch (e) { /* best-effort — holder list still useful without BUs */ }
+    return relay(r, { holders, businessUnits });
+  },
+
   // Connection test: returns the business unit name(s).
   async ping() {
     const r = await aroGet('businessunits', { page: 1, pageSize: 10 });

@@ -20,6 +20,7 @@ const Aro = (() => {
   const st = {
     phase: 'idle',        // idle | loading | ready | error | unconfigured
     items: [],
+    allHolders: [],       // every active holder/BU from AroFlo, stocked or not
     asAt: null,           // ISO string of last successful refresh
     error: '',
     progress: '',
@@ -53,13 +54,17 @@ const Aro = (() => {
   function loadCache() {
     try {
       const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-      if (c && Array.isArray(c.items)) { st.items = c.items; st.asAt = c.asAt || null; return true; }
+      if (c && Array.isArray(c.items)) {
+        st.items = c.items; st.asAt = c.asAt || null;
+        st.allHolders = Array.isArray(c.allHolders) ? c.allHolders : [];
+        return true;
+      }
     } catch (e) { /* ignore */ }
     return false;
   }
   function saveCache() {
     try {
-      const s = JSON.stringify({ items: st.items, asAt: st.asAt });
+      const s = JSON.stringify({ items: st.items, asAt: st.asAt, allHolders: st.allHolders });
       if (s.length < 2_500_000) localStorage.setItem(CACHE_KEY, s);
     } catch (e) { /* storage full — snapshot just won't persist */ }
   }
@@ -108,6 +113,15 @@ const Aro = (() => {
         if (r.last || !(r.items || []).length) break;
       }
       st.items = items;
+      // Also pull the full holder list, so a new site holder shows in the
+      // location filter before any stock has been assigned to it.
+      try {
+        const h = await call('holders');
+        st.allHolders = [
+          ...(h.holders || []).map(name => ({ name, type: 'cholder' })),
+          ...(h.businessUnits || []).map(name => ({ name, type: 'org' })),
+        ];
+      } catch (e) { /* non-fatal — fall back to holders seen on stock rows */ }
       st.asAt = new Date().toISOString();
       st.phase = 'ready';
       saveCache();
@@ -124,6 +138,7 @@ const Aro = (() => {
 
   function holders() {
     const seen = new Map();
+    for (const h of st.allHolders) if (h.name && !seen.has(h.name)) seen.set(h.name, h.type);
     for (const it of st.items) for (const l of it.levels || []) {
       if (l.to && !seen.has(l.to)) seen.set(l.to, l.type);
     }
@@ -209,7 +224,12 @@ const Aro = (() => {
     if (!el) return;
     const rows = filteredItems();
     if (!rows.length) {
-      el.innerHTML = `<p class="prop-note">${st.items.length ? 'Nothing matches — clear the search or show out-of-stock items.' : 'No inventory loaded yet — hit ⟳ to pull it from AroFlo.'}</p>`;
+      let msg;
+      if (!st.items.length) msg = 'No inventory loaded yet — hit ⟳ to pull it from AroFlo.';
+      else if (st.holder && !st.items.some(it => (it.levels || []).some(l => l.to === st.holder))) {
+        msg = `No stock has been assigned to “${esc(st.holder)}” yet. Transfer or adjust stock onto it in AroFlo (Inventory → item → Stock Levels), then hit ⟳.`;
+      } else msg = 'Nothing matches — clear the search or show out-of-stock items.';
+      el.innerHTML = `<p class="prop-note">${msg}</p>`;
       return;
     }
     let h = '';
