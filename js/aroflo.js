@@ -37,7 +37,8 @@ const Aro = (() => {
     take: { on: false, name: '', id: '', type: '', counts: {}, pushing: false },
     catView: false,       // stocktake laid out like the press-fitting catalogue
     tm: { mode: 'task', job: '', tasks: [], taskid: '', materials: [], phase: 'idle', error: '', open: false,
-          progress: '', pQuery: '', pMatches: [], pId: '', pName: '', pTasks: [], agg: [] },
+          progress: '', pQuery: '', pMatches: [], pId: '', pName: '', pTasks: [], agg: [],
+          pView: 'item', aggOpen: '' },
   };
   let projCache = null; // AroFlo project list, fetched once per session
   let codeMap = {};     // learned barcode/QR → itemid links     (abmt:barcodes)
@@ -1374,14 +1375,40 @@ const Aro = (() => {
       if (tm.pId && tm.phase === 'ready') {
         h += `<p class="prop-note">#${esc((tm.pMatches.find(p => p.id === tm.pId) || {}).number || '')} ${esc(tm.pName)} — ${tm.pTasks.length} task${tm.pTasks.length === 1 ? '' : 's'} (${esc(tm.pTasks.map(t => '#' + t.job).join(', '))})</p>`;
         if (tm.agg.length) {
-          h += `<table class="to-table"><tr><th>Item</th><th style="text-align:right" title="Total used across all the project's tasks">Used</th><th style="text-align:right" title="Currently on hand across all stock locations">On hand</th></tr>`;
-          for (const a of tm.agg) {
-            const oh = onHandOf(a.itemid);
-            h += `<tr><td title="${esc(a.pn)}${a.perTask ? ' · ' + esc(a.perTask) : ''}">${esc(a.item)}</td>
-              <td class="num">${qty(a.qty)}</td>
-              <td class="num"${oh ? ` title="${esc(oh.tip)}"` : ''}>${oh ? qty(oh.total) : '<span class="muted" title="Not in the synced stock list — widen the sync scope to see on-hand">—</span>'}</td></tr>`;
+          h += `<div class="aro-bar">
+            <button class="mini-btn${tm.pView !== 'job' ? ' primary' : ''}" id="aro-tm-vitem">By item</button>
+            <button class="mini-btn${tm.pView === 'job' ? ' primary' : ''}" id="aro-tm-vjob">By job</button>
+          </div>`;
+          if (tm.pView === 'job') {
+            // one section per task, in job order — each job's own materials
+            for (const t of tm.pTasks) {
+              const lines = tm.agg
+                .map(a => ({ a, q: a.byTask.get(t.job) || 0 }))
+                .filter(x => x.q > 0);
+              h += `<div class="tm-jobhead">#${esc(t.job)} ${esc(t.name)} <span class="muted">(${esc(t.status)})</span></div>`;
+              if (!lines.length) { h += `<p class="prop-note">No materials recorded.</p>`; continue; }
+              h += `<table class="to-table"><tr><th>Item</th><th style="text-align:right">Qty</th></tr>`;
+              for (const { a, q } of lines) h += `<tr><td title="${esc(a.pn)}">${esc(a.item)}</td><td class="num">${qty(q)}</td></tr>`;
+              h += `<tr class="total"><td>Lines</td><td class="num">${lines.length}</td></tr></table>`;
+            }
+          } else {
+            h += `<p class="prop-note">Tap a line to split it per job.</p>
+              <table class="to-table"><tr><th>Item</th><th style="text-align:right" title="Total used across all the project's tasks">Used</th><th style="text-align:right" title="Currently on hand across all stock locations">On hand</th></tr>`;
+            for (const a of tm.agg) {
+              const oh = onHandOf(a.itemid);
+              const key = a.itemid || a.pn + '|' + a.item;
+              h += `<tr class="tm-item" data-k="${esc(key)}"><td title="${esc(a.pn)}">${esc(a.item)}</td>
+                <td class="num">${qty(a.qty)}</td>
+                <td class="num"${oh ? ` title="${esc(oh.tip)}"` : ''}>${oh ? qty(oh.total) : '<span class="muted" title="Not in the synced stock list — widen the sync scope to see on-hand">—</span>'}</td></tr>`;
+              if (tm.aggOpen === key) {
+                for (const [job, q] of [...a.byTask.entries()].sort((x, y) => String(y[0]).localeCompare(String(x[0])))) {
+                  const t = tm.pTasks.find(x => x.job === job);
+                  h += `<tr class="tm-sub"><td>#${esc(job)}${t ? ' · ' + esc(t.name) : ''}</td><td class="num">${qty(q)}</td><td></td></tr>`;
+                }
+              }
+            }
+            h += `<tr class="total"><td>Lines</td><td class="num">${tm.agg.length}</td><td></td></tr></table>`;
           }
-          h += `<tr class="total"><td>Lines</td><td class="num">${tm.agg.length}</td><td></td></tr></table>`;
         } else {
           h += `<p class="prop-note">No materials recorded on this project's tasks yet.</p>`;
         }
@@ -1428,6 +1455,14 @@ const Aro = (() => {
       const p = st.tm.pMatches.find(x => x.id === psel.value);
       if (p) loadProjectFrom(p);
     });
+    const vi = root.querySelector('#aro-tm-vitem'), vj = root.querySelector('#aro-tm-vjob');
+    if (vi) vi.addEventListener('click', () => { st.tm.pView = 'item'; render(); });
+    if (vj) vj.addEventListener('click', () => { st.tm.pView = 'job'; render(); });
+    root.querySelectorAll('.tm-item').forEach(tr =>
+      tr.addEventListener('click', () => {
+        st.tm.aggOpen = st.tm.aggOpen === tr.dataset.k ? '' : tr.dataset.k;
+        render();
+      }));
   }
 
   async function loadProjectMaterials() {
