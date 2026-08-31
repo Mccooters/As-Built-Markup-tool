@@ -721,6 +721,8 @@ const App = (() => {
     wireDragDrop();
     wireShortcuts();
 
+    $('btnStock').addEventListener('click', () => Aro.openPage());
+
     // mobile: right panel is a drawer behind the floating button
     $('panelFab').addEventListener('click', () => document.body.classList.toggle('panel-open'));
     $('panelBackdrop').addEventListener('click', () => document.body.classList.remove('panel-open'));

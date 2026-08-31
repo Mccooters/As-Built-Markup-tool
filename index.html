@@ -101,6 +101,10 @@
       <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
       <span>Report</span>
     </button>
+    <button id="btnStock" class="tb-btn" title="Site stock manager — live AroFlo inventory, stocktakes, transfers and project materials">
+      <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+      <span>Stock</span>
+    </button>
   </div>
 
   <div class="tb-sep"></div>
@@ -299,6 +303,22 @@
   <button id="statusScale" title="Page scale — click to calibrate">Scale: not set</button>
   <span id="statusSave" title="Markups are autosaved in this browser and restored when you re-open the same PDF"></span>
 </footer>
+
+<!-- ======================= STOCK MANAGER (full-screen) ======================= -->
+<section id="stockPage" class="hidden">
+  <header id="stockHead">
+    <button id="stockClose" class="tb-btn icon-only" title="Back to the drawing (Esc)">
+      <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <span class="stock-title">Site stock <span class="muted">— AroFlo</span></span>
+    <div class="tb-flex"></div>
+    <span id="stockHeadNote" class="muted"></span>
+  </header>
+  <div id="stockBody">
+    <div id="stockMain"></div>
+    <aside id="stockSide"></aside>
+  </div>
+</section>
 
 <!-- Mobile: right-panel drawer toggle -->
 <div id="panelBackdrop"></div>

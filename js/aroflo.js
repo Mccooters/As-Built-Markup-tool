@@ -15,7 +15,8 @@ const Aro = (() => {
   const MAX_PAGES = 40;              // safety cap: 40 × 500 = 20,000 items
   const MAX_ROWS = 400;              // rendered rows cap (search narrows the rest)
 
-  let root = null;
+  let root = null;                    // right-panel tab (compact summary)
+  let pageEl = null, mainEl = null, sideEl = null; // full-screen stock manager
   let cfg = { url: '/api/aroflo', token: '', cats: [] }; // cats: [] = sync everything
   const st = {
     phase: 'idle',        // idle | loading | ready | error | unconfigured
@@ -260,11 +261,56 @@ const Aro = (() => {
 
   /* ---------------- rendering ---------------- */
 
+  /* ---------------- full-screen page ---------------- */
+
+  const pageOpen = () => pageEl && !pageEl.classList.contains('hidden');
+
+  function openPage() {
+    if (!pageEl) return;
+    pageEl.classList.remove('hidden');
+    document.body.classList.remove('panel-open');
+    const fresh = st.asAt && (Date.now() - Date.parse(st.asAt) < STALE_MS);
+    render();
+    if (st.phase !== 'loading' && !(st.phase === 'ready' && fresh)) refresh();
+  }
+
+  function closePage() {
+    if (!pageEl) return;
+    pageEl.classList.add('hidden');
+    renderTab();
+  }
+
   function render() {
+    renderTab();
+    if (pageOpen()) renderPage();
+  }
+
+  // Compact summary in the right-panel tab — the real UI lives on the page.
+  function renderTab() {
     if (!root) return;
-    if (st.phase === 'idle' || st.phase === 'unconfigured') { renderIntro(); return; }
-    let h = `
-      <div class="aro-bar">
+    let status;
+    if (st.phase === 'loading') status = esc(st.progress || 'Loading…');
+    else if (st.items.length) {
+      const mins = st.asAt ? Math.round((Date.now() - Date.parse(st.asAt)) / 60000) : null;
+      status = `<b>${st.items.length}</b> items` + (mins != null ? ` · as at ${mins < 1 ? 'just now' : mins + ' min ago'}` : '');
+    } else if (st.phase === 'unconfigured' || st.phase === 'idle') status = 'Not connected yet.';
+    else status = 'No inventory loaded yet.';
+    root.innerHTML = `
+      <div class="prop-cap">Site stock — AroFlo</div>
+      <p class="prop-note">${status}</p>
+      ${st.error ? `<div class="aro-error">${esc(st.error)}</div>` : ''}
+      <button class="mini-btn primary" id="aro-open">Open stock manager</button>
+      <p class="prop-note" style="margin-top:8px">Live inventory by location, stocktakes, transfers and per-task / per-project materials — full screen.</p>`;
+    root.querySelector('#aro-open').addEventListener('click', openPage);
+  }
+
+  function renderPage() {
+    if (st.phase === 'idle' || st.phase === 'unconfigured') {
+      renderIntro(mainEl);
+      sideEl.innerHTML = '';
+      return;
+    }
+    let h = `<div class="stock-controls"><div class="aro-bar">
         <input type="text" id="aro-search" placeholder="Search stock… (e.g. impress 54)" value="${esc(st.filter)}" autocomplete="off">
         <button class="mini-btn" id="aro-refresh" title="Re-load stock from AroFlo"${st.phase === 'loading' ? ' disabled' : ''}>⟳</button>
         <button class="mini-btn" id="aro-cfg" title="AroFlo connection settings">⚙</button>
@@ -288,32 +334,31 @@ const Aro = (() => {
         <button class="mini-btn" id="aro-take" title="Count this location and push corrected quantities to AroFlo">Stocktake</button>
       </div>`;
     }
-    h += `
-      <div class="aro-status" id="aro-status"></div>
+    h += `<div class="aro-status" id="aro-status"></div></div>
       <div class="aro-list" id="aro-list"></div>`;
-    h += taskMaterialsHtml();
-    root.innerHTML = h;
+    mainEl.innerHTML = h;
+    sideEl.innerHTML = `<div class="stock-card">${taskMaterialsHtml(true)}</div>`;
 
-    const search = root.querySelector('#aro-search');
+    const search = mainEl.querySelector('#aro-search');
     let deb = 0;
     search.addEventListener('input', () => {
       clearTimeout(deb);
       deb = setTimeout(() => { st.filter = search.value; renderList(); renderStatus(); }, 140);
     });
-    root.querySelector('#aro-refresh').addEventListener('click', refresh);
-    root.querySelector('#aro-cfg').addEventListener('click', settingsDialog);
+    mainEl.querySelector('#aro-refresh').addEventListener('click', refresh);
+    mainEl.querySelector('#aro-cfg').addEventListener('click', settingsDialog);
     if (st.take.on) {
-      root.querySelector('#aro-take-review').addEventListener('click', reviewStocktake);
-      root.querySelector('#aro-take-cancel').addEventListener('click', () => {
+      mainEl.querySelector('#aro-take-review').addEventListener('click', reviewStocktake);
+      mainEl.querySelector('#aro-take-cancel').addEventListener('click', () => {
         st.take = { on: false, name: '', id: '', type: '', counts: {}, pushing: false };
         render();
       });
     } else {
-      root.querySelector('#aro-holder').addEventListener('change', e => { st.holder = e.target.value; renderList(); renderStatus(); });
-      root.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
-      root.querySelector('#aro-take').addEventListener('click', startStocktake);
+      mainEl.querySelector('#aro-holder').addEventListener('change', e => { st.holder = e.target.value; renderList(); renderStatus(); });
+      mainEl.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
+      mainEl.querySelector('#aro-take').addEventListener('click', startStocktake);
     }
-    wireTaskMaterials();
+    wireTaskMaterials(sideEl);
     renderList();
     renderStatus();
   }
@@ -332,7 +377,7 @@ const Aro = (() => {
   }
 
   function renderStatus() {
-    const el = root && root.querySelector('#aro-status');
+    const el = document.getElementById('aro-status');
     if (!el) return;
     if (st.phase === 'loading') { el.innerHTML = `<span class="aro-busy">${esc(st.progress)}</span>`; return; }
     let h = '';
@@ -361,7 +406,7 @@ const Aro = (() => {
   }
 
   function renderList() {
-    const el = root && root.querySelector('#aro-list');
+    const el = document.getElementById('aro-list');
     if (!el) return;
     if (st.take.on) { renderTakeList(el); return; }
     const rows = filteredItems();
@@ -555,8 +600,8 @@ const Aro = (() => {
 
   /* ---------------- intro / setup ---------------- */
 
-  function renderIntro() {
-    root.innerHTML = `
+  function renderIntro(container) {
+    container.innerHTML = `
       <div class="prop-cap">Site stock — AroFlo</div>
       <p class="prop-note">Show a live inventory list straight from AroFlo — what's held at each store, van or site holder — plus the materials already recorded against the job's task.</p>
       ${st.error ? `<div class="aro-error">${esc(st.error)}</div>` : ''}
@@ -565,8 +610,8 @@ const Aro = (() => {
         <button class="mini-btn primary" id="aro-connect">Connect…</button>
         <button class="mini-btn" id="aro-try">Try /api/aroflo</button>
       </div>`;
-    root.querySelector('#aro-connect').addEventListener('click', settingsDialog);
-    root.querySelector('#aro-try').addEventListener('click', refresh);
+    container.querySelector('#aro-connect').addEventListener('click', settingsDialog);
+    container.querySelector('#aro-try').addEventListener('click', refresh);
   }
 
   function diagHtml(d) {
@@ -710,10 +755,13 @@ const Aro = (() => {
     return { total, tip: parts.join(' · ') || 'no stock recorded' };
   }
 
-  function taskMaterialsHtml() {
+  function taskMaterialsHtml(forceOpen) {
     const tm = st.tm;
-    let h = `<div class="prop-cap aro-tm-cap" id="aro-tm-toggle">${tm.open ? '▾' : '▸'} Job materials used (AroFlo)</div>`;
-    if (!tm.open) return h;
+    const open = forceOpen || tm.open;
+    let h = forceOpen
+      ? `<div class="prop-cap">Job materials used (AroFlo)</div>`
+      : `<div class="prop-cap aro-tm-cap" id="aro-tm-toggle">${open ? '▾' : '▸'} Job materials used (AroFlo)</div>`;
+    if (!open) return h;
     h += `<div class="aro-bar">
       <button class="mini-btn${tm.mode === 'task' ? ' primary' : ''}" id="aro-tm-mtask">Task</button>
       <button class="mini-btn${tm.mode === 'project' ? ' primary' : ''}" id="aro-tm-mproj">Project</button>
@@ -773,16 +821,17 @@ const Aro = (() => {
     return h;
   }
 
-  function wireTaskMaterials() {
+  function wireTaskMaterials(container) {
+    const root = container; // all lookups below are scoped to the side column
     const toggle = root.querySelector('#aro-tm-toggle');
     if (toggle) toggle.addEventListener('click', () => {
       st.tm.open = !st.tm.open;
-      if (st.tm.open && !st.tm.job) {
-        const digits = String(State.S.jobRef || '').replace(/\D+/g, '');
-        if (digits) st.tm.job = digits;
-      }
       render();
     });
+    if (!st.tm.job) {
+      const digits = String(State.S.jobRef || '').replace(/\D+/g, '');
+      if (digits) st.tm.job = digits;
+    }
     const load = root.querySelector('#aro-tm-load');
     if (load) load.addEventListener('click', loadTaskMaterials);
     const jobIn = root.querySelector('#aro-job');
@@ -911,15 +960,25 @@ const Aro = (() => {
 
   function init() {
     root = document.getElementById('tab-stock');
-    if (!root) return;
+    pageEl = document.getElementById('stockPage');
+    mainEl = document.getElementById('stockMain');
+    sideEl = document.getElementById('stockSide');
+    if (!root || !pageEl) return;
     loadCfg();
     if (loadCache()) st.phase = 'ready';
     render();
     const tabBtn = document.querySelector('#rightPanel .tab[data-tab="stock"]');
     if (tabBtn) tabBtn.addEventListener('click', onShow);
+    document.getElementById('stockClose').addEventListener('click', closePage);
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && pageOpen() && document.getElementById('modalRoot').classList.contains('hidden')) {
+        e.stopPropagation();
+        closePage();
+      }
+    }, true);
   }
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { refresh, settingsDialog, call, _state: st };
+  return { refresh, settingsDialog, call, openPage, closePage, _state: st };
 })();
