@@ -1059,7 +1059,9 @@ const Aro = (() => {
           // cache never blocks a save (worst case a line books at $0,
           // editable in AroFlo afterwards)
           for (const l of lines) {
-            if (l.it.cost != null) continue;
+            // 0 counts as unknown too — a cached zero (pre-flexcost syncs)
+            // must not stop the real figure being pulled
+            if (l.it.cost) continue;
             btn.textContent = 'Fetching prices…';
             try {
               const r = await call('inventory', { itemid: l.it.id });
