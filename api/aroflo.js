@@ -496,12 +496,15 @@ const ACTIONS = {
         const pnEl = l.pn ? `<partnumber><![CDATA[${l.pn}]]></partnumber>` : '';
         const itEl = l.desc ? `<item><![CDATA[${l.desc}]]></item>` : '';
         // AroFlo refuses material inserts without a <cost> element ("No cost
-        // Element found"), so the pricing triplet ALWAYS goes — unknown
-        // prices book at 0.0000 and stay editable in AroFlo. Sell falls back
-        // to cost so a line never sells below what it cost.
+        // Element found") AND refuses an empty <markup> ("markup value is
+        // invalid" — despite their own doc example sending it empty), so the
+        // pricing triplet always goes with numeric values: unknown prices
+        // book at 0.0000, sell falls back to cost, and markup is computed
+        // from the two so the figures agree.
         const c = l.cost != null ? l.cost : 0;
         const s = l.sell != null ? l.sell : c;
-        const priceEl = `<cost>${c.toFixed(4)}</cost><markup></markup><sell>${s.toFixed(4)}</sell>`;
+        const mk = c > 0 ? Math.max(0, Math.round(((s / c) - 1) * 1000000) / 10000) : 0;
+        const priceEl = `<cost>${c.toFixed(4)}</cost><markup>${mk.toFixed(4)}</markup><sell>${s.toFixed(4)}</sell>`;
         xml += variant === 1
           ? `<material>${pnEl}${itEl}<quantity>${l.qv}</quantity>${priceEl}<dateused>${dash}</dateused>${takenfrom}${taskEl}</material>`
           : `<material>${pnEl}${itEl}${priceEl}<dateused>${slash}</dateused><quantity>${l.qv}</quantity>${variant === 2 ? takenfrom : ''}${taskEl}</material>`;
