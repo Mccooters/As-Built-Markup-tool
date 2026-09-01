@@ -281,7 +281,7 @@ const ACTIONS = {
       desc: str(it.description),
       pn: str(it.partnumber),
       cat: it.category ? str(it.category.categoryname) : '',
-      cost: num(it.costex),
+      cost: num(it.costex) || num(it.flexcost),
       sell: num(it.sell_task),
       levels: slimLevels(it.stocklevels),
     }));
@@ -495,15 +495,24 @@ const ACTIONS = {
       for (const l of clean) {
         const pnEl = l.pn ? `<partnumber><![CDATA[${l.pn}]]></partnumber>` : '';
         const itEl = l.desc ? `<item><![CDATA[${l.desc}]]></item>` : '';
-        // AroFlo refuses material inserts without a <cost> element ("No cost
-        // Element found") AND refuses an empty <markup> ("markup value is
-        // invalid" — despite their own doc example sending it empty), so the
-        // pricing triplet always goes with numeric values: unknown prices
-        // book at 0.0000, sell falls back to cost, and markup is computed
-        // from the two so the figures agree.
+        // AroFlo's validators, learned one field report at a time: <cost>
+        // must exist ("No cost Element found"), <markup> must be numeric
+        // ("markup value is invalid"), and the three must satisfy
+        // cost × (1 + markup/100) = sell exactly ("Cost, Markup and Sell
+        // values provided do not calculate correctly"). So: markup from the
+        // real cost/sell ratio, then sell recomputed from the rounded markup
+        // so the equation holds at AroFlo's precision. A line with no known
+        // cost books at zero (pricing stays editable in AroFlo).
         const c = l.cost != null ? l.cost : 0;
-        const s = l.sell != null ? l.sell : c;
-        const mk = c > 0 ? Math.max(0, Math.round(((s / c) - 1) * 1000000) / 10000) : 0;
+        let s = l.sell != null ? l.sell : c;
+        let mk = 0;
+        if (c > 0) {
+          if (s <= 0) s = c;
+          mk = Math.round(((s / c) - 1) * 1000000) / 10000;
+          s = Math.round(c * (1 + mk / 100) * 10000) / 10000;
+        } else {
+          s = 0;
+        }
         const priceEl = `<cost>${c.toFixed(4)}</cost><markup>${mk.toFixed(4)}</markup><sell>${s.toFixed(4)}</sell>`;
         xml += variant === 1
           ? `<material>${pnEl}${itEl}<quantity>${l.qv}</quantity>${priceEl}<dateused>${dash}</dateused>${takenfrom}${taskEl}</material>`
