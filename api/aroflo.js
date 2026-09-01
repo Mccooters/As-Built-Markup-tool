@@ -463,8 +463,9 @@ const ACTIONS = {
     const cd = (v, max) => str(v)
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
       .replace(/\]\]>/g, ']] >').trim().slice(0, max);
-    const d = new Date();
-    const dateused = d.getUTCFullYear() + '/' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + String(d.getUTCDate()).padStart(2, '0');
+    // the POSTXML definition wants DATE(YYYY-MM-DD); a date AroFlo can't
+    // parse can leave the line invisible in date-filtered views
+    const dateused = new Date().toISOString().slice(0, 10);
     let xml = '<materials>';
     for (const l of lines) {
       const desc = cd(l && l.desc, 1000);

@@ -1027,6 +1027,7 @@ const Aro = (() => {
         <select id="ur-from">${holdersW.map(h => `<option value="${esc(h.name)}"${h.name === defFrom ? ' selected' : ''}>${esc(h.name)} — ${esc(holderKind(h.type))}</option>`).join('')}</select></div>
       <label class="chk"><input type="checkbox" id="ur-deduct"${deductDef ? ' checked' : ''}> Also deduct these quantities from the holder's site stock</label>
       <p class="muted">The lines land in the task's <b>Used Items</b> in AroFlo, dated today. AroFlo doesn't move inventory for API-booked lines by itself, so leave the deduction on to keep the site holder's counts true — if your AroFlo shows a double deduction after the first save, untick it from then on.</p>
+      <div class="aro-error" id="ur-err" hidden></div>
       <div class="modal-actions">
         <button class="mini-btn" id="ur-back">Back</button>
         <button class="mini-btn primary" id="ur-save">Save ${lines.length} line${lines.length === 1 ? '' : 's'} to task</button>
@@ -1049,12 +1050,48 @@ const Aro = (() => {
         const deduct = box.querySelector('#ur-deduct').checked;
         saveJson('abmt:useddeduct', deduct);
         const btn = box.querySelector('#ur-save');
+        const errBox = box.querySelector('#ur-err');
+        errBox.hidden = true;
         btn.disabled = true; btn.textContent = 'Saving…';
         try {
           const payload = { taskid: task.taskid, lines: lines.map(l => ({ pn: l.it.pn, desc: l.it.desc, qty: l.q })) };
           if (from && (from.type === 'user' || from.type === 'cholder')) payload.takenfrom = { id: from.id, type: from.type };
-          for (let i = 0; i < payload.lines.length; i += 50)
-            await postCall('usedmaterials', { ...payload, lines: payload.lines.slice(i, i + 50) });
+          const beforeN = jobCache[job] ? jobCache[job].materials.length : null;
+
+          // AroFlo can answer "Login OK" yet insert nothing — the per-line
+          // verdict lives in postresults. Count what actually inserted, and
+          // if a takenfrom holder is what it choked on, book the lines
+          // without it rather than not at all.
+          let inserted = 0, usedFallback = false;
+          const postErrs = [];
+          for (let i = 0; i < payload.lines.length; i += 50) {
+            const chunk = payload.lines.slice(i, i + 50);
+            let r = await postCall('usedmaterials', { ...payload, lines: chunk });
+            if (Array.isArray(r.postErrors)) postErrs.push(...r.postErrors);
+            if ((r.inserted || 0) === 0 && payload.takenfrom) {
+              const { takenfrom, ...plain } = payload;
+              r = await postCall('usedmaterials', { ...plain, lines: chunk });
+              if (Array.isArray(r.postErrors)) postErrs.push(...r.postErrors);
+              if ((r.inserted || 0) > 0) usedFallback = true;
+            }
+            inserted += r.inserted || 0;
+          }
+          if (inserted < payload.lines.length) {
+            const detail = postErrs.length
+              ? ' AroFlo said: ' + postErrs.join(' · ')
+              : ' AroFlo reported no line errors — check the task isn’t completed/locked in AroFlo.';
+            throw new Error('AroFlo inserted ' + inserted + ' of ' + payload.lines.length + ' line' + (payload.lines.length === 1 ? '' : 's') + '.' + detail);
+          }
+
+          // read the task back — an insert AroFlo accepted but stored badly
+          // (e.g. an unparsed date) would not show on the task's list
+          let verified = true;
+          try {
+            delete jobCache[job];
+            const after = await jobMaterials(job);
+            if (beforeN != null && after.materials.length < beforeN + payload.lines.length) verified = false;
+          } catch (e2) { /* re-read is best-effort — the insert itself was confirmed */ }
+
           if (deduct && from) {
             const moves = lines.map(l => ({ itemid: l.it.id, toId: from.id, toType: from.type, delta: -l.q }));
             for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
@@ -1069,15 +1106,19 @@ const Aro = (() => {
           }
           delete usedDrafts[job];
           saveDrafts();
-          delete jobCache[job];
           close();
-          App.toast(`Booked ${lines.length} line${lines.length === 1 ? '' : 's'} to #${task.job}${deduct && from ? ' and deducted from ' + from.name : ''}. ✔`, 'good', 6000);
+          let note = `Booked ${lines.length} line${lines.length === 1 ? '' : 's'} to #${task.job}${deduct && from ? ' and deducted from ' + from.name : ''}. ✔`;
+          if (usedFallback) note += ' AroFlo rejected the taken-from holder, so the lines were booked without it.';
+          if (!verified) note += ' AroFlo confirmed the insert but the task list doesn’t show the new lines yet — open the task worksheet in AroFlo to check before re-sending, so nothing doubles up.';
+          App.toast(note, verified ? 'good' : 'warn', verified ? 6000 : 12000);
           if (st.tm.taskid === task.taskid) loadMaterialsFor(task.taskid);
           else render();
           if (opts.zone) zonePopover(opts.zone);
         } catch (e) {
           btn.disabled = false; btn.textContent = 'Save to task';
-          App.toast('Save failed: ' + e.message + ' — the tally is kept.', 'error', 9000);
+          errBox.textContent = e.message + ' Nothing was deducted from stock and the tally is kept.';
+          errBox.hidden = false;
+          App.toast('Save failed — details in the review sheet. The tally is kept.', 'error', 7000);
         }
       });
     });
