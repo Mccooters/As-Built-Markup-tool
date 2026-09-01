@@ -1054,6 +1054,21 @@ const Aro = (() => {
         errBox.hidden = true;
         btn.disabled = true; btn.textContent = 'Saving…';
         try {
+          // AroFlo refuses lines without a cost — items synced before
+          // pricing was carried get their figures pulled here, so a stale
+          // cache never blocks a save (worst case a line books at $0,
+          // editable in AroFlo afterwards)
+          for (const l of lines) {
+            if (l.it.cost != null) continue;
+            btn.textContent = 'Fetching prices…';
+            try {
+              const r = await call('inventory', { itemid: l.it.id });
+              const fresh = (r.items || [])[0];
+              if (fresh) { l.it.cost = fresh.cost; l.it.sell = fresh.sell; }
+            } catch (e2) { /* still saves — at zero cost */ }
+          }
+          saveCache();
+          btn.textContent = 'Saving…';
           const payload = { taskid: task.taskid, lines: lines.map(l => ({ pn: l.it.pn, desc: l.it.desc, qty: l.q, cost: l.it.cost, sell: l.it.sell })) };
           if (from && (from.type === 'user' || from.type === 'cholder')) payload.takenfrom = { id: from.id, type: from.type };
           const beforeN = jobCache[job] ? jobCache[job].materials.length : null;
