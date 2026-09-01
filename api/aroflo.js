@@ -215,11 +215,13 @@ const ACTIONS = {
     });
   },
 
-  // Connection test: returns the business unit name(s).
+  // Connection test: returns the business unit name(s), plus which commit
+  // this deployment was built from so "is the fix live yet" is answerable
+  // from the app's Test connection button.
   async ping() {
     const r = await aroGet('businessunits', { page: 1, pageSize: 10 });
     const bus = (r.zoneresponse.businessunits || []).map(b => str(b.orgname)).filter(Boolean);
-    return relay(r, { businessUnits: bus });
+    return relay(r, { businessUnits: bus, build: str(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 7) });
   },
 
   // Inventory categories, for the app's sync-scope picker.

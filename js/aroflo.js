@@ -1751,7 +1751,8 @@ const Aro = (() => {
         out.textContent = 'Testing…';
         try {
           const r = await call('ping');
-          out.textContent = '✓ Connected — ' + ((r.businessUnits || []).join(', ') || 'AroFlo replied OK');
+          out.textContent = '✓ Connected — ' + ((r.businessUnits || []).join(', ') || 'AroFlo replied OK')
+            + (r.build ? ' · build ' + r.build : '');
         } catch (e) {
           out.textContent = '✕ ' + e.message;
           // AroFlo rejected the signed request (not a reach/token problem):
