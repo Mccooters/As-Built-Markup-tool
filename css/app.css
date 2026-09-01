@@ -525,3 +525,5 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
   .used-cell { min-width: 88px; padding: 9px 8px; }
   .used-grid { max-height: 52vh; }
 }
+.ur-debug { white-space: pre-wrap; word-break: break-all; font-size: 10.5px;
+  max-height: 26vh; overflow-y: auto; margin: 6px 0 0; opacity: .85; }

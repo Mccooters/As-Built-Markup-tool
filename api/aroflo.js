@@ -281,6 +281,8 @@ const ACTIONS = {
       desc: str(it.description),
       pn: str(it.partnumber),
       cat: it.category ? str(it.category.categoryname) : '',
+      cost: num(it.costex),
+      sell: num(it.sell_task),
       levels: slimLevels(it.stocklevels),
     }));
     return relay(r, { items, ...pageMeta(r.zoneresponse, PAGE_SIZE) });
@@ -463,33 +465,69 @@ const ACTIONS = {
     const cd = (v, max) => str(v)
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
       .replace(/\]\]>/g, ']] >').trim().slice(0, max);
-    // the POSTXML definition wants DATE(YYYY-MM-DD); a date AroFlo can't
-    // parse can leave the line invisible in date-filtered views
-    const dateused = new Date().toISOString().slice(0, 10);
-    let xml = '<materials>';
+    const clean = [];
     for (const l of lines) {
       const desc = cd(l && l.desc, 1000);
       const pn = cd(l && l.pn, 50);
       const qv = Math.round(Number(l && l.qty) * 10000) / 10000;
       if (!desc && !pn) return { ok: false, httpStatus: 400, statusmessage: 'Each line needs a description or part number' };
       if (!Number.isFinite(qv) || qv <= 0 || qv > 100000) return { ok: false, httpStatus: 400, statusmessage: 'Bad quantity' };
-      xml += '<material>'
-        + (pn ? `<partnumber><![CDATA[${pn}]]></partnumber>` : '')
-        + (desc ? `<item><![CDATA[${desc}]]></item>` : '')
-        + `<quantity>${qv}</quantity><dateused>${dateused}</dateused>`
-        + takenfrom
-        + `<task><taskid>${taskid}</taskid></task></material>`;
+      const price = v => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 && n < 10000000 ? Math.round(n * 10000) / 10000 : null;
+      };
+      clean.push({ desc, pn, qv, cost: price(l && l.cost), sell: price(l && l.sell) });
     }
-    xml += '</materials>';
 
-    const r = await aroPost('taskmaterials', xml);
-    const pr = r.zoneresponse.postresults || {};
-    return relay(r, {
-      inserted: num(pr.inserttotal),
-      sent: lines.length,
-      postErrors: (Array.isArray(pr.errors) ? pr.errors : []).slice(0, 5)
-        .map(e => str(typeof e === 'object' ? JSON.stringify(e) : e).slice(0, 300)),
-    });
+    // AroFlo's docs contradict themselves on this insert (the POSTXML
+    // definition says date YYYY-MM-DD, quantity before dateused, takenfrom
+    // required; their recorded working call uses YYYY/MM/DD, quantity after
+    // dateused, and no takenfrom at all) and a rejected line only comes back
+    // as a generic "Post Error 309". So: try the definition shape first,
+    // then the recorded-call shape, then the recorded-call shape without the
+    // takenfrom holder. Stop at the first shape that inserts; on total
+    // failure hand the whole zoneresponse back for diagnosis.
+    const dash = new Date().toISOString().slice(0, 10);
+    const slash = dash.replace(/-/g, '/');
+    const taskEl = `<task><taskid>${taskid}</taskid></task>`;
+    const buildXml = variant => {
+      let xml = '<materials>';
+      for (const l of clean) {
+        const pnEl = l.pn ? `<partnumber><![CDATA[${l.pn}]]></partnumber>` : '';
+        const itEl = l.desc ? `<item><![CDATA[${l.desc}]]></item>` : '';
+        // pricing triplet as in the recorded call (markup empty); sell falls
+        // back to cost so a line never sells below what it cost
+        const priceEl = (l.cost != null || l.sell != null)
+          ? `<cost>${(l.cost != null ? l.cost : 0).toFixed(4)}</cost><markup></markup><sell>${(l.sell != null ? l.sell : l.cost).toFixed(4)}</sell>`
+          : '';
+        xml += variant === 1
+          ? `<material>${pnEl}${itEl}<quantity>${l.qv}</quantity>${priceEl}<dateused>${dash}</dateused>${takenfrom}${taskEl}</material>`
+          : `<material>${pnEl}${itEl}${priceEl}<dateused>${slash}</dateused><quantity>${l.qv}</quantity>${variant === 2 ? takenfrom : ''}${taskEl}</material>`;
+      }
+      return xml + '</materials>';
+    };
+
+    let last = null, inserted = 0, winner = 0;
+    const errs = new Set();
+    for (const v of takenfrom ? [1, 2, 3] : [1, 3]) {
+      if (last) await sleep(360); // stay under the per-second limit
+      const r = await aroPost('taskmaterials', buildXml(v));
+      last = r;
+      const pr = r.zoneresponse.postresults || {};
+      for (const e of Array.isArray(pr.errors) ? pr.errors : [])
+        errs.add(str(typeof e === 'object' ? JSON.stringify(e) : e).slice(0, 300));
+      inserted = num(pr.inserttotal);
+      if (r.ok && inserted > 0) { winner = v; break; } // never re-send inserted lines
+    }
+    const out = {
+      inserted,
+      sent: clean.length,
+      variant: winner,
+      takenfromDropped: winner === 3 && !!takenfrom,
+      postErrors: [...errs].slice(0, 5),
+    };
+    if (!inserted) out.postDebug = JSON.stringify(last.zoneresponse).slice(0, 4000);
+    return relay(last, out);
   },
 
   // Materials recorded against a task (what the job has used).

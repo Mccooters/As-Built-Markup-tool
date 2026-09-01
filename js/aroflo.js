@@ -1054,33 +1054,29 @@ const Aro = (() => {
         errBox.hidden = true;
         btn.disabled = true; btn.textContent = 'Saving…';
         try {
-          const payload = { taskid: task.taskid, lines: lines.map(l => ({ pn: l.it.pn, desc: l.it.desc, qty: l.q })) };
+          const payload = { taskid: task.taskid, lines: lines.map(l => ({ pn: l.it.pn, desc: l.it.desc, qty: l.q, cost: l.it.cost, sell: l.it.sell })) };
           if (from && (from.type === 'user' || from.type === 'cholder')) payload.takenfrom = { id: from.id, type: from.type };
           const beforeN = jobCache[job] ? jobCache[job].materials.length : null;
 
-          // AroFlo can answer "Login OK" yet insert nothing — the per-line
-          // verdict lives in postresults. Count what actually inserted, and
-          // if a takenfrom holder is what it choked on, book the lines
-          // without it rather than not at all.
-          let inserted = 0, usedFallback = false;
-          const postErrs = [];
+          // AroFlo can answer "Login OK" yet insert nothing — the proxy
+          // counts the real inserts (trying AroFlo's own recorded payload
+          // shape as a fallback) and hands back the line errors.
+          let inserted = 0, usedFallback = false, postDebug = '';
+          const postErrs = new Set();
           for (let i = 0; i < payload.lines.length; i += 50) {
-            const chunk = payload.lines.slice(i, i + 50);
-            let r = await postCall('usedmaterials', { ...payload, lines: chunk });
-            if (Array.isArray(r.postErrors)) postErrs.push(...r.postErrors);
-            if ((r.inserted || 0) === 0 && payload.takenfrom) {
-              const { takenfrom, ...plain } = payload;
-              r = await postCall('usedmaterials', { ...plain, lines: chunk });
-              if (Array.isArray(r.postErrors)) postErrs.push(...r.postErrors);
-              if ((r.inserted || 0) > 0) usedFallback = true;
-            }
+            const r = await postCall('usedmaterials', { ...payload, lines: payload.lines.slice(i, i + 50) });
+            if (Array.isArray(r.postErrors)) for (const e of r.postErrors) postErrs.add(e);
+            if (r.takenfromDropped) usedFallback = true;
+            if (r.postDebug) postDebug = r.postDebug;
             inserted += r.inserted || 0;
           }
           if (inserted < payload.lines.length) {
-            const detail = postErrs.length
-              ? ' AroFlo said: ' + postErrs.join(' · ')
+            const detail = postErrs.size
+              ? ' AroFlo said: ' + [...postErrs].join(' · ')
               : ' AroFlo reported no line errors — check the task isn’t completed/locked in AroFlo.';
-            throw new Error('AroFlo inserted ' + inserted + ' of ' + payload.lines.length + ' line' + (payload.lines.length === 1 ? '' : 's') + '.' + detail);
+            const err = new Error('AroFlo inserted ' + inserted + ' of ' + payload.lines.length + ' line' + (payload.lines.length === 1 ? '' : 's') + '.' + detail);
+            err.debug = postDebug;
+            throw err;
           }
 
           // read the task back — an insert AroFlo accepted but stored badly
@@ -1117,6 +1113,12 @@ const Aro = (() => {
         } catch (e) {
           btn.disabled = false; btn.textContent = 'Save to task';
           errBox.textContent = e.message + ' Nothing was deducted from stock and the tally is kept.';
+          if (e.debug) {
+            const pre = document.createElement('pre');
+            pre.className = 'ur-debug';
+            pre.textContent = 'AroFlo’s full reply (for support): ' + e.debug;
+            errBox.appendChild(pre);
+          }
           errBox.hidden = false;
           App.toast('Save failed — details in the review sheet. The tally is kept.', 'error', 7000);
         }
