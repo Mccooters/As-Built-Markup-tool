@@ -47,6 +47,7 @@ const Aro = (() => {
   let sysPresets = [];  // material-system presets [{id,name,cats}] (abmt:syspresets)
   let jobSys = {};      // job → preset id                        (abmt:jobsys)
   let usedDrafts = {};  // job → {counts:{itemid:qty}, sys, at} — unsent tallies (abmt:used)
+  let catParent = {};   // category leaf name → parent name       (abmt:cattree)
   const loadJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
   const saveJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* full */ } };
   let inflight = false;
@@ -246,6 +247,13 @@ const Aro = (() => {
             ...(h.businessUnits || []).map(name => ({ name, type: 'org' })),
           ];
       } catch (e) { /* non-fatal — fall back to holders seen on stock rows */ }
+      // Category tree (leaf → parent name) for catalogue section headers.
+      try {
+        const rc = await call('categories');
+        catParent = {};
+        for (const c of rc.categories || []) if (c.parent) catParent[c.name] = c.parent;
+        saveJson('abmt:cattree', catParent);
+      } catch (e) { /* headers just show leaf names */ }
       st.asAt = new Date().toISOString();
       st.phase = 'ready';
       saveCache();
@@ -661,23 +669,51 @@ const Aro = (() => {
     }));
   }
 
-  function renderTakeCatalogue(el, items) {
-    let h = '';
-    for (const g of catGroups(items)) {
-      h += `<div class="cat-group"><div class="cat-head">${esc(g.name)}</div><div class="cat-cells">`;
-      for (const it of g.list) {
-        const have = qtyAt(it, st.take.name);
-        const val = st.take.counts[it.id] != null ? st.take.counts[it.id] : '';
-        h += `<label class="cat-cell" title="${esc(it.desc)} — ${esc(it.pn)}">
-          <span class="cat-size">${esc(catLabelOf(it))}</span>
-          <span class="cat-pn">${esc(it.pn || '')}</span>
-          <span class="cat-have">has ${qty(have)}</span>
-          <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
-        </label>`;
-      }
-      h += `</div></div>`;
+  // Primary grouping = the item's AroFlo category (the org's own taxonomy,
+  // shown with its parent category), with the family/size rows nested inside
+  // each section — press fittings still read like the printed catalogue,
+  // while brackets and accessories sit in their own sections instead of
+  // polluting the fitting rows.
+  function catSections(items) {
+    const byCat = new Map();
+    for (const it of items) {
+      const c = it.cat || 'Uncategorised';
+      if (!byCat.has(c)) byCat.set(c, []);
+      byCat.get(c).push(it);
     }
-    el.innerHTML = h;
+    const names = [...byCat.keys()].sort((a, b) =>
+      (a === 'Uncategorised') - (b === 'Uncategorised') || a.localeCompare(b));
+    return names.map(cat => ({ cat, groups: catGroups(byCat.get(cat)) }));
+  }
+
+  function catSectionsHtml(items, cellFn) {
+    let h = '';
+    for (const s of catSections(items)) {
+      const parent = catParent[s.cat];
+      h += `<div class="cat-cat">${parent ? `<span class="cat-parent">${esc(parent)} · </span>` : ''}${esc(s.cat)}</div>`;
+      for (const g of s.groups) {
+        // a section whose only group is unparsed items needs no family row
+        const showHead = !(s.groups.length === 1 && g.name === 'Other');
+        h += `<div class="cat-group">${showHead ? `<div class="cat-head">${esc(g.name)}</div>` : ''}<div class="cat-cells">`;
+        for (const it of g.list) h += cellFn(it);
+        h += `</div></div>`;
+      }
+    }
+    return h;
+  }
+
+  function renderTakeCatalogue(el, items) {
+    el.innerHTML = catSectionsHtml(items, it => {
+      const have = qtyAt(it, st.take.name);
+      const val = st.take.counts[it.id] != null ? st.take.counts[it.id] : '';
+      const label = catLabelOf(it);
+      return `<label class="cat-cell" title="${esc(it.desc)} — ${esc(it.pn)}">
+        <span class="cat-size">${esc(label)}</span>
+        ${it.pn && it.pn !== label ? `<span class="cat-pn">${esc(it.pn)}</span>` : ''}
+        <span class="cat-have">has ${qty(have)}</span>
+        <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
+      </label>`;
+    });
     wireCountInputs(el);
   }
 
@@ -919,19 +955,15 @@ const Aro = (() => {
           tally();
           return;
         }
-        let h = '';
-        for (const g of catGroups(items.slice(0, 600))) {
-          h += `<div class="cat-group"><div class="cat-head">${esc(g.name)}</div><div class="cat-cells">`;
-          for (const it of g.list) {
-            const n = draft.counts[it.id] || 0;
-            h += `<button type="button" class="cat-cell used-cell${n ? ' sel' : ''}" data-id="${esc(it.id)}" title="${esc(it.desc)} — ${esc(it.pn)}">
-              <span class="cat-size">${esc(catLabelOf(it))}</span>
-              <span class="cat-pn">${esc(it.pn || '')}</span>
-              ${n ? `<span class="used-n">${qty(n)}</span><span class="used-minus" data-id="${esc(it.id)}">−</span>` : ''}
-            </button>`;
-          }
-          h += `</div></div>`;
-        }
+        let h = catSectionsHtml(items.slice(0, 600), it => {
+          const n = draft.counts[it.id] || 0;
+          const label = catLabelOf(it);
+          return `<button type="button" class="cat-cell used-cell${n ? ' sel' : ''}" data-id="${esc(it.id)}" title="${esc(it.desc)} — ${esc(it.pn)}">
+            <span class="cat-size">${esc(label)}</span>
+            ${it.pn && it.pn !== label ? `<span class="cat-pn">${esc(it.pn)}</span>` : ''}
+            ${n ? `<span class="used-n">${qty(n)}</span><span class="used-minus" data-id="${esc(it.id)}">−</span>` : ''}
+          </button>`;
+        });
         if (items.length > 600) h += `<p class="prop-note">…and ${items.length - 600} more — search, or pick a system preset.</p>`;
         grid.innerHTML = h;
         grid.scrollTop = sc;
@@ -2052,6 +2084,7 @@ const Aro = (() => {
     sysPresets = loadJson('abmt:syspresets', []);
     jobSys = loadJson('abmt:jobsys', {});
     usedDrafts = loadJson('abmt:used', {});
+    catParent = loadJson('abmt:cattree', {});
     st.catView = !!loadJson('abmt:catview', false);
     if (loadCache()) st.phase = 'ready';
     render();
