@@ -4,7 +4,7 @@ A Bluebeam-style PDF markup and measurement tool built for one job: **marking up
 
 ![AirMark screenshot](docs/screenshot.png)
 
-Everything runs client-side. Drawings never leave your computer — there is no server, no upload, no account. (The optional [AroFlo site-stock connection](#live-site-stock-aroflo) is the one exception: inventory queries go through a small read-only proxy so API keys stay off the browser.)
+Everything runs client-side — there is no build, no framework, and drawings stay on the device by default. Two optional connections change that deliberately: the [AroFlo site-stock link](#live-site-stock-aroflo) (inventory queries through a small proxy so API keys stay off the browser) and the [team cloud](#team-cloud-optional--sign-in-shared-projects-drawings-synced) (sign-in, a shared project list, and drawings/markups synced to your own private storage so any employee's device can open any job).
 
 ## Quick start
 
@@ -110,7 +110,7 @@ AroFlo's API is signed with a **secret HMAC key that must never be shipped in br
    - `AROFLO_PROXY_TOKEN` — *(strongly recommended)* any random string; anyone who finds your deployment URL can otherwise read your inventory through the proxy. Enter the same token in the app under **Stock → ⚙**.
 3. Redeploy. The app finds the proxy at `/api/aroflo` on the same host automatically — open **Stock**, hit **⚙ → Test connection**, and it should greet you with your business-unit name.
 
-Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and drawings still never leave your machine — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected — refreshes fetch 500-item pages on demand (up to 20,000 items) and stop early on small catalogues. **Big catalogue?** Scope the sync in **Stock → ⚙ → Sync scope** to just your install categories (Impress, Fittings, Hose & Tube…) — refreshes then take a couple of calls instead of a full crawl, and a safety sweep still surfaces any stock held on items outside the scope so nothing on site is ever invisible. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
+Requests are HMAC-SHA512-signed server-side per AroFlo's spec; the keys never reach the browser, and no drawing data goes to AroFlo — only inventory queries go out. AroFlo rate limits (3/s, 120/min, 2000/day) are respected — refreshes fetch 500-item pages on demand (up to 20,000 items) and stop early on small catalogues. **Big catalogue?** Scope the sync in **Stock → ⚙ → Sync scope** to just your install categories (Impress, Fittings, Hose & Tube…) — refreshes then take a couple of calls instead of a full crawl, and a safety sweep still surfaces any stock held on items outside the scope so nothing on site is ever invisible. On a static host (GitHub Pages, `file://`) the Stock tab simply shows its setup notes — everything else works as before; you can also point **Stock → ⚙ → Proxy URL** at a proxy deployed elsewhere.
 
 ### Scan, minimums, and pick lists
 
@@ -138,9 +138,25 @@ The fastest end-of-run loop on site: tap the **area zone** → tap **+ Log parts
 
 Everything else about the proxy stays read-only (inventory, stock levels, task lookup, task materials); the write path accepts nothing but per-holder quantity adjustments and used-material lines for a named task — capped and validated, and both refused server-side without the proxy token. On the first real push, spot-check the result in AroFlo (the app re-reads and shows the new figures immediately) — adjustments land in AroFlo's stock history like any manual adjustment, so they're auditable.
 
+## Team cloud (optional) — sign in, shared projects, drawings synced
+
+With a small free backend attached, AirMark stops being single-device: employees **sign in with a name + PIN**, every device sees the **shared project list** (named with the job ref and its AroFlo project number, plus who saved last and when), and tapping a project downloads the drawing and everyone's markups onto that device. From then on it behaves exactly like a local project — **offline-first is unchanged**: edits land in the device store first and a ☁ chip shows when they've synced (saving / synced / offline — will sync / newer version exists). If someone else saved while you were offline, the app **warns before anything is overwritten** — load theirs or knowingly keep yours. Opening a project never bumps its version or claims "updated by"; only real edits do. Stock and job data stay in AroFlo (the system of record) — the cloud holds drawings, markups and photos only.
+
+Setup (about 10 minutes, once):
+
+1. Create a free project at [supabase.com](https://supabase.com) (any name, nearest region).
+2. In the Supabase **SQL editor**, run the snippet from the top of [`api/cloud.js`](api/cloud.js) — it creates the `am_projects` registry table (locked down) and a **private** `airmark` storage bucket.
+3. In Vercel → Project → Settings → Environment Variables, add:
+   - `SUPABASE_URL` — the project URL (Supabase → Project Settings → API)
+   - `SUPABASE_SERVICE_KEY` — the `service_role` key from the same page (server-side only; the browser never sees it)
+   - `AIRMARK_CREW` — who can sign in, as `Name:PIN` pairs: `Josh:4821,Jay:7733`
+4. Redeploy. The sign-in card appears on the front page; each employee signs in once per device (sessions last 60 days) and their name is stamped on every markup they make.
+
+Notes: PDFs and markup JSON move between the browser and storage via short-lived signed URLs — big plan sets never squeeze through the serverless function. Add or drop crew members by editing `AIRMARK_CREW` (and redeploying); changing someone's PIN signs their devices out. Without the three variables set, the card simply doesn't appear and the app is exactly as before. **Privacy:** with team cloud on, drawings are stored in *your* Supabase project (private bucket, service-key access only) — they still never touch anyone else's servers.
+
 ## Files & saving
 
-- **Autosave** — markups are saved in the browser per drawing (keyed to the PDF's fingerprint) about a second after every change. Re-open the same PDF and you'll be offered a restore.
+- **Autosave** — markups are saved in the browser per drawing (keyed to the PDF's fingerprint) about a second after every change, and synced to the team cloud when sign-in is set up. Re-open the same PDF and you'll be offered a restore.
 - **`.airmark` project** — `Save` writes a single JSON file containing markups, calibration, count groups *and the PDF itself* (when under 50 MB), so a project can move between computers. `Load` (or drag-drop) opens it back up.
 - **Flattened PDF** — `Export PDF` keeps the **original pages untouched** (vector linework and text stay at full quality, still searchable) and draws the markups on top as **native PDF vector geometry** — pipes, shapes, clouds, labels and penetration marks are as crisp as the drawing at any zoom. Photos embed at their stored resolution; only symbol glyphs rasterize, as tiny ~600 DPI stamps. Rotated pages are handled, exports are small, and any markup the vector renderer can't reproduce falls back to its own high-res stamp so nothing goes missing. Only if the source PDF can't be reloaded (e.g. encrypted) does it fall back to rasterizing pages.
 - **CSV** — the export dialog lets you tick exactly what goes in the schedule: whole sections (pipe takeoff, fittings, penetration schedule, counts, markup list) or individual rows, with totals recalculated over what's included, plus a note printed in the header (e.g. "Penetration Ø = pipe OD — fire-rating clearance TBC"). Selections persist with the project.

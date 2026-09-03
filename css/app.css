@@ -532,3 +532,28 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
   margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--accent); }
 .cat-cat:first-child { margin-top: 4px; }
 .cat-cat .cat-parent { color: var(--txt-dim); font-weight: 400; }
+/* team cloud: sign-in card + project list + sync chip */
+.cloud-card { margin: 18px auto 0; max-width: 440px; text-align: left; }
+.cloud-card .recent-cap { display: flex; align-items: center; gap: 8px; }
+.cloud-card .recent-cap .mini-btn { margin-left: auto; }
+.cloud-card .recent-cap .mini-btn + .mini-btn { margin-left: 0; }
+.cloud-row { display: flex; gap: 6px; margin-top: 6px; }
+.cloud-row input { flex: 1; min-width: 0; background: var(--bg3); color: var(--txt);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 8px 10px; font-size: 14px; }
+.cloud-row input#cl-pin { flex: 0 0 84px; }
+.cloud-err { color: #e05555; font-size: 12px; margin-top: 6px; min-height: 14px; }
+.cloud-note { color: var(--txt-dim); font-size: 12.5px; margin-top: 6px; }
+.cloud-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.cloud-chip { position: fixed; right: 12px; bottom: calc(46px + env(safe-area-inset-bottom));
+  z-index: 60; border: 1px solid var(--edge); border-radius: 999px; padding: 5px 12px;
+  background: var(--bg2); color: var(--txt-dim); font: inherit; font-size: 12px; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+.cloud-chip.synced { color: #39b54a; }
+.cloud-chip.saving { color: var(--txt); }
+.cloud-chip.offline { color: #e8b13c; }
+.cloud-chip.error, .cloud-chip.conflict { color: #e05555; border-color: #e05555; }
+@media (max-width: 760px) { .cloud-chip { bottom: calc(120px + env(safe-area-inset-bottom)); } }
+#cloudCard, #recentList { pointer-events: auto; }
+.cloud-who { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+  color: var(--txt-dim); margin: 2px 0 8px; }
+.cloud-who .mini-btn:first-of-type { margin-left: auto; }
