@@ -90,7 +90,8 @@ async function sb(method, path, body, extraHeaders) {
         ? 'got a web page instead of data — SUPABASE_URL is probably not the Supabase Project URL (it must look like https://xxxx.supabase.co, from Supabase → Project Settings → API)'
         : text.slice(0, 200);
     }
-    throw new Error('Storage service error (HTTP ' + resp.status + '): ' + msg);
+    // name the exact call so a failure is diagnosable from the chip message
+    throw new Error('Storage service error (HTTP ' + resp.status + ') on ' + method + ' ' + path.split('?')[0] + ': ' + msg);
   }
   return json;
 }
