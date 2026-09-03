@@ -49,11 +49,14 @@ const configured = () => !!(env('SUPABASE_URL') && env('SUPABASE_SERVICE_KEY') &
 
 /* ---------------- Supabase REST helpers (service key, server-side only) ---------------- */
 
-// Tolerate the ways a URL gets pasted: trailing slash (the gateway 404s
-// double-slash paths with "Invalid path specified in request URL") and a
-// missing scheme.
+// Tolerate the ways a URL gets pasted: trailing slash, missing scheme, and
+// the dashboard's per-service endpoints (…/rest/v1, …/storage/v1) — if one
+// of those was copied, walk back to the project root. A base that keeps a
+// /rest/v1 suffix makes PostgREST see nested paths and answer 404 "Invalid
+// path specified in request URL" on every call.
 function sbBase() {
   let base = env('SUPABASE_URL').replace(/\/+$/, '');
+  base = base.replace(/\/(rest|storage|auth|realtime|functions)\/v1$/i, '').replace(/\/+$/, '');
   if (base && !/^https?:\/\//i.test(base)) base = 'https://' + base;
   return base;
 }
