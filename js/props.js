@@ -189,10 +189,62 @@ const Props = (() => {
     </div>`;
   }
 
+  // Running totals for a multi-selection — the same scale-aware maths as
+  // each markup's own label, so highlighting a handful of measurements (or
+  // pipe runs) reads out their combined length at a glance.
+  function selectionTotalsHtml(sel) {
+    if (sel.length < 2) return '';
+    const fmt = State.S.unitFormat;
+    let measFt = 0, measN = 0, measNoScale = 0;
+    let pipeFt = 0, pipeN = 0, pipeNoScale = 0;
+    const pipeBySize = new Map();
+    let areaSq = 0, areaN = 0, areaNoScale = 0;
+    let countN = 0;
+    for (const m of sel) {
+      if (m.type === 'mlength' || m.type === 'mpoly') {
+        measN++;
+        const ft = State.lengthFt(m);
+        if (ft == null) measNoScale++; else measFt += ft;
+      } else if (m.type === 'pipe') {
+        pipeN++;
+        const ft = State.lengthFt(m);
+        if (ft == null) pipeNoScale++;
+        else {
+          pipeFt += ft;
+          const k = `${m.pipeSize}${m.material ? ' ' + m.material : ''}`;
+          pipeBySize.set(k, (pipeBySize.get(k) || 0) + ft);
+        }
+      } else if (m.type === 'marea') {
+        areaN++;
+        const a = State.areaFt(m);
+        if (a == null) areaNoScale++; else areaSq += a;
+      } else if (m.type === 'count') {
+        countN++;
+      }
+    }
+    if (!measN && !pipeN && !areaN && !countN) return '';
+    const noScale = n => (n ? ` <span class="tot-warn">+${n} no scale</span>` : '');
+    const row = (label, val) => `<div class="tot-row"><span>${label}</span><b>${val}</b></div>`;
+    let rows = '';
+    if (measN) rows += row(`Lengths × ${measN}`, esc(Units.fmtLen(measFt, fmt)) + noScale(measNoScale));
+    if (pipeN) {
+      rows += row(`Pipe runs × ${pipeN}`, (pipeFt || !pipeNoScale ? esc(Units.fmtLen(pipeFt, fmt)) : '—') + noScale(pipeNoScale));
+      if (pipeBySize.size > 1 && pipeBySize.size <= 6) {
+        for (const [k, ft] of [...pipeBySize.entries()].sort((a, b) => b[1] - a[1]))
+          rows += `<div class="tot-sub"><span>${esc(k)}</span><b>${esc(Units.fmtLen(ft, fmt))}</b></div>`;
+      }
+    }
+    if (measN && pipeN) rows += row('All lengths', esc(Units.fmtLen(measFt + pipeFt, fmt)));
+    if (areaN) rows += row(`Areas × ${areaN}`, esc(Units.fmtArea(areaSq, fmt)) + noScale(areaNoScale));
+    if (countN) rows += row('Count marks', String(countN));
+    return `<div class="tot-box" id="selTotals">${rows}</div>`;
+  }
+
   function propsForSelection(sel) {
     const first = sel[0];
     const types = new Set(sel.map(m => m.type));
     let h = `<div class="prop-cap">${sel.length === 1 ? esc(typeName(first.type)) : sel.length + ' markups selected'}</div>`;
+    h += selectionTotalsHtml(sel);
 
     if (sel.length === 1) {
       const meas = Render.measureLabel(first);
