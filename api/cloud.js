@@ -49,9 +49,18 @@ const configured = () => !!(env('SUPABASE_URL') && env('SUPABASE_SERVICE_KEY') &
 
 /* ---------------- Supabase REST helpers (service key, server-side only) ---------------- */
 
+// Tolerate the ways a URL gets pasted: trailing slash (the gateway 404s
+// double-slash paths with "Invalid path specified in request URL") and a
+// missing scheme.
+function sbBase() {
+  let base = env('SUPABASE_URL').replace(/\/+$/, '');
+  if (base && !/^https?:\/\//i.test(base)) base = 'https://' + base;
+  return base;
+}
+
 async function sb(method, path, body, extraHeaders) {
   const key = env('SUPABASE_SERVICE_KEY');
-  const base = env('SUPABASE_URL');
+  const base = sbBase();
   // the most common setup mistake: pasting the app's own URL or the
   // Supabase dashboard address instead of the project's API URL
   if (/vercel\.app/i.test(base))
@@ -99,12 +108,12 @@ function slimRow(r) {
 
 async function signedUpload(path) {
   const r = await sb('POST', `/storage/v1/object/upload/sign/${BUCKET}/${path}`, {});
-  return env('SUPABASE_URL') + '/storage/v1' + r.url;
+  return sbBase() + '/storage/v1' + r.url;
 }
 
 async function signedDownload(path, expiresIn) {
   const r = await sb('POST', `/storage/v1/object/sign/${BUCKET}/${path}`, { expiresIn: expiresIn || 600 });
-  return env('SUPABASE_URL') + '/storage/v1' + (r.signedURL || r.signedUrl);
+  return sbBase() + '/storage/v1' + (r.signedURL || r.signedUrl);
 }
 
 /* ---------------- crew + session tokens ---------------- */
