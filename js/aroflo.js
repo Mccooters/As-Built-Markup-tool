@@ -11,7 +11,7 @@ const Aro = (() => {
 
   const CFG_KEY = 'abmt:aroflo';
   const CACHE_KEY = 'abmt:aroflo:cache';
-  const STALE_MS = 15 * 60 * 1000;   // auto-refresh when shown and older than this
+  const STALE_MS = 60 * 60 * 1000;   // snapshot older than this gets a "⟳ for live figures" hint
   const MAX_PAGES = 40;              // safety cap: 40 × 500 = 20,000 items
   const MAX_ROWS = 400;              // rendered rows cap (search narrows the rest)
 
@@ -165,6 +165,24 @@ const Aro = (() => {
   }
 
   const qtyAt = (it, name) => (it.levels || []).reduce((a, l) => a + (l.to === name ? l.qty : 0), 0);
+
+  // Mirror a set of adjuststock moves onto the local snapshot, so writes
+  // update the list instantly instead of forcing a full re-crawl — the next
+  // manual ⟳ re-reads the true figures from AroFlo.
+  function applyLocalMoves(moves) {
+    for (const mv of moves) {
+      const it = st.items.find(x => x.id === mv.itemid);
+      if (!it) continue;
+      const h = st.allHolders.find(x => x.id === mv.toId);
+      let row = (it.levels || []).find(l => l.id === mv.toId || (h && l.to === h.name));
+      if (!row) {
+        row = { to: h ? h.name : mv.toId, id: mv.toId, type: mv.toType, qty: 0, updated: '' };
+        (it.levels = it.levels || []).push(row);
+      }
+      row.qty = Math.round((row.qty + mv.delta) * 10000) / 10000;
+    }
+    saveCache();
+  }
 
   async function refresh() {
     if (inflight) return;
@@ -325,9 +343,10 @@ const Aro = (() => {
       if (site.holder && !st.holder) st.holder = site.holder;
       if (site.project && !st.tm.pQuery) { st.tm.pQuery = site.project; st.tm.mode = 'project'; }
     }
-    const fresh = st.asAt && (Date.now() - Date.parse(st.asAt) < STALE_MS);
     render();
-    if (st.phase !== 'loading' && !(st.phase === 'ready' && fresh)) refresh();
+    // open instantly from the local snapshot — a crawl only runs when there
+    // is nothing cached yet; ⟳ is the deliberate way to pull live figures
+    if (!st.items.length && st.phase !== 'loading') refresh();
   }
 
   function closePage() {
@@ -474,7 +493,8 @@ const Aro = (() => {
     if (st.asAt) {
       const mins = Math.round((Date.now() - Date.parse(st.asAt)) / 60000);
       const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : new Date(st.asAt).toLocaleString();
-      h += `<span class="muted">${filteredItems().length} of ${st.items.length} items · as at ${esc(age)}</span>`;
+      const staleHint = Date.now() - Date.parse(st.asAt) > STALE_MS ? ' — <b>⟳ for live figures</b>' : '';
+      h += `<span class="muted">${filteredItems().length} of ${st.items.length} items · as at ${esc(age)}${staleHint}</span>`;
       if (cfg.cats.length) {
         const scope = cfg.cats.length > 3 ? cfg.cats.slice(0, 3).join(', ') + ' +' + (cfg.cats.length - 3) + ' more' : cfg.cats.join(', ');
         h += `<div class="muted" style="margin-top:2px">Scope: ${esc(scope)}${st.outside ? ` · <b>${st.outside}</b> stocked item${st.outside === 1 ? '' : 's'} outside scope (shown anyway)` : ''}</div>`;
@@ -1140,14 +1160,7 @@ const Aro = (() => {
           if (deduct && from) {
             const moves = lines.map(l => ({ itemid: l.it.id, toId: from.id, toType: from.type, delta: -l.q }));
             for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
-            // reflect the deduction locally straight away — the next full ⟳
-            // re-reads the true figures
-            for (const l of lines) {
-              let row = (l.it.levels || []).find(x => x.to === from.name);
-              if (!row) { row = { to: from.name, id: from.id, type: from.type, qty: 0, updated: '' }; (l.it.levels = l.it.levels || []).push(row); }
-              row.qty = Math.round((row.qty - l.q) * 10000) / 10000;
-            }
-            saveCache();
+            applyLocalMoves(moves);
           }
           delete usedDrafts[job];
           saveDrafts();
@@ -1507,9 +1520,10 @@ const Aro = (() => {
         btn.disabled = true; btn.textContent = 'Moving…';
         try {
           for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
+          applyLocalMoves(moves);
           close();
-          App.toast(`Pick list moved — ${moves.length / 2} line${moves.length === 2 ? '' : 's'} → ${dstH.name}. Re-reading…`, 'good', 6000);
-          await refresh();
+          App.toast(`Pick list moved — ${moves.length / 2} line${moves.length === 2 ? '' : 's'} → ${dstH.name}. ✔`, 'good', 5000);
+          render();
         } catch (e) {
           btn.disabled = false; btn.textContent = 'Move to site';
           App.toast('Move failed: ' + e.message, 'error', 9000);
@@ -1645,13 +1659,15 @@ const Aro = (() => {
         const btn = box.querySelector('#mv-ok');
         btn.disabled = true; btn.textContent = 'Moving…';
         try {
-          await postCall('adjuststock', { moves: [
+          const moves = [
             { itemid: it.id, toId: from.id, toType: from.type, delta: -qv },
             { itemid: it.id, toId: dest.id, toType: dest.type, delta: qv },
-          ] });
+          ];
+          await postCall('adjuststock', { moves });
+          applyLocalMoves(moves);
           close();
-          App.toast(`Moved ${qty(qv)} × ${it.desc} → ${dest.name}. Re-reading…`, 'good', 6000);
-          await refresh();
+          App.toast(`Moved ${qty(qv)} × ${it.desc} → ${dest.name}. ✔`, 'good', 5000);
+          render();
         } catch (e) {
           btn.disabled = false; btn.textContent = 'Move';
           note.textContent = 'Move failed: ' + e.message;
@@ -2067,8 +2083,7 @@ const Aro = (() => {
   function onShow() {
     if (st.shownOnce) return;
     st.shownOnce = true;
-    const fresh = st.asAt && (Date.now() - Date.parse(st.asAt) < STALE_MS);
-    if (!(st.phase === 'ready' && fresh)) refresh(); // an unconfigured proxy answers instantly with the setup panel
+    if (!st.items.length) refresh(); // an unconfigured proxy answers instantly with the setup panel
   }
 
   function init() {
