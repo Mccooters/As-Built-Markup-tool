@@ -51,7 +51,14 @@ const configured = () => !!(env('SUPABASE_URL') && env('SUPABASE_SERVICE_KEY') &
 
 async function sb(method, path, body, extraHeaders) {
   const key = env('SUPABASE_SERVICE_KEY');
-  const resp = await fetch(env('SUPABASE_URL') + path, {
+  const base = env('SUPABASE_URL');
+  // the most common setup mistake: pasting the app's own URL or the
+  // Supabase dashboard address instead of the project's API URL
+  if (/vercel\.app/i.test(base))
+    throw new Error('SUPABASE_URL is set to the app’s own Vercel address — it must be the Supabase Project URL (looks like https://xxxx.supabase.co, from Supabase → Project Settings → API). Fix the env var and redeploy.');
+  if (/supabase\.com/i.test(base))
+    throw new Error('SUPABASE_URL is set to the Supabase dashboard address — it must be the Project URL (looks like https://xxxx.supabase.co, note .co, from Supabase → Project Settings → API). Fix the env var and redeploy.');
+  const resp = await fetch(base + path, {
     method,
     headers: {
       apikey: key,
@@ -66,7 +73,14 @@ async function sb(method, path, body, extraHeaders) {
   let json = null;
   try { json = JSON.parse(text); } catch (e) { /* leave null */ }
   if (!resp.ok) {
-    const msg = json && (json.message || json.error || json.msg) || text.slice(0, 200);
+    let msg = json && (json.message || json.error || json.msg);
+    if (!msg) {
+      // an HTML body means we reached a website, not the Supabase API —
+      // don't dump the page, say what's actually wrong
+      msg = /^\s*</.test(text)
+        ? 'got a web page instead of data — SUPABASE_URL is probably not the Supabase Project URL (it must look like https://xxxx.supabase.co, from Supabase → Project Settings → API)'
+        : text.slice(0, 200);
+    }
     throw new Error('Storage service error (HTTP ' + resp.status + '): ' + msg);
   }
   return json;
