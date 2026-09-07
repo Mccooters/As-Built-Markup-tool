@@ -524,6 +524,7 @@ const ACTIONS = {
     };
 
     let last = null, inserted = 0, winner = 0;
+    let lineErrors = [];
     const errs = new Set();
     for (const v of takenfrom ? [1, 2, 3] : [1, 3]) {
       if (last) await sleep(360); // stay under the per-second limit
@@ -532,6 +533,12 @@ const ACTIONS = {
       const pr = r.zoneresponse.postresults || {};
       for (const e of Array.isArray(pr.errors) ? pr.errors : [])
         errs.add(str(typeof e === 'object' ? JSON.stringify(e) : e).slice(0, 300));
+      // the per-line verdicts hide in the inserts echo — surface the ones
+      // that carry an error so a partial failure names its lines
+      const echo = (pr.inserts && Array.isArray(pr.inserts.materials)) ? pr.inserts.materials : [];
+      lineErrors = echo.filter(e => e && e.error).map(e => ({
+        pn: str(e.partnumber), item: str(e.item).slice(0, 80), error: str(e.error).slice(0, 200),
+      }));
       inserted = num(pr.inserttotal);
       if (r.ok && inserted > 0) { winner = v; break; } // never re-send inserted lines
     }
@@ -541,8 +548,9 @@ const ACTIONS = {
       variant: winner,
       takenfromDropped: winner === 3 && !!takenfrom,
       postErrors: [...errs].slice(0, 5),
+      lineErrors: lineErrors.slice(0, 20),
     };
-    if (!inserted) out.postDebug = JSON.stringify(last.zoneresponse).slice(0, 4000);
+    if (inserted < clean.length) out.postDebug = JSON.stringify(last.zoneresponse).slice(0, 4000);
     return relay(last, out);
   },
 

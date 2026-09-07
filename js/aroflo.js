@@ -1089,7 +1089,7 @@ const Aro = (() => {
     });
   }
 
-  function usedReview(job, task, opts) {
+  function usedReview(job, task, opts, notice) {
     const draft = usedDrafts[job] || { counts: {} };
     const lines = Object.entries(draft.counts)
       .map(([id, q]) => ({ it: st.items.find(i => i.id === id), q }))
@@ -1116,6 +1116,7 @@ const Aro = (() => {
         <select id="ur-from">${holdersW.map(h => `<option value="${esc(h.name)}"${h.name === defFrom ? ' selected' : ''}>${esc(h.name)} — ${esc(holderKind(h.type))}</option>`).join('')}</select></div>
       <label class="chk"><input type="checkbox" id="ur-deduct"${deductDef ? ' checked' : ''}> Also deduct these quantities from the holder's site stock</label>
       <p class="muted">The lines land in the task's <b>Used Items</b> in AroFlo, dated today. AroFlo doesn't move inventory for API-booked lines by itself, so leave the deduction on to keep the site holder's counts true — if your AroFlo shows a double deduction after the first save, untick it from then on.</p>
+      ${notice ? `<div class="aro-error">${esc(notice)}</div>` : ''}
       <div class="aro-error" id="ur-err" hidden></div>
       <div class="modal-actions">
         <button class="mini-btn" id="ur-back">Back</button>
@@ -1169,18 +1170,43 @@ const Aro = (() => {
           // shape as a fallback) and hands back the line errors.
           let inserted = 0, usedFallback = false, postDebug = '';
           const postErrs = new Set();
+          const lineErrs = [];
           for (let i = 0; i < payload.lines.length; i += 50) {
             const r = await postCall('usedmaterials', { ...payload, lines: payload.lines.slice(i, i + 50) });
             if (Array.isArray(r.postErrors)) for (const e of r.postErrors) postErrs.add(e);
+            if (Array.isArray(r.lineErrors)) lineErrs.push(...r.lineErrors);
             if (r.takenfromDropped) usedFallback = true;
             if (r.postDebug) postDebug = r.postDebug;
             inserted += r.inserted || 0;
           }
           if (inserted < payload.lines.length) {
-            const detail = postErrs.size
-              ? ' AroFlo said: ' + [...postErrs].join(' · ')
-              : ' AroFlo reported no line errors — check the task isn’t completed/locked in AroFlo.';
-            const err = new Error('AroFlo inserted ' + inserted + ' of ' + payload.lines.length + ' line' + (payload.lines.length === 1 ? '' : 's') + '.' + detail);
+            const reasons = lineErrs.map(le => (le.pn || le.item || 'a line') + ' — ' + le.error);
+            // A clean partial: the booked lines must leave the tally (a
+            // retry would double-book them on the task) and their stock
+            // deduction still applies; only the refused lines stay.
+            if (inserted > 0 && lineErrs.length && inserted + lineErrs.length === payload.lines.length) {
+              const failedPns = new Set(lineErrs.map(le => le.pn).filter(Boolean));
+              const okLines = lines.filter(l => !failedPns.has(l.it.pn));
+              if (okLines.length === inserted) {
+                if (deduct && from) {
+                  const moves = okLines.map(l => ({ itemid: l.it.id, toId: from.id, toType: from.type, delta: -l.q }));
+                  for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
+                  applyLocalMoves(moves);
+                }
+                for (const l of okLines) delete draft.counts[l.it.id];
+                saveDrafts();
+                delete jobCache[job];
+                close();
+                App.toast(`Booked ${inserted} of ${payload.lines.length} lines to #${task.job}${deduct && from ? ' and deducted them' : ''} — ${lineErrs.length} refused, kept in the tally.`, 'warn', 9000);
+                if (st.tm.taskid === task.taskid) loadMaterialsFor(task.taskid);
+                usedReview(job, task, opts, 'AroFlo refused: ' + reasons.join(' · '));
+                return;
+              }
+            }
+            const err = new Error('AroFlo inserted ' + inserted + ' of ' + payload.lines.length + ' line' + (payload.lines.length === 1 ? '' : 's') + '.'
+              + (reasons.length ? ' AroFlo said: ' + reasons.join(' · ')
+                : (postErrs.size ? ' AroFlo said: ' + [...postErrs].join(' · ') : ' AroFlo reported no line errors — check the task isn’t completed/locked in AroFlo.'))
+              + (inserted > 0 ? ' Some lines DID land — check the task in AroFlo before re-sending, so nothing doubles up.' : ''));
             err.debug = postDebug;
             throw err;
           }
