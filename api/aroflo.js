@@ -481,6 +481,27 @@ const ACTIONS = {
       clean.push({ desc, pn, qv, cost: price(l && l.cost), sell: price(l && l.sell) });
     }
 
+    // Pricing triple per line, computed once. AroFlo's validators, learned
+    // one field report at a time: <cost> must exist, <markup> must be
+    // numeric, cost × (1 + markup/100) must equal sell — and a NEGATIVE (or
+    // absurd) markup is refused with the same calculate-correctly error, so
+    // an item whose sell sits below its cost books at cost rather than not
+    // at all.
+    for (const l of clean) {
+      let c = l.cost != null ? l.cost : 0;
+      let s = l.sell != null ? l.sell : c;
+      let mk = 0;
+      if (c > 0) {
+        if (s <= 0) s = c;
+        mk = Math.round(((s / c) - 1) * 1000000) / 10000;
+        if (mk < 0 || mk > 99999) { mk = 0; s = c; }
+        else s = Math.round(c * (1 + mk / 100) * 10000) / 10000;
+      } else {
+        s = 0;
+      }
+      l.c = c; l.mk = mk; l.s = s;
+    }
+
     // AroFlo's docs contradict themselves on this insert (the POSTXML
     // definition says date YYYY-MM-DD, quantity before dateused, takenfrom
     // required; their recorded working call uses YYYY/MM/DD, quantity after
@@ -497,25 +518,7 @@ const ACTIONS = {
       for (const l of clean) {
         const pnEl = l.pn ? `<partnumber><![CDATA[${l.pn}]]></partnumber>` : '';
         const itEl = l.desc ? `<item><![CDATA[${l.desc}]]></item>` : '';
-        // AroFlo's validators, learned one field report at a time: <cost>
-        // must exist ("No cost Element found"), <markup> must be numeric
-        // ("markup value is invalid"), and the three must satisfy
-        // cost × (1 + markup/100) = sell exactly ("Cost, Markup and Sell
-        // values provided do not calculate correctly"). So: markup from the
-        // real cost/sell ratio, then sell recomputed from the rounded markup
-        // so the equation holds at AroFlo's precision. A line with no known
-        // cost books at zero (pricing stays editable in AroFlo).
-        const c = l.cost != null ? l.cost : 0;
-        let s = l.sell != null ? l.sell : c;
-        let mk = 0;
-        if (c > 0) {
-          if (s <= 0) s = c;
-          mk = Math.round(((s / c) - 1) * 1000000) / 10000;
-          s = Math.round(c * (1 + mk / 100) * 10000) / 10000;
-        } else {
-          s = 0;
-        }
-        const priceEl = `<cost>${c.toFixed(4)}</cost><markup>${mk.toFixed(4)}</markup><sell>${s.toFixed(4)}</sell>`;
+        const priceEl = `<cost>${l.c.toFixed(4)}</cost><markup>${l.mk.toFixed(4)}</markup><sell>${l.s.toFixed(4)}</sell>`;
         xml += variant === 1
           ? `<material>${pnEl}${itEl}<quantity>${l.qv}</quantity>${priceEl}<dateused>${dash}</dateused>${takenfrom}${taskEl}</material>`
           : `<material>${pnEl}${itEl}${priceEl}<dateused>${slash}</dateused><quantity>${l.qv}</quantity>${variant === 2 ? takenfrom : ''}${taskEl}</material>`;
@@ -536,9 +539,14 @@ const ACTIONS = {
       // the per-line verdicts hide in the inserts echo — surface the ones
       // that carry an error so a partial failure names its lines
       const echo = (pr.inserts && Array.isArray(pr.inserts.materials)) ? pr.inserts.materials : [];
-      lineErrors = echo.filter(e => e && e.error).map(e => ({
-        pn: str(e.partnumber), item: str(e.item).slice(0, 80), error: str(e.error).slice(0, 200),
-      }));
+      lineErrors = echo.filter(e => e && e.error).map(e => {
+        const pn = str(e.partnumber);
+        const cl = clean.find(x => x.pn === pn);
+        return {
+          pn, item: str(e.item).slice(0, 80), error: str(e.error).slice(0, 200),
+          sent: cl ? `cost ${cl.c.toFixed(4)} / markup ${cl.mk.toFixed(4)} / sell ${cl.s.toFixed(4)}` : '',
+        };
+      });
       inserted = num(pr.inserttotal);
       if (r.ok && inserted > 0) { winner = v; break; } // never re-send inserted lines
     }

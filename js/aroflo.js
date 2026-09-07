@@ -1214,7 +1214,7 @@ const Aro = (() => {
             inserted += r.inserted || 0;
           }
           if (inserted < payload.lines.length) {
-            const reasons = lineErrs.map(le => (le.pn || le.item || 'a line') + ' — ' + le.error);
+            const reasons = lineErrs.map(le => (le.pn || le.item || 'a line') + ' — ' + le.error + (le.sent ? ' [sent ' + le.sent + ']' : ''));
             // A clean partial: the booked lines must leave the tally (a
             // retry would double-book them on the task) and their stock
             // deduction still applies; only the refused lines stay.
