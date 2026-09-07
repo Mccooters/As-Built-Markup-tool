@@ -483,19 +483,20 @@ const ACTIONS = {
 
     // Pricing triple per line, computed once. AroFlo's validators, learned
     // one field report at a time: <cost> must exist, <markup> must be
-    // numeric, cost × (1 + markup/100) must equal sell — and a NEGATIVE (or
-    // absurd) markup is refused with the same calculate-correctly error, so
-    // an item whose sell sits below its cost books at cost rather than not
-    // at all.
+    // numeric, and cost × (1 + markup/100) must reconstruct sell almost
+    // EXACTLY — a markup rounded to 4dp drifts the product by ~1e-6 on
+    // 4-decimal supplier costs and gets refused ("Cost, Markup and Sell
+    // values provided do not calculate correctly"), so the markup goes at
+    // full precision (8dp) derived from the real pair. A negative margin is
+    // refused too, so sell-below-cost lines book at cost.
     for (const l of clean) {
-      let c = l.cost != null ? l.cost : 0;
+      const c = l.cost != null ? l.cost : 0;
       let s = l.sell != null ? l.sell : c;
       let mk = 0;
       if (c > 0) {
         if (s <= 0) s = c;
-        mk = Math.round(((s / c) - 1) * 1000000) / 10000;
-        if (mk < 0 || mk > 99999) { mk = 0; s = c; }
-        else s = Math.round(c * (1 + mk / 100) * 10000) / 10000;
+        mk = ((s / c) - 1) * 100;
+        if (!Number.isFinite(mk) || mk < 0 || mk > 99999) { mk = 0; s = c; }
       } else {
         s = 0;
       }
@@ -518,7 +519,7 @@ const ACTIONS = {
       for (const l of clean) {
         const pnEl = l.pn ? `<partnumber><![CDATA[${l.pn}]]></partnumber>` : '';
         const itEl = l.desc ? `<item><![CDATA[${l.desc}]]></item>` : '';
-        const priceEl = `<cost>${l.c.toFixed(4)}</cost><markup>${l.mk.toFixed(4)}</markup><sell>${l.s.toFixed(4)}</sell>`;
+        const priceEl = `<cost>${l.c.toFixed(4)}</cost><markup>${l.mk.toFixed(8)}</markup><sell>${l.s.toFixed(4)}</sell>`;
         xml += variant === 1
           ? `<material>${pnEl}${itEl}<quantity>${l.qv}</quantity>${priceEl}<dateused>${dash}</dateused>${takenfrom}${taskEl}</material>`
           : `<material>${pnEl}${itEl}${priceEl}<dateused>${slash}</dateused><quantity>${l.qv}</quantity>${variant === 2 ? takenfrom : ''}${taskEl}</material>`;
@@ -544,7 +545,7 @@ const ACTIONS = {
         const cl = clean.find(x => x.pn === pn);
         return {
           pn, item: str(e.item).slice(0, 80), error: str(e.error).slice(0, 200),
-          sent: cl ? `cost ${cl.c.toFixed(4)} / markup ${cl.mk.toFixed(4)} / sell ${cl.s.toFixed(4)}` : '',
+          sent: cl ? `cost ${cl.c.toFixed(4)} / markup ${cl.mk.toFixed(8)} / sell ${cl.s.toFixed(4)}` : '',
         };
       });
       inserted = num(pr.inserttotal);
