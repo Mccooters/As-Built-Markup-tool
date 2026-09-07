@@ -1205,14 +1205,19 @@ const Aro = (() => {
           let inserted = 0, usedFallback = false, postDebug = '';
           const postErrs = new Set();
           const lineErrs = [];
+          const unpricedAll = [];
           for (let i = 0; i < payload.lines.length; i += 50) {
             const r = await postCall('usedmaterials', { ...payload, lines: payload.lines.slice(i, i + 50) });
             if (Array.isArray(r.postErrors)) for (const e of r.postErrors) postErrs.add(e);
             if (Array.isArray(r.lineErrors)) lineErrs.push(...r.lineErrors);
+            if (Array.isArray(r.unpriced)) unpricedAll.push(...r.unpriced);
             if (r.takenfromDropped) usedFallback = true;
             if (r.postDebug) postDebug = r.postDebug;
             inserted += r.inserted || 0;
           }
+          const unpricedNote = unpricedAll.length
+            ? ` ${unpricedAll.length} line${unpricedAll.length === 1 ? '' : 's'} booked WITHOUT pricing (${unpricedAll.join(', ')}) — AroFlo refuses those items' cost/sell maths, so set the price on the task line in AroFlo if it matters.`
+            : '';
           if (inserted < payload.lines.length) {
             const reasons = lineErrs.map(le => (le.pn || le.item || 'a line') + ' — ' + le.error + (le.sent ? ' [sent ' + le.sent + ']' : ''));
             // A clean partial: the booked lines must leave the tally (a
@@ -1231,7 +1236,7 @@ const Aro = (() => {
                 saveDrafts();
                 delete jobCache[job];
                 close();
-                App.toast(`Booked ${inserted} of ${payload.lines.length} lines to #${task.job}${deduct && from ? ' and deducted them' : ''} — ${lineErrs.length} refused, kept in the tally.`, 'warn', 9000);
+                App.toast(`Booked ${inserted} of ${payload.lines.length} lines to #${task.job}${deduct && from ? ' and deducted them' : ''} — ${lineErrs.length} refused, kept in the tally.${unpricedNote}`, 'warn', 9000);
                 if (st.tm.taskid === task.taskid) loadMaterialsFor(task.taskid);
                 usedReview(job, task, opts, 'AroFlo refused: ' + reasons.join(' · '));
                 return;
@@ -1263,6 +1268,7 @@ const Aro = (() => {
           saveDrafts();
           close();
           let note = `Booked ${lines.length} line${lines.length === 1 ? '' : 's'} to #${task.job}${deduct && from ? ' and deducted from ' + from.name : ''}. ✔`;
+          if (unpricedNote) note += unpricedNote;
           if (usedFallback) note += ' AroFlo rejected the taken-from holder, so the lines were booked without it.';
           if (!verified) note += ' AroFlo confirmed the insert but the task list doesn’t show the new lines yet — open the task worksheet in AroFlo to check before re-sending, so nothing doubles up.';
           App.toast(note, verified ? 'good' : 'warn', verified ? 6000 : 12000);

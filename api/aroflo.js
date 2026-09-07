@@ -514,9 +514,9 @@ const ACTIONS = {
     const dash = new Date().toISOString().slice(0, 10);
     const slash = dash.replace(/-/g, '/');
     const taskEl = `<task><taskid>${taskid}</taskid></task>`;
-    const buildXml = variant => {
+    const buildXml = (list, variant) => {
       let xml = '<materials>';
-      for (const l of clean) {
+      for (const l of list) {
         const pnEl = l.pn ? `<partnumber><![CDATA[${l.pn}]]></partnumber>` : '';
         const itEl = l.desc ? `<item><![CDATA[${l.desc}]]></item>` : '';
         const priceEl = `<cost>${l.c.toFixed(4)}</cost><markup>${l.mk.toFixed(8)}</markup><sell>${l.s.toFixed(4)}</sell>`;
@@ -532,7 +532,7 @@ const ACTIONS = {
     const errs = new Set();
     for (const v of takenfrom ? [1, 2, 3] : [1, 3]) {
       if (last) await sleep(360); // stay under the per-second limit
-      const r = await aroPost('taskmaterials', buildXml(v));
+      const r = await aroPost('taskmaterials', buildXml(clean, v));
       last = r;
       const pr = r.zoneresponse.postresults || {};
       for (const e of Array.isArray(pr.errors) ? pr.errors : [])
@@ -551,6 +551,31 @@ const ACTIONS = {
       inserted = num(pr.inserttotal);
       if (r.ok && inserted > 0) { winner = v; break; } // never re-send inserted lines
     }
+    // Lines refused by the calculate-correctly check even though our trio is
+    // exact are being validated against the ITEM their partnumber links to
+    // (its own stored cost/margin/sell doesn't reconcile). A zero-priced
+    // line is the one form this org provably accepts for such items — book
+    // the usage rather than nothing; the price stays editable on the task
+    // line in AroFlo.
+    let unpriced = [];
+    if (lineErrors.length && lineErrors.every(le => /calculate correctly/i.test(le.error))) {
+      const failedPns = new Set(lineErrors.map(le => le.pn).filter(Boolean));
+      const zeroed = clean.filter(l => failedPns.has(l.pn)).map(l => ({ ...l, c: 0, mk: 0, s: 0 }));
+      if (zeroed.length) {
+        await sleep(360);
+        const r2 = await aroPost('taskmaterials', buildXml(zeroed, winner || 1));
+        const pr2 = r2.zoneresponse.postresults || {};
+        const ins2 = num(pr2.inserttotal);
+        if (r2.ok && ins2 > 0) {
+          inserted += ins2;
+          const echo2 = (pr2.inserts && Array.isArray(pr2.inserts.materials)) ? pr2.inserts.materials : [];
+          const still = new Set(echo2.filter(e => e && e.error).map(e => str(e.partnumber)));
+          unpriced = zeroed.filter(l => !still.has(l.pn)).map(l => l.pn);
+          lineErrors = lineErrors.filter(le => still.has(le.pn));
+        }
+      }
+    }
+
     const out = {
       inserted,
       sent: clean.length,
@@ -558,6 +583,7 @@ const ACTIONS = {
       takenfromDropped: winner === 3 && !!takenfrom,
       postErrors: [...errs].slice(0, 5),
       lineErrors: lineErrors.slice(0, 20),
+      unpriced,
     };
     if (inserted < clean.length) out.postDebug = JSON.stringify(last.zoneresponse).slice(0, 4000);
     return relay(last, out);
