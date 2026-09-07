@@ -566,3 +566,14 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 .tot-sub { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px;
   color: var(--txt-dim); padding: 1px 0 1px 14px; }
 .tot-warn { color: #e8b13c; font-weight: 400; font-size: 11px; }
+/* collapsible catalogue sections */
+.cat-cat { display: flex; align-items: baseline; gap: 6px; cursor: pointer;
+  -webkit-user-select: none; user-select: none; }
+.cat-cat .cat-name { min-width: 0; }
+.cat-chev { flex: 0 0 auto; font-size: 11px; }
+.cat-n { flex: 0 0 auto; font-size: 10.5px; color: var(--txt-dim); font-weight: 400;
+  background: var(--bg3); border: 1px solid var(--edge); border-radius: 999px; padding: 0 7px; }
+.cat-badge { flex: 0 0 auto; margin-left: auto; font-size: 10.5px; font-weight: 700;
+  color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 8px; }
+.cat-cat.folded { margin-bottom: 10px; opacity: .85; }
+@media (max-width: 760px) { .cat-cat { padding-top: 4px; padding-bottom: 6px; } }

@@ -48,6 +48,7 @@ const Aro = (() => {
   let jobSys = {};      // job → preset id                        (abmt:jobsys)
   let usedDrafts = {};  // job → {counts:{itemid:qty}, sys, at} — unsent tallies (abmt:used)
   let catParent = {};   // category leaf name → parent name       (abmt:cattree)
+  let catFold = {};     // section name → collapsed?               (abmt:catfold)
   const loadJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
   const saveJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* full */ } };
   let inflight = false;
@@ -706,11 +707,24 @@ const Aro = (() => {
     return names.map(cat => ({ cat, groups: catGroups(byCat.get(cat)) }));
   }
 
-  function catSectionsHtml(items, cellFn) {
+  // Sections collapse: tap a header to fold/unfold (remembered per device),
+  // many sections start folded so the right size is quick to find, and an
+  // active search always shows everything so results never hide. opts.badge
+  // can add a per-section marker (e.g. tallied-line counts) so folded
+  // sections still show what's in them.
+  function catSectionsHtml(items, cellFn, opts = {}) {
     let h = '';
-    for (const s of catSections(items)) {
+    const sections = catSections(items);
+    for (const s of sections) {
       const parent = catParent[s.cat];
-      h += `<div class="cat-cat">${parent ? `<span class="cat-parent">${esc(parent)} · </span>` : ''}${esc(s.cat)}</div>`;
+      const folded = !opts.noFold && (catFold[s.cat] != null ? !!catFold[s.cat] : sections.length > 4);
+      const n = s.groups.reduce((a, g) => a + g.list.length, 0);
+      const badge = opts.badge ? opts.badge(s) : '';
+      h += `<div class="cat-cat${folded ? ' folded' : ''}" data-cat="${esc(s.cat)}" role="button" tabindex="0">
+        <span class="cat-chev">${folded ? '▸' : '▾'}</span>
+        <span class="cat-name">${parent ? `<span class="cat-parent">${esc(parent)} · </span>` : ''}${esc(s.cat)}</span>
+        <span class="cat-n">${n}</span>${badge}</div>`;
+      if (folded) continue;
       for (const g of s.groups) {
         // a section whose only group is unparsed items needs no family row
         const showHead = !(s.groups.length === 1 && g.name === 'Other');
@@ -720,6 +734,15 @@ const Aro = (() => {
       }
     }
     return h;
+  }
+
+  function wireCatFolds(el, redraw) {
+    el.querySelectorAll('.cat-cat').forEach(head =>
+      head.addEventListener('click', () => {
+        catFold[head.dataset.cat] = !head.classList.contains('folded');
+        saveJson('abmt:catfold', catFold);
+        redraw();
+      }));
   }
 
   function renderTakeCatalogue(el, items) {
@@ -733,7 +756,14 @@ const Aro = (() => {
         <span class="cat-have">has ${qty(have)}</span>
         <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
       </label>`;
+    }, {
+      noFold: !!st.filter.trim(),
+      badge: s => {
+        const c = s.groups.reduce((a, g) => a + g.list.filter(it => String(st.take.counts[it.id] ?? '').trim() !== '').length, 0);
+        return c ? `<span class="cat-badge">${c} counted</span>` : '';
+      },
     });
+    wireCatFolds(el, () => renderTakeCatalogue(el, items));
     wireCountInputs(el);
   }
 
@@ -983,10 +1013,17 @@ const Aro = (() => {
             ${it.pn && it.pn !== label ? `<span class="cat-pn">${esc(it.pn)}</span>` : ''}
             ${n ? `<span class="used-n">${qty(n)}</span><span class="used-minus" data-id="${esc(it.id)}">−</span>` : ''}
           </button>`;
+        }, {
+          noFold: !!qEl.value.trim(),
+          badge: s => {
+            const c = s.groups.reduce((a, g) => a + g.list.reduce((x, it) => x + (draft.counts[it.id] || 0), 0), 0);
+            return c ? `<span class="cat-badge">${qty(c)} tallied</span>` : '';
+          },
         });
         if (items.length > 600) h += `<p class="prop-note">…and ${items.length - 600} more — search, or pick a system preset.</p>`;
         grid.innerHTML = h;
         grid.scrollTop = sc;
+        wireCatFolds(grid, draw);
         grid.querySelectorAll('.used-cell').forEach(cell => cell.addEventListener('click', e => {
           const id = cell.dataset.id;
           const minus = e.target.classList && e.target.classList.contains('used-minus');
@@ -2100,6 +2137,7 @@ const Aro = (() => {
     jobSys = loadJson('abmt:jobsys', {});
     usedDrafts = loadJson('abmt:used', {});
     catParent = loadJson('abmt:cattree', {});
+    catFold = loadJson('abmt:catfold', {});
     st.catView = !!loadJson('abmt:catview', false);
     if (loadCache()) st.phase = 'ready';
     render();
