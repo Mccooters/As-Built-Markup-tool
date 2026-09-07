@@ -1135,6 +1135,7 @@ const Aro = (() => {
         close(); usedReview(job, task, opts);
       }));
       box.querySelector('#ur-back').addEventListener('click', () => { close(); usedDialog(job, opts); });
+      let dupOk = false;
       box.querySelector('#ur-save').addEventListener('click', async () => {
         const from = holdersW.find(h => h.name === box.querySelector('#ur-from').value) || null;
         const deduct = box.querySelector('#ur-deduct').checked;
@@ -1144,6 +1145,39 @@ const Aro = (() => {
         errBox.hidden = true;
         btn.disabled = true; btn.textContent = 'Saving…';
         try {
+          // Duplicate guard: AroFlo happily inserts the same line twice, so a
+          // re-send after a partial failure (or a second tap) doubles the
+          // task. Read what's already booked today before posting anything.
+          if (!dupOk) {
+            btn.textContent = 'Checking the task…';
+            let already = [];
+            try {
+              delete jobCache[job];
+              const cur = await jobMaterials(job);
+              const n = new Date();
+              const tLocal = `${n.getFullYear()}/${String(n.getMonth() + 1).padStart(2, '0')}/${String(n.getDate()).padStart(2, '0')}`;
+              const tUtc = n.toISOString().slice(0, 10).replace(/-/g, '/');
+              const todayPns = new Set((cur.materials || [])
+                .filter(m => { const d = String(m.date || '').replace(/-/g, '/'); return d.startsWith(tLocal) || d.startsWith(tUtc); })
+                .map(m => m.pn).filter(Boolean));
+              already = lines.filter(l => todayPns.has(l.it.pn));
+            } catch (e2) { /* can't check — carry on, the save itself still verifies */ }
+            if (already.length) {
+              btn.disabled = false; btn.textContent = 'Save to task';
+              App.toast(
+                `Already booked to #${task.job} today: ${already.map(l => l.it.pn || l.it.desc).join(', ')}. Saving again will DOUBLE them on the task.`,
+                'warn', 0, [
+                  { label: 'Remove them from this save', run: () => {
+                    for (const l of already) delete draft.counts[l.it.id];
+                    saveDrafts();
+                    close();
+                    usedReview(job, task, opts, already.length + ' line' + (already.length === 1 ? '' : 's') + ' dropped — already on the task today.');
+                  } },
+                  { label: 'Book anyway', run: () => { dupOk = true; box.querySelector('#ur-save').click(); } },
+                ]);
+              return;
+            }
+          }
           // AroFlo refuses lines without a cost — items synced before
           // pricing was carried get their figures pulled here, so a stale
           // cache never blocks a save (worst case a line books at $0,
