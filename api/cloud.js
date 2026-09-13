@@ -15,6 +15,17 @@
  *   SUPABASE_SERVICE_KEY  the service_role key (Project Settings → API)
  *   AIRMARK_CREW          who may sign in: "Josh:1234,Jay:8888" (name:PIN,…)
  *
+ * Optional — SharePoint site-drawings register (read-only Microsoft Graph):
+ *   MS_TENANT_ID          Entra "Directory (tenant) ID" of the app registration
+ *   MS_CLIENT_ID          its "Application (client) ID"
+ *   MS_CLIENT_SECRET      a client secret VALUE (not the secret's ID)
+ *   SP_DRAWINGS_URL       the SharePoint folder that holds the project drawings,
+ *                         pasted straight from the browser address bar
+ *   The registration needs the Microsoft Graph APPLICATION permission
+ *   Sites.Read.All (or Sites.Selected granted on the one site) with admin
+ *   consent. Drawing bytes go browser ← SharePoint via the pre-authenticated
+ *   download URL Graph mints; the proxy stream below is only a fallback.
+ *
  * One-time Supabase setup (SQL editor):
  *   create table am_projects (
  *     id uuid primary key default gen_random_uuid(),
@@ -120,6 +131,130 @@ async function signedDownload(path, expiresIn) {
   return sbBase() + '/storage/v1' + (r.signedURL || r.signedUrl);
 }
 
+/* ---------------- Microsoft Graph (SharePoint drawings, read-only) ---------------- */
+
+const spConfigured = () =>
+  !!(env('MS_TENANT_ID') && env('MS_CLIENT_ID') && env('MS_CLIENT_SECRET') && env('SP_DRAWINGS_URL'));
+
+// Overridable bases so the whole flow is testable against a local mock.
+const msLoginBase = () => env('MS_LOGIN_BASE') || 'https://login.microsoftonline.com';
+const graphBase = () => env('MS_GRAPH_BASE') || 'https://graph.microsoft.com/v1.0';
+
+const SP_ITEM_ID = /^[A-Za-z0-9!_-]{3,160}$/;
+let graphTok = { token: '', exp: 0 };   // client-credentials token, cached per warm instance
+let spRootCache = null;                 // resolved {driveId, id, name}
+
+async function graphToken() {
+  if (graphTok.token && Date.now() < graphTok.exp - 60000) return graphTok.token;
+  const resp = await fetch(`${msLoginBase()}/${encodeURIComponent(env('MS_TENANT_ID'))}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: env('MS_CLIENT_ID'),
+      client_secret: env('MS_CLIENT_SECRET'),
+      scope: 'https://graph.microsoft.com/.default',
+    }).toString(),
+    signal: AbortSignal.timeout(20000),
+  });
+  const j = await resp.json().catch(() => null);
+  if (!resp.ok || !j || !j.access_token) {
+    const code = j && (j.error || j.error_description) || ('HTTP ' + resp.status);
+    if (/invalid_client|7000215|700016/i.test(str(code)))
+      throw new Error('Microsoft sign-in refused the app credentials — check MS_CLIENT_ID and MS_CLIENT_SECRET (use the secret VALUE, not its ID) and that the secret has not expired.');
+    if (/90002|invalid_tenant|not found/i.test(str(code)))
+      throw new Error('Microsoft sign-in does not recognise MS_TENANT_ID — copy the Directory (tenant) ID from the app registration overview.');
+    throw new Error('Microsoft sign-in failed: ' + str(j && j.error_description || code).split(/[\r\n]/)[0].slice(0, 200));
+  }
+  graphTok = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3599) * 1000 };
+  return graphTok.token;
+}
+
+async function graph(pathOrUrl) {
+  const tok = await graphToken();
+  const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : graphBase() + pathOrUrl;
+  const resp = await fetch(url, {
+    headers: { Authorization: 'Bearer ' + tok },
+    signal: AbortSignal.timeout(20000),
+  });
+  const j = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    const code = str(j && j.error && j.error.code);
+    if (resp.status === 403 || /accessDenied/i.test(code))
+      throw new Error('Microsoft 365 refused access — the app registration probably has not been granted admin consent for Sites.Read.All (Entra portal → App registrations → API permissions → Grant admin consent).');
+    if (resp.status === 404 || /itemNotFound/i.test(code))
+      throw new Error('SharePoint cannot find the drawings folder — check SP_DRAWINGS_URL is the folder address exactly as the browser shows it, and that the app has access to that site.');
+    throw new Error('SharePoint error (HTTP ' + resp.status + '): ' + str(j && j.error && j.error.message || 'unknown').slice(0, 200));
+  }
+  return j;
+}
+
+// Resolve the pasted folder URL to a drive item once per warm instance —
+// Graph's shares API takes any SharePoint URL as a base64url "share token".
+async function spRoot() {
+  if (spRootCache) return spRootCache;
+  const shareTok = 'u!' + Buffer.from(env('SP_DRAWINGS_URL'), 'utf8').toString('base64url');
+  const it = await graph(`/shares/${shareTok}/driveItem?$select=id,name,parentReference`);
+  const driveId = str(it && it.parentReference && it.parentReference.driveId);
+  if (!it || !it.id || !driveId) throw new Error('SharePoint resolved the folder URL but returned no drive item — is SP_DRAWINGS_URL a folder inside a document library?');
+  spRootCache = { driveId, id: str(it.id), name: str(it.name) };
+  return spRootCache;
+}
+
+// Walk the folder tree (a few levels is plenty for a drawings register) and
+// group the PDFs by their sub-folder path — those become the register's
+// sections, exactly how the drawings are already organised on SharePoint.
+async function spWalk() {
+  const root = await spRoot();
+  const sections = {};
+  const queue = [{ id: root.id, path: '', depth: 0 }];
+  let seen = 0;
+  while (queue.length && seen < 500) {
+    const cur = queue.shift();
+    let next = `/drives/${encodeURIComponent(root.driveId)}/items/${encodeURIComponent(cur.id)}/children?$top=200&$select=id,name,size,folder,file,eTag,lastModifiedDateTime`;
+    while (next && seen < 500) {
+      const j = await graph(next);
+      for (const it of (j && j.value || [])) {
+        seen++;
+        if (it.folder) {
+          if (cur.depth < 3) queue.push({ id: str(it.id), path: cur.path ? cur.path + ' / ' + str(it.name) : str(it.name), depth: cur.depth + 1 });
+        } else if (/\.pdf$/i.test(str(it.name))) {
+          (sections[cur.path] = sections[cur.path] || []).push({
+            id: str(it.id),
+            name: str(it.name),
+            size: Number(it.size) || 0,
+            etag: str(it.eTag),
+            modified: str(it.lastModifiedDateTime),
+          });
+        }
+      }
+      next = j && j['@odata.nextLink'] || null;
+    }
+  }
+  return {
+    root: root.name,
+    sections: Object.keys(sections).sort((a, b) => a.localeCompare(b))
+      .map(path => ({ path, files: sections[path].sort((a, b) => a.name.localeCompare(b.name)) })),
+  };
+}
+
+// Fallback for browsers that can't fetch the pre-authenticated download URL
+// directly: pull the bytes server-side and stream them through.
+async function spProxyStream(res, id) {
+  const root = await spRoot();
+  const it = await graph(`/drives/${encodeURIComponent(root.driveId)}/items/${encodeURIComponent(id)}`);
+  const dl = it && it['@microsoft.graph.downloadUrl'];
+  if (!dl) throw new Error('SharePoint returned no download link for that drawing.');
+  const resp = await fetch(dl, { headers: { 'User-Agent': 'AirMark-drawings-proxy' }, signal: AbortSignal.timeout(120000) });
+  if (!resp.ok || !resp.body) throw new Error('SharePoint download failed (HTTP ' + resp.status + ')');
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  for await (const chunk of resp.body) res.write(Buffer.from(chunk));
+  res.end();
+}
+
 /* ---------------- crew + session tokens ---------------- */
 
 function crew() {
@@ -161,7 +296,7 @@ const ACTIONS = {
 
   // Probe for the client: is team cloud configured on this deployment?
   async status() {
-    return { ok: true, enabled: configured() };
+    return { ok: true, enabled: configured(), sp: spConfigured() };
   },
 
   // Sign in with a crew name + PIN → a signed session token the app stores.
@@ -278,6 +413,28 @@ const ACTIONS = {
     return { ok: true, project: slimRow(rows[0]) };
   },
 
+  // The SharePoint drawings register: sections mirror the folder tree.
+  async drawings() {
+    if (!spConfigured())
+      return { ok: false, spNotConfigured: true, statusmessage: 'SharePoint drawings are not configured on this deployment (set MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET and SP_DRAWINGS_URL).' };
+    const w = await spWalk();
+    return { ok: true, root: w.root, sections: w.sections, fetchedAt: new Date().toISOString() };
+  },
+
+  // A fresh pre-authenticated download URL for one drawing (they expire, so
+  // one is minted per download, never stored).
+  async spfile(q, body) {
+    if (!spConfigured())
+      return { ok: false, spNotConfigured: true, statusmessage: 'SharePoint drawings are not configured on this deployment.' };
+    const id = str(body && body.id).trim();
+    if (!SP_ITEM_ID.test(id)) return { ok: false, httpStatus: 400, statusmessage: 'Bad drawing id' };
+    const root = await spRoot();
+    const it = await graph(`/drives/${encodeURIComponent(root.driveId)}/items/${encodeURIComponent(id)}`);
+    const url = it && it['@microsoft.graph.downloadUrl'];
+    if (!url) return { ok: false, httpStatus: 502, statusmessage: 'SharePoint returned no download link for that drawing.' };
+    return { ok: true, url, name: str(it.name), size: Number(it.size) || 0, etag: str(it.eTag) };
+  },
+
   // Open a project: the registry row plus signed download URLs for its
   // latest markup JSON and the drawing PDF.
   async open(q, body) {
@@ -295,8 +452,8 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, open: 1, teamcfg: 1, teamscope: 1 };
-const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, open: 1, teamscope: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
+const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, open: 1, teamscope: 1, spfile: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
 
@@ -340,7 +497,7 @@ module.exports = async function handler(req, res) {
   const q = Object.fromEntries(u.searchParams.entries());
   const actionName = str(q.action || 'status');
   const action = ACTIONS[actionName];
-  if (!action) { send(res, 400, { ok: false, statusmessage: 'Unknown action' }); return; }
+  if (!action && actionName !== 'spproxy') { send(res, 400, { ok: false, statusmessage: 'Unknown action' }); return; }
 
   if (actionName !== 'status' && !configured()) {
     send(res, 200, { ok: false, notConfigured: true, statusmessage: 'Team cloud is not configured on this deployment (set SUPABASE_URL, SUPABASE_SERVICE_KEY and AIRMARK_CREW).' });
@@ -352,6 +509,20 @@ module.exports = async function handler(req, res) {
     auth = verifyToken(req.headers['x-airmark-auth'] || q.auth);
     if (!auth) { send(res, 401, { ok: false, badAuth: true, statusmessage: 'Sign in again — the session is missing or expired.' }); return; }
   }
+  // spproxy streams PDF bytes, not JSON — it bypasses the normal dispatch
+  if (actionName === 'spproxy') {
+    const id = str(q.id).trim();
+    if (!spConfigured()) { send(res, 400, { ok: false, statusmessage: 'SharePoint drawings are not configured on this deployment.' }); return; }
+    if (!SP_ITEM_ID.test(id)) { send(res, 400, { ok: false, statusmessage: 'Bad drawing id' }); return; }
+    try {
+      await spProxyStream(res, id);
+    } catch (err) {
+      if (!res.headersSent) send(res, 502, { ok: false, statusmessage: 'Drawing download failed: ' + (err && err.message || err) });
+      else res.end();
+    }
+    return;
+  }
+
   let body = null;
   if (POST_ACTIONS[actionName]) {
     if (req.method !== 'POST') { send(res, 405, { ok: false, statusmessage: 'This action requires POST' }); return; }
@@ -367,3 +538,7 @@ module.exports = async function handler(req, res) {
     send(res, 502, { ok: false, statusmessage: timeout ? 'The storage service did not respond in time' : ('Cloud error: ' + (err && err.message || err)) });
   }
 };
+
+// Lets Vercel stream the spproxy fallback instead of buffering it (drawing
+// PDFs can be bigger than the buffered-response limit).
+module.exports.config = { supportsResponseStreaming: true };

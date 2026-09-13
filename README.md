@@ -157,6 +157,20 @@ Signing in also **configures the AroFlo connection by itself**: the proxy token 
 
 Notes: PDFs and markup JSON move between the browser and storage via short-lived signed URLs — big plan sets never squeeze through the serverless function. Add or drop crew members by editing `AIRMARK_CREW` (and redeploying); changing someone's PIN signs their devices out. Without the three variables set, the card simply doesn't appear and the app is exactly as before. **Privacy:** with team cloud on, drawings are stored in *your* Supabase project (private bucket, service-key access only) — they still never touch anyone else's servers.
 
+### Site drawings from SharePoint (optional)
+
+A Bluebeam-style **drawings register** that mirrors the project's SharePoint drawings folder. Signed-in crew see a **Site drawings** card on the front page (and a **Drawings** toolbar button while a sheet is open): sections are the SharePoint sub-folders, each row is a PDF with its size, date and state — **⬇ tap to download**, **✓ on this device (opens offline)**, **↻ updated on SharePoint**. Tapping downloads the sheet straight from SharePoint into the device store, so from then on it opens instantly with no signal, autosyncs markups to the team cloud like any drawing, and **⟳ Sync** re-checks the folder and flags revised sheets. The register itself is cached on-device too — no network is touched unless it's stale (30 min) or you ask.
+
+Setup (one-time, needs a Microsoft 365 admin):
+
+1. [entra.microsoft.com](https://entra.microsoft.com) → **App registrations → New registration** — name it e.g. `AirMark drawings`, single tenant, no redirect URI.
+2. On the app's **Overview**, copy the **Application (client) ID** and **Directory (tenant) ID**.
+3. **Certificates & secrets → New client secret** — copy the secret **Value** (not its ID) right away.
+4. **API permissions → Add a permission → Microsoft Graph → Application permissions → `Sites.Read.All`** → then click **Grant admin consent**. (Read-only. The tighter `Sites.Selected` — access to just the one site — also works if an admin grants it to the site.)
+5. Vercel env vars: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, and `SP_DRAWINGS_URL` = the drawings folder's address pasted straight from the browser. Redeploy.
+
+The credential lives only in server env vars; drawing bytes go browser ← SharePoint via a short-lived pre-authenticated link Graph mints per download (with a streamed proxy fallback), so big sheets never squeeze through the function. Point `SP_DRAWINGS_URL` at the current job's drawings folder; when the next project starts, change that one variable.
+
 ## Files & saving
 
 - **Autosave** — markups are saved in the browser per drawing (keyed to the PDF's fingerprint) about a second after every change, and synced to the team cloud when sign-in is set up. Re-open the same PDF and you'll be offered a restore.

@@ -9,7 +9,7 @@
 
 const Store = (() => {
   const DB = 'abmt';
-  const KEEP = 8; // most-recent projects retained
+  const KEEP = 24; // most-recent projects retained — room for a whole site drawing register
   let dbPromise = null;
 
   function open() {

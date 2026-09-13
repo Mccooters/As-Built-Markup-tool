@@ -18,6 +18,7 @@ const Cloud = (() => {
 
   const st = {
     enabled: null,        // null = probing, false = not configured, true = live
+    sp: false,            // SharePoint drawings register configured server-side?
     token: '', name: '',
     projects: [], listPhase: 'idle', error: '',
     sync: { state: 'idle', at: 0, msg: '' }, // idle|saving|synced|offline|error|conflict
@@ -69,6 +70,7 @@ const Cloud = (() => {
     renderCard();
     refreshList();
     fetchTeamCfg();
+    if (typeof Drawings !== 'undefined') Drawings.onCloudState();
     return r.name;
   }
 
@@ -93,6 +95,7 @@ const Cloud = (() => {
     saveJson(KEY, {});
     renderCard();
     chipSet('idle');
+    if (typeof Drawings !== 'undefined') Drawings.onCloudState();
     if (!silent) App.toast('Signed out of the team cloud.', 'info');
   }
 
@@ -318,12 +321,16 @@ const Cloud = (() => {
     try {
       const s = await call('status');
       st.enabled = !!s.enabled;
+      st.sp = !!s.sp;
     } catch (e) {
       // can't reach the deployment (offline start) — leave the card out;
-      // local recents still work and sync retries once online
+      // local recents still work and sync retries once online. A device
+      // that has the register cached keeps showing it.
       st.enabled = st.token ? true : false;
+      st.sp = !!(st.token && localStorage.getItem('abmt:spreg'));
     }
     renderCard();
+    if (typeof Drawings !== 'undefined') Drawings.onCloudState();
     if (st.enabled === true && st.token) { refreshList(); fetchTeamCfg(); }
   }
 
