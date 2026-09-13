@@ -68,7 +68,24 @@ const Cloud = (() => {
     try { localStorage.setItem('abmt:author', r.name); } catch (e) { /* ignore */ }
     renderCard();
     refreshList();
+    fetchTeamCfg();
     return r.name;
+  }
+
+  // Signed-in devices set up their AroFlo connection by themselves — the
+  // proxy token and the team's sync scope come down with the session, so a
+  // tech's fresh phone needs nothing typed.
+  async function fetchTeamCfg() {
+    if (!st.token || st.enabled !== true) return;
+    try {
+      const r = await call('teamcfg');
+      if (typeof Aro !== 'undefined' && Aro.adoptTeamConfig) Aro.adoptTeamConfig(r);
+    } catch (e) { /* best-effort — settings stay manual */ }
+  }
+
+  async function setTeamScope(cats) {
+    const r = await call('teamscope', { cats: cats || [] });
+    return r.cats;
   }
 
   function signOut(silent) {
@@ -307,10 +324,10 @@ const Cloud = (() => {
       st.enabled = st.token ? true : false;
     }
     renderCard();
-    if (st.enabled === true && st.token) refreshList();
+    if (st.enabled === true && st.token) { refreshList(); fetchTeamCfg(); }
   }
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { signIn, signOut, openCloud, push, refreshList, _state: st };
+  return { signIn, signOut, openCloud, push, refreshList, setTeamScope, _state: st };
 })();

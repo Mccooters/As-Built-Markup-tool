@@ -185,6 +185,28 @@ const ACTIONS = {
     return { ok: true, name: auth };
   },
 
+  // Signed-in devices configure themselves: the AroFlo proxy token comes
+  // from the server env (a tech never types it), and the team's sync scope
+  // is a tiny JSON in the storage bucket that anyone signed in can read.
+  async teamcfg() {
+    let cats = [];
+    try {
+      const j = await sb('GET', `/storage/v1/object/${BUCKET}/settings/aroflo.json`);
+      if (j && Array.isArray(j.cats)) cats = j.cats.filter(c => typeof c === 'string').slice(0, 200);
+    } catch (e) { /* not set yet */ }
+    return { ok: true, proxyToken: env('AROFLO_PROXY_TOKEN'), cats };
+  },
+
+  // Publish the current device's category scope as the team default.
+  async teamscope(q, body, auth) {
+    const cats = (Array.isArray(body && body.cats) ? body.cats : [])
+      .filter(c => typeof c === 'string' && c.trim())
+      .map(c => c.trim().slice(0, 120))
+      .slice(0, 200);
+    await sb('POST', `/storage/v1/object/${BUCKET}/settings/aroflo.json`, { cats, updatedBy: auth, updatedAt: new Date().toISOString() }, { 'x-upsert': 'true' });
+    return { ok: true, cats };
+  },
+
   // The shared project list, newest first.
   async list() {
     const rows = await sb('GET', rowsPath('?select=*&order=updated_at.desc&limit=100'));
@@ -273,8 +295,8 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, open: 1 };
-const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, open: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, open: 1, teamcfg: 1, teamscope: 1 };
+const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, open: 1, teamscope: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
 

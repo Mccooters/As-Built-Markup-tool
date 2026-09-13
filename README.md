@@ -152,6 +152,8 @@ Setup (about 10 minutes, once):
    - `AIRMARK_CREW` — who can sign in, as `Name:PIN` pairs: `Josh:4821,Jay:7733`
 4. Redeploy. The sign-in card appears on the front page; each employee signs in once per device (sessions last 60 days) and their name is stamped on every markup they make.
 
+Signing in also **configures the AroFlo connection by itself**: the proxy token comes down with the session (a tech never types it), and the team's category sync scope arrives too — set it once on any signed-in device via **Stock → ⚙ → Make this the team scope** and every crew phone picks it up at sign-in. A fresh device goes from box to working stock list with nothing but a name and PIN.
+
 Notes: PDFs and markup JSON move between the browser and storage via short-lived signed URLs — big plan sets never squeeze through the serverless function. Add or drop crew members by editing `AIRMARK_CREW` (and redeploying); changing someone's PIN signs their devices out. Without the three variables set, the card simply doesn't appear and the app is exactly as before. **Privacy:** with team cloud on, drawings are stored in *your* Supabase project (private bucket, service-key access only) — they still never touch anyone else's servers.
 
 ## Files & saving

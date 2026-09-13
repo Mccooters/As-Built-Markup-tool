@@ -1779,6 +1779,26 @@ const Aro = (() => {
     });
   }
 
+  /* ---------------- team-managed connection ---------------- */
+
+  // Called by the team-cloud module after sign-in: the proxy token and the
+  // team's sync scope arrive with the session, so nothing needs typing on a
+  // fresh device.
+  function adoptTeamConfig(tc) {
+    if (!tc) return;
+    let changed = false;
+    if (tc.proxyToken && tc.proxyToken !== cfg.token) { cfg.token = tc.proxyToken; changed = true; }
+    if (Array.isArray(tc.cats) && tc.cats.length && JSON.stringify(tc.cats) !== JSON.stringify(cfg.cats)) {
+      cfg.cats = tc.cats.slice();
+      changed = true;
+    }
+    if (!changed) return;
+    saveCfg();
+    App.toast('AroFlo connection set up from your team sign-in. ✔', 'good', 5000);
+    if (!st.items.length && st.phase !== 'loading') refresh();
+    else render();
+  }
+
   /* ---------------- intro / setup ---------------- */
 
   function renderIntro(container) {
@@ -1822,6 +1842,7 @@ const Aro = (() => {
         <div style="flex:1;min-width:0">
           <div class="muted" id="aro-cats-cur">${cfg.cats.length ? esc(cfg.cats.join(', ')) : 'All items (whole catalogue)'}</div>
           <button class="mini-btn" id="aro-cats-edit" style="margin-top:4px">Choose categories…</button>
+          ${typeof Cloud !== 'undefined' && Cloud._state.token ? '<button class="mini-btn" id="aro-cats-team" style="margin-top:4px" title="Every crew member’s device picks this scope up when they sign in">Make this the team scope</button>' : ''}
           <div id="aro-cats-list" class="aro-cats-list" hidden></div>
         </div></div>
       <p class="muted" id="aro-test-out"></p>
@@ -1839,6 +1860,20 @@ const Aro = (() => {
           cfg.cats = [...list.querySelectorAll('input:checked')].map(i => i.value);
         }
       };
+      const teamBtn = box.querySelector('#aro-cats-team');
+      if (teamBtn) teamBtn.addEventListener('click', async () => {
+        read(); saveCfg();
+        teamBtn.disabled = true; teamBtn.textContent = 'Publishing…';
+        try {
+          await Cloud.setTeamScope(cfg.cats);
+          App.toast('Team scope published — crew devices pick it up at sign-in. ✔', 'good', 5000);
+          teamBtn.textContent = 'Make this the team scope';
+        } catch (e) {
+          App.toast('Couldn’t publish the team scope: ' + e.message, 'error', 7000);
+          teamBtn.textContent = 'Make this the team scope';
+        }
+        teamBtn.disabled = false;
+      });
       box.querySelector('#aro-cats-edit').addEventListener('click', async () => {
         read(); saveCfg();
         const list = box.querySelector('#aro-cats-list');
@@ -2228,7 +2263,7 @@ const Aro = (() => {
 
   return {
     refresh, settingsDialog, call, openPage, closePage,
-    zonePopover, zoneLinkDialog, closeZonePopover, usedDialog,
+    zonePopover, zoneLinkDialog, closeZonePopover, usedDialog, adoptTeamConfig,
     _state: st, _onScan: onScan, _resolveScan: resolveScan,
   };
 })();
