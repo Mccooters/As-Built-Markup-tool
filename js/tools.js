@@ -588,25 +588,31 @@ const Tools = (() => {
   function beginMoveDrag(p0) {
     const ids = [...S().selection];
     if (!ids.length) return;
+    // zones are position-locked unless explicitly unlocked — a stray drag
+    // across a big zone box must never haul the zone along
+    const movable = ids.filter(id => !State.zoneLocked(State.getMarkup(id)));
     let started = false;
+    let moved = false;
     let last = p0;
     windowDrag(ev => {
       const p = Viewer.toPage(ev);
+      moved = moved || Geo.dist(p0, p) * S().zoom >= 3;
+      if (!movable.length) return;
       if (!started) {
-        if (Geo.dist(p0, p) * S().zoom < 3) return;
+        if (!moved) return;
         State.pushUndo();
         started = true;
       }
       const dx = p.x - last.x, dy = p.y - last.y;
       last = p;
-      for (const id of ids) {
+      for (const id of movable) {
         const m = State.getMarkup(id);
         if (m) moveBy(m, dx, dy);
       }
-      Render.refresh(ids);
+      Render.refresh(movable);
     }, () => {
-      if (started) { State.touch(); State.emit('markups', { changed: ids }); }
-      else if (ids.length === 1) {
+      if (started) { State.touch(); State.emit('markups', { changed: movable }); }
+      else if (!moved && ids.length === 1) {
         // a plain tap on a zone opens its task/materials popover
         const m = State.getMarkup(ids[0]);
         if (m && m.type === 'zone' && typeof Aro !== 'undefined') Aro.zonePopover(m);
@@ -646,6 +652,7 @@ const Tools = (() => {
     const id = h.dataset.hid, kind = h.dataset.kind;
     const m = State.getMarkup(id);
     if (!m) return;
+    if (State.zoneLocked(m)) return; // locked zones don't resize either
     e.stopPropagation();
     let started = false;
     windowDrag(ev => {
@@ -877,13 +884,15 @@ const Tools = (() => {
         if (!S().pdf) return;
         // Select tool with a selection → nudge the markups (original behavior)
         if (sel.length && S().tool === 'select') {
+          const targets = sel.filter(id => !State.zoneLocked(State.getMarkup(id)));
+          if (!targets.length) { e.preventDefault(); return; } // locked zones don't nudge
           const step = (e.shiftKey ? 10 : 1);
           const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
           const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
           State.pushUndo();
-          for (const id of sel) { const m = State.getMarkup(id); if (m) moveBy(m, dx, dy); }
-          Render.refresh(sel);
-          State.emit('markups', { changed: sel });
+          for (const id of targets) { const m = State.getMarkup(id); if (m) moveBy(m, dx, dy); }
+          Render.refresh(targets);
+          State.emit('markups', { changed: targets });
           State.touch();
           e.preventDefault();
           return;

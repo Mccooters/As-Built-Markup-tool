@@ -504,6 +504,7 @@ const Render = (() => {
         'stroke-dasharray': `${5 / z} ${4 / z}`,
       }));
       if (!withHandles) continue;
+      if (State.zoneLocked(m)) continue; // locked zones show no resize handles
       // vertex handles
       if (m.pts) {
         m.pts.forEach((p, i) => appendHandle(layer, p.x, p.y, 'pt', m.id, i));

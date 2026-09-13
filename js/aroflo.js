@@ -882,6 +882,7 @@ const Aro = (() => {
     popEl.innerHTML = `
       <div class="zp-head"><b>${esc(m.label || m.subject || 'Area zone')}</b>
         <span style="flex:1"></span>
+        <button class="mini-btn" id="zp-unlock" title="Zones are position-locked — unlock to move or resize this one until it's deselected">🔓</button>
         <button class="mini-btn" id="zp-edit" title="Change the linked tasks">Links</button>
         <button class="mini-btn" id="zp-close">✕</button></div>
       <div class="zp-body">${jobs.length
@@ -908,6 +909,12 @@ const Aro = (() => {
     popEl.style.top = py + 'px';
 
     popEl.querySelector('#zp-close').addEventListener('click', closeZonePopover);
+    popEl.querySelector('#zp-unlock').addEventListener('click', () => {
+      State.S.unlockedZones.add(m.id);
+      closeZonePopover();
+      State.select([m.id]);
+      App.toast('Zone unlocked — drag to move, corner handles to resize. It locks again when deselected.', 'info', 6000);
+    });
     popEl.querySelector('#zp-edit').addEventListener('click', () => { closeZonePopover(); zoneLinkDialog(m); });
     popEl.querySelectorAll('.zp-log').forEach(b =>
       b.addEventListener('click', () => usedDialog(b.dataset.job, { zone: m })));

@@ -251,6 +251,13 @@ const Props = (() => {
       if (meas) h += `<p class="prop-note" style="font-size:13px"><b>${esc(meas)}</b>${first.type === 'pipe' ? ' of ' + esc(first.pipeSize) + ' ' + esc(first.material || '') : ''}</p>`;
       h += `<div class="prop-row"><label>Subject</label><input type="text" id="p-subject" value="${esc(first.subject)}"></div>`;
       h += `<div class="prop-row"><label>Comment</label><textarea id="p-comment" rows="2">${esc(first.comment)}</textarea></div>`;
+      if (first.type === 'zone') {
+        const locked = State.zoneLocked(first);
+        h += `<p class="prop-note">${locked
+          ? 'Position locked — zones never move from a stray drag.'
+          : 'Unlocked — drag to move, corner handles to resize. Locks again on deselect.'}
+          <button class="mini-btn" id="p-zonelock" style="margin-left:6px">${locked ? 'Unlock to move' : 'Lock now'}</button></p>`;
+      }
     }
     h += `<div class="prop-row"><label>Work day</label><input type="date" id="p-day" value="${esc(first.day || (first.date || '').slice(0, 10))}" style="color-scheme:dark"></div>`;
 
@@ -326,6 +333,13 @@ const Props = (() => {
     if (has('#p-plabel')) has('#p-plabel').addEventListener('change', e => apply({ showLabel: e.target.checked }));
 
     if (has('#p-subject')) has('#p-subject').addEventListener('change', e => apply({ subject: e.target.value }));
+    if (has('#p-zonelock')) has('#p-zonelock').addEventListener('click', () => {
+      const m = State.selectedMarkups()[0];
+      if (!m) return;
+      if (State.zoneLocked(m)) State.S.unlockedZones.add(m.id);
+      else State.S.unlockedZones.delete(m.id);
+      State.emit('selection'); // refresh handles + this panel
+    });
     if (has('#p-comment')) has('#p-comment').addEventListener('change', e => apply({ comment: e.target.value }));
     if (has('#p-day')) has('#p-day').addEventListener('change', e => {
       if (/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) { apply({ day: e.target.value }); Render.drawPage(); }

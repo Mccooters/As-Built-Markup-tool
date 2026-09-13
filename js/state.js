@@ -28,6 +28,7 @@ const State = (() => {
     // ui
     tool: 'select',
     selection: new Set(),    // markup ids
+    unlockedZones: new Set(),// zones temporarily allowed to move/resize (never saved)
     activeSymbol: null,      // symbol id or stamp id (prefixed st-)
     symbolRotation: 0,
     activeCountGroup: null,  // group id
@@ -171,9 +172,20 @@ const State = (() => {
       if (additive && S.selection.has(id)) S.selection.delete(id);
       else S.selection.add(id);
     }
+    // an unlocked zone locks itself again the moment it leaves the selection
+    for (const id of [...S.unlockedZones]) if (!S.selection.has(id)) S.unlockedZones.delete(id);
     emit('selection');
   }
-  const clearSelection = () => { if (S.selection.size) { S.selection.clear(); emit('selection'); } };
+  const clearSelection = () => {
+    if (S.selection.size || S.unlockedZones.size) {
+      S.selection.clear();
+      S.unlockedZones.clear();
+      emit('selection');
+    }
+  };
+
+  /** Zones are position-locked by default — a stray drag must never move one. */
+  const zoneLocked = m => !!(m && m.type === 'zone' && !S.unlockedZones.has(m.id));
   const selectedMarkups = () => S.markups.filter(m => S.selection.has(m.id));
 
   /* ---- work day ---- */
@@ -208,6 +220,7 @@ const State = (() => {
   function setTool(tool) {
     if (S.tool === tool) return;
     S.tool = tool;
+    S.unlockedZones.clear();
     emit('tool');
   }
 
@@ -281,7 +294,7 @@ const State = (() => {
     S.markups = []; S.countGroups = []; S.pageScales = {}; S.defaultScale = null;
     S.images = {};
     S.aroSite = null;
-    S.selection.clear(); S.idCounter = 1; S.dirty = false;
+    S.selection.clear(); S.unlockedZones.clear(); S.idCounter = 1; S.dirty = false;
     clearHistory();
   }
 
@@ -295,7 +308,7 @@ const State = (() => {
     S, on, emit,
     pushUndo, undo, redo, canUndo, canRedo, clearHistory,
     addMarkup, updateMarkups, deleteMarkups, getMarkup, pageMarkups,
-    select, clearSelection, selectedMarkups, setTool,
+    select, clearSelection, selectedMarkups, setTool, zoneLocked,
     setWorkDay, setDayMode, dayStateOf,
     scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
