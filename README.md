@@ -79,6 +79,7 @@ AirMark is an installable web app. Open your deployment in Safari/Chrome, then *
 | `Ctrl+S` | Save project |
 | Arrow keys | Pan the view — including mid pipe run (`Shift` = faster) · nudge the selection when on Select |
 | Mouse wheel | Zoom at cursor · `+` / `−` / `0` zoom in/out/fit |
+| Trackpad pinch | Zoom the drawing at the cursor — anywhere in the app, never the browser page |
 | `PgUp` / `PgDn` | Previous / next page |
 
 ## Daily reports & work-day tracking

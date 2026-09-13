@@ -11,7 +11,22 @@ const Viewer = (() => {
   let renderTask = null;
   let renderTimer = null;
   let spaceDown = false;
+  let inGesture = false;   // Safari trackpad pinch in flight (gesture events)
+  let touchPinch = false;  // two-finger touch pinch in flight (pointer events)
   const pageDims = {};   // pageNum -> {w, h} at scale 1 (PDF points)
+
+  // deltaY in px (Firefox reports lines). Trackpad pinch arrives as ctrl+wheel with
+  // small per-event deltas; ctrl + a real mouse wheel comes in whole notches (~100+),
+  // which at pinch rate would jump 3x per click — so pick the rate by delta size.
+  const wheelPx = e => e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 300 : e.deltaY;
+  const wheelFactor = e => {
+    const pinch = e.ctrlKey && e.deltaMode === 0 && Math.abs(e.deltaY) < 50;
+    return Math.pow(pinch ? 1.011 : 1.0018, -wheelPx(e));
+  };
+  const clampToViewport = (x, y) => {
+    const r = el.viewport.getBoundingClientRect();
+    return { x: Math.max(r.left, Math.min(r.right, x)), y: Math.max(r.top, Math.min(r.bottom, y)) };
+  };
 
   function init() {
     el.viewport = document.getElementById('viewport');
@@ -27,10 +42,19 @@ const Viewer = (() => {
 
     // wheel zoom (Bluebeam-style: wheel zooms at cursor)
     el.viewport.addEventListener('wheel', e => {
-      if (!State.S.pdf) return;
+      if (e.ctrlKey) e.preventDefault();   // trackpad pinch: the page must never zoom
+      if (!State.S.pdf || inGesture) return;
       e.preventDefault();
-      const factor = Math.pow(1.0018, -e.deltaY);
-      zoomAt(State.S.zoom * factor, e.clientX, e.clientY);
+      zoomAt(State.S.zoom * wheelFactor(e), e.clientX, e.clientY);
+    }, { passive: false });
+
+    // trackpad pinch over the toolbar/panels still zooms the drawing, not the page
+    window.addEventListener('wheel', e => {
+      if (!e.ctrlKey || e.defaultPrevented) return;
+      e.preventDefault();
+      if (!State.S.pdf || inGesture) return;
+      const a = clampToViewport(e.clientX, e.clientY);
+      zoomAt(State.S.zoom * wheelFactor(e), a.x, a.y);
     }, { passive: false });
 
     // pan: middle button always; left button when pan tool or space held
@@ -61,8 +85,9 @@ const Viewer = (() => {
     // native drag of selected label text / canvas would swallow pointer events mid-tool
     el.viewport.addEventListener('dragstart', e => e.preventDefault());
 
-    // pinch zoom (two pointers)
+    // pinch zoom (two pointers) + Safari trackpad pinch (gesture events)
     initPinch();
+    initGestures();
 
     window.addEventListener('keydown', e => { if (e.code === 'Space' && !isTyping(e)) { spaceDown = true; el.overlay.classList.add('cur-pan'); } });
     window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; el.overlay.classList.remove('cur-pan'); } });
@@ -83,6 +108,7 @@ const Viewer = (() => {
       if (e.pointerType !== 'touch') return;
       prune();
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+      touchPinch = pts.size >= 2;
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
         startDist = Math.hypot(b.x - a.x, b.y - a.y);
@@ -107,15 +133,39 @@ const Viewer = (() => {
     }, true);
     const drop = e => {
       pts.delete(e.pointerId);
+      touchPinch = pts.size >= 2;
       if (pts.size < 2) { startDist = 0; prevCenter = null; }
     };
     el.viewport.addEventListener('pointerup', drop, true);
     el.viewport.addEventListener('pointercancel', drop, true);
     const allUp = e => {
-      if (e.touches && e.touches.length === 0) { pts.clear(); startDist = 0; prevCenter = null; }
+      if (e.touches && e.touches.length === 0) { pts.clear(); touchPinch = false; startDist = 0; prevCenter = null; }
     };
     window.addEventListener('touchend', allUp, true);
     window.addEventListener('touchcancel', allUp, true);
+  }
+
+  /** Safari reports trackpad pinch as gesture events (no ctrl+wheel). On iPad they
+   * fire alongside touch pointers, so only zoom here when initPinch isn't driving. */
+  function initGestures() {
+    if (typeof GestureEvent === 'undefined') return;
+    let baseZoom = 0;
+    window.addEventListener('gesturestart', e => {
+      e.preventDefault();
+      inGesture = true;
+      baseZoom = State.S.zoom;
+    }, { passive: false });
+    window.addEventListener('gesturechange', e => {
+      e.preventDefault();
+      if (!State.S.pdf || !baseZoom || touchPinch) return;
+      const a = clampToViewport(e.clientX, e.clientY);
+      zoomAt(baseZoom * e.scale, a.x, a.y);
+    }, { passive: false });
+    window.addEventListener('gestureend', e => {
+      e.preventDefault();
+      inGesture = false;
+      baseZoom = 0;
+    }, { passive: false });
   }
 
   /* ================= document ================= */
