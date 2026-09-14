@@ -634,3 +634,9 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 .po-hit.po-mine { border-color: var(--accent-dim); }
 .dv-line .dv-desc { flex: 1 1 140px; }
 .dv-line .dv-qty { flex: 0 0 64px; }
+
+/* per-line serial numbers on deliveries */
+.dv-line { flex-wrap: wrap; }
+.dv-line .dv-sn { flex: 1 1 100%; min-width: 0; background: var(--bg3); color: var(--txt);
+  border: 1px solid var(--edge); border-radius: 4px; padding: 5px 7px; font-size: 12px; margin-top: 4px; }
+.dv-snbtn { flex: 0 0 auto; font-size: 10.5px; padding: 4px 6px; color: var(--txt-dim); }

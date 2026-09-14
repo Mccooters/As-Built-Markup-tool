@@ -704,6 +704,24 @@ const ACTIONS = {
         || raw[0];
       out.keys = pick ? Object.keys(pick) : [];
       out.sample = pick ? JSON.stringify(pick).slice(0, 4000) : '(AroFlo returned no purchase orders at all)';
+      // one-screenshot answers to "why is a PO missing from the project
+      // group": where does each PO carry its task link (header tasks /
+      // line taskids / projects), and does an explicit date where widen
+      // the window AroFlo serves by default?
+      out.survey = raw.slice(0, 40).map(po => ({
+        n: str(po.ordernumber || ''),
+        d: str(po.purchasedate || ''),
+        st: str(po.status || ''),
+        headerTasks: Array.isArray(po.tasks) ? po.tasks.length : -1,
+        lineTasks: [...new Set(linesOf(po).map(l => str(l.taskid)).filter(Boolean))].length,
+        projects: Array.isArray(po.projects) ? po.projects.length : -1,
+      }));
+      try {
+        const rp = await aroGet('purchaseorders', { where: ['and|purchasedate|>|2026-01-01'], page: 1, pageSize: PS });
+        const rlist = Array.isArray(listOf(rp.zoneresponse)) ? listOf(rp.zoneresponse) : [];
+        const nums = rlist.map(po => str(po.ordernumber)).filter(Boolean).sort();
+        out.probe = { wherePurchasedate: { ok: rp.ok, count: rlist.length, lo: nums[0] || '', hi: nums[nums.length - 1] || '' } };
+      } catch (e) { out.probe = { wherePurchasedate: { ok: false, error: String(e && e.message || e) } }; }
     }
     return out;
   },

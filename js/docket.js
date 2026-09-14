@@ -125,14 +125,16 @@ const Docket = (() => {
     let units = 0;
     (rec.lines || []).forEach((l, i) => {
       const descLines = wrap(reg, l.desc, 9.5, descW);
+      const snLines = l.serial ? wrap(bold, 'S/N ' + l.serial, 8, descW) : [];
       const pnLines = wrap(reg, l.pn || '—', 8.5, xDesc - xPn - 10);
-      const extra = l.stocked ? 0 : 1;
+      const extra = (l.stocked ? 0 : 1) + snLines.length;
       const rows = Math.max(descLines.length + extra, pnLines.length);
       ensure(rows * 11.5 + 10);
       text(String(i + 1), xNum, { size: 9, color: GREY() });
       pnLines.forEach((s, k) => text(s, xPn, { size: 8.5, dy: k * 11.5 }));
       descLines.forEach((s, k) => text(s, xDesc, { size: 9.5, dy: k * 11.5 }));
-      if (!l.stocked) text('not a stocked item — listed on this docket only', xDesc, { size: 7.5, color: GREY(), dy: descLines.length * 11.5 });
+      snLines.forEach((s, k) => text(s, xDesc, { size: 8, bold: true, dy: (descLines.length + k) * 11.5 }));
+      if (!l.stocked) text('not a stocked item — listed on this docket only', xDesc, { size: 7.5, color: GREY(), dy: (descLines.length + snLines.length) * 11.5 });
       rightText(qtyStr(l.qty), xQty, { size: 10, bold: true });
       units += Number(l.qty) || 0;
       y -= rows * 11.5 + 4;

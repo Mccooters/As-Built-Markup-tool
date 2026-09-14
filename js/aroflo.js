@@ -1878,8 +1878,10 @@ const Aro = (() => {
             ${l.free
               ? `<input type="text" class="dv-desc" data-i="${i}" value="${esc(l.desc)}" placeholder="Description (docket only — not booked to stock)">`
               : `<div class="dv-name">${esc(l.desc)}<div class="aro-sub">${esc(l.pn)}</div></div>`}
+            ${!l.free && l.serial === undefined ? `<button class="mini-btn dv-snbtn" data-i="${i}" title="Record serial numbers for this line — they print on the docket">SN</button>` : ''}
             <input class="aro-count dv-qty" data-i="${i}" type="text" inputmode="decimal" value="${qty(l.qty)}" autocomplete="off">
             <button class="mini-btn dv-x" data-i="${i}" title="Remove this line">✕</button>
+            ${l.serial !== undefined ? `<input type="text" class="dv-sn" data-i="${i}" value="${esc(l.serial)}" placeholder="Serial number(s) — print on the docket" autocomplete="off">` : ''}
           </div>`).join('')
           : '<p class="muted" style="margin:4px 0">Nothing yet — search the catalogue below, or add a non-stock line.</p>';
         linesEl.querySelectorAll('.dv-qty').forEach(inp => inp.addEventListener('change', () => {
@@ -1890,6 +1892,17 @@ const Aro = (() => {
         linesEl.querySelectorAll('.dv-desc').forEach(inp => inp.addEventListener('change', () => {
           delivDraft.lines[Number(inp.dataset.i)].desc = inp.value.trim();
           saveDelivDraft();
+        }));
+        linesEl.querySelectorAll('.dv-sn').forEach(inp => inp.addEventListener('change', () => {
+          delivDraft.lines[Number(inp.dataset.i)].serial = inp.value.trim();
+          saveDelivDraft();
+        }));
+        linesEl.querySelectorAll('.dv-snbtn').forEach(btn => btn.addEventListener('click', () => {
+          delivDraft.lines[Number(btn.dataset.i)].serial = '';
+          saveDelivDraft();
+          renderLines();
+          const sn = linesEl.querySelector(`.dv-sn[data-i="${btn.dataset.i}"]`);
+          if (sn) sn.focus();
         }));
         linesEl.querySelectorAll('.dv-x').forEach(btn => btn.addEventListener('click', () => {
           delivDraft.lines.splice(Number(btn.dataset.i), 1);
@@ -1923,7 +1936,7 @@ const Aro = (() => {
       let deb = 0;
       searchEl.addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(renderHits, 120); });
       box.querySelector('#dv-free').addEventListener('click', () => {
-        delivDraft.lines.push({ free: true, desc: '', pn: '', qty: 1 });
+        delivDraft.lines.push({ free: true, desc: '', pn: '', qty: 1, serial: '' });
         saveDelivDraft();
         renderLines();
         const last = linesEl.querySelector('.dv-line:last-child .dv-desc');
@@ -1972,7 +1985,7 @@ const Aro = (() => {
         else delivDraft.lines.push({ itemid: it.id, pn: it.pn, desc: it.desc, qty: q || 1 });
         matched++;
       } else {
-        delivDraft.lines.push({ free: true, pn: '', desc: (l.desc || l.pn || 'PO line') + (l.pn && l.desc && l.desc !== l.pn ? ' (' + l.pn + ')' : ''), qty: q || 1 });
+        delivDraft.lines.push({ free: true, pn: '', desc: (l.desc || l.pn || 'PO line') + (l.pn && l.desc && l.desc !== l.pn ? ' (' + l.pn + ')' : ''), qty: q || 1, serial: '' });
         docketOnly++;
       }
     }
@@ -2104,7 +2117,10 @@ const Aro = (() => {
           const r = await call('purchaseorders', { debug: 1, sampleid: scoped && pos[0] ? pos[0].id : '' });
           const pre = box.querySelector('#po-raw');
           pre.hidden = false;
-          pre.textContent = 'PO fields: ' + JSON.stringify(r.keys || []) + '\n\nSample PO raw:\n' + (r.sample || '(empty)');
+          pre.textContent = 'PO fields: ' + JSON.stringify(r.keys || [])
+            + '\n\nTask-link survey:\n' + (r.survey || []).map(s => JSON.stringify(s)).join('\n')
+            + '\n\nDate-filter probe: ' + JSON.stringify(r.probe || {})
+            + '\n\nSample PO raw:\n' + (r.sample || '(empty)');
         } catch (e) { App.toast('Debug read failed: ' + e.message, 'error', 7000); }
         dbgBtn.disabled = false; dbgBtn.textContent = 'Show AroFlo\'s PO reply';
       });
@@ -2127,7 +2143,7 @@ const Aro = (() => {
     const holder = holdersW.find(h => h.name === delivDraft.holderName) || null;
     const stockLines = delivDraft.lines.filter(l => !l.free);
     const rows = delivDraft.lines.map(l => `<tr>
-      <td>${esc(l.desc)}<div class="aro-sub">${l.free ? 'docket only — not booked to stock' : esc(l.pn)}</div></td>
+      <td>${esc(l.desc)}<div class="aro-sub">${l.free ? 'docket only — not booked to stock' : esc(l.pn)}</div>${l.serial ? `<div class="aro-sub">S/N ${esc(l.serial)}</div>` : ''}</td>
       <td class="num">${qty(l.qty)}</td>
     </tr>`).join('');
     App.modal(`
@@ -2194,7 +2210,7 @@ const Aro = (() => {
           holder: wantBook || (holder && stockLines.length) ? (holder ? holder.name : '') : '',
           holderId: holder ? holder.id : '', holderType: holder ? holder.type : '',
           receivedBy: State.S.author || 'Site crew',
-          lines: delivDraft.lines.map(l => ({ itemid: l.free ? '' : l.itemid, pn: l.pn || '', desc: l.desc, qty: Number(l.qty) || 0, stocked: !l.free })),
+          lines: delivDraft.lines.map(l => ({ itemid: l.free ? '' : l.itemid, pn: l.pn || '', desc: l.desc, qty: Number(l.qty) || 0, stocked: !l.free, serial: l.serial || '' })),
           signName: name, signPng: cv.toDataURL('image/png'),
           booked: false, bookedAt: 0, pending: false,
         };
