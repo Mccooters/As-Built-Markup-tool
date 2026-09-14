@@ -49,6 +49,8 @@ const Aro = (() => {
   let usedDrafts = {};  // job → {counts:{itemid:qty}, sys, at} — unsent tallies (abmt:used)
   let catParent = {};   // category leaf name → parent name       (abmt:cattree)
   let catFold = {};     // section name → collapsed?               (abmt:catfold)
+  let deliveries = [];  // signed delivery records, newest first   (abmt:deliveries)
+  let delivDraft = { lines: [] }; // an in-progress delivery       (abmt:delivdraft)
   const loadJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
   const saveJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* full */ } };
   let inflight = false;
@@ -411,6 +413,7 @@ const Aro = (() => {
         <label class="chk" title="Hide items with no stock at the selected location"><input type="checkbox" id="aro-zero"${st.hideZero ? ' checked' : ''}> In stock</label>
         ${st.holder ? `<label class="chk" title="Only items below their minimum at this holder"><input type="checkbox" id="aro-low"${st.lowOnly ? ' checked' : ''}> Low</label>` : ''}
         <button class="mini-btn" id="aro-take" title="Count this location and push corrected quantities to AroFlo">Stocktake</button>
+        <button class="mini-btn" id="aro-deliv" title="Receive a delivery — book it into site stock and produce a signed PDF docket">Delivery</button>
         ${st.holder ? `<button class="mini-btn" id="aro-reorder" title="Everything below its minimum at this holder, as a reorder list">Reorder</button>` : ''}
         <button class="mini-btn" id="aro-labels" title="Print QR labels for the items in the current view">Labels</button>
       </div>`;
@@ -454,6 +457,7 @@ const Aro = (() => {
       });
       mainEl.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
       mainEl.querySelector('#aro-take').addEventListener('click', startStocktake);
+      mainEl.querySelector('#aro-deliv').addEventListener('click', () => deliveryDialog());
     }
     wireTaskMaterials(sideEl);
     wireRefCard();
@@ -1786,6 +1790,316 @@ const Aro = (() => {
     });
   }
 
+  /* ---------------- deliveries: receive, sign, docket ---------------- */
+
+  const saveDeliveries = () => saveJson('abmt:deliveries', deliveries.slice(0, 40));
+  const saveDelivDraft = () => saveJson('abmt:delivdraft', delivDraft);
+
+  function nextDocketNo() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    const base = 'DN-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+    let id = base, suf = 66; // …B, C when two dockets land in the same minute
+    while (deliveries.some(r => r.id === id)) id = base + String.fromCharCode(suf++);
+    return id;
+  }
+
+  async function pushMoves(moves) {
+    for (let i = 0; i < moves.length; i += 50) await postCall('adjuststock', { moves: moves.slice(i, i + 50) });
+    applyLocalMoves(moves);
+  }
+
+  async function downloadDocket(rec) {
+    const bytes = await Docket.buildDeliveryPdf(rec);
+    const safeRef = String(rec.ref || '').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+    App.download(new Blob([bytes], { type: 'application/pdf' }), rec.id + (safeRef ? '-' + safeRef : '') + '.pdf');
+  }
+
+  /** Step 1: what arrived, from whom, into which holder. */
+  function deliveryDialog() {
+    if (!st.items.length) { App.toast('Load the stock list first (⟳) so the delivery can be matched to the catalogue.', 'warn', 6000); return; }
+    const holdersW = st.allHolders.filter(h => h.id);
+    if (!delivDraft.holderName) {
+      delivDraft.holderName = (State.S.aroSite && State.S.aroSite.holder) || st.holder || (holdersW[0] || {}).name || '';
+    }
+    if (delivDraft.site == null) delivDraft.site = String(State.S.jobRef || State.S.fileName || '').replace(/\.pdf$/i, '');
+
+    const matches = q => {
+      const toks = String(q).toLowerCase().split(/\s+/).filter(Boolean);
+      if (!toks.length) return [];
+      return st.items.filter(it => {
+        const hay = (it.desc + ' ' + it.pn).toLowerCase();
+        return toks.every(t => hay.includes(t));
+      }).slice(0, 8);
+    };
+
+    App.modal(`
+      <h3>Receive delivery</h3>
+      <div class="form-row"><label>Supplier</label>
+        <input type="text" id="dv-sup" value="${esc(delivDraft.supplier || '')}" placeholder="e.g. Reece Newcastle" autocomplete="off"></div>
+      <div class="form-row"><label>Docket / PO ref</label>
+        <input type="text" id="dv-ref" value="${esc(delivDraft.ref || '')}" placeholder="supplier docket no · PO no" autocomplete="off"></div>
+      <div class="form-row"><label>Into stock holder</label>
+        <select id="dv-holder">${holdersW.map(h => `<option value="${esc(h.name)}"${h.name === delivDraft.holderName ? ' selected' : ''}>${esc(h.name)} — ${esc(holderKind(h.type))}</option>`).join('')}</select></div>
+      <div class="form-row"><label>Site / job</label>
+        <input type="text" id="dv-site" value="${esc(delivDraft.site || '')}" autocomplete="off"></div>
+      <div class="form-row"><label>Notes / exceptions</label>
+        <input type="text" id="dv-notes" value="${esc(delivDraft.notes || '')}" placeholder="damage, shortages, part-delivery…" autocomplete="off"></div>
+      <div class="prop-cap" style="margin-top:8px">Items received</div>
+      <div id="dv-lines"></div>
+      <div class="aro-bar" style="margin-top:6px">
+        <input type="text" id="dv-search" placeholder="Search the catalogue to add… (e.g. impress 54)" autocomplete="off" style="flex:1">
+        <button class="mini-btn" id="dv-free" title="Equipment or parts that aren't AroFlo inventory items — they appear on the docket but aren't booked to stock">+ Non-stock line</button>
+      </div>
+      <div id="dv-hits"></div>
+      <div class="aro-error" id="dv-err" hidden></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="dv-past">Past dockets${deliveries.length ? ' (' + deliveries.length + ')' : ''}</button>
+        <span style="flex:1 1 0"></span>
+        <button class="mini-btn" id="dv-cancel">Cancel</button>
+        <button class="mini-btn primary" id="dv-next">Sign off…</button>
+      </div>`, (box, close) => {
+      const readForm = () => {
+        delivDraft.supplier = box.querySelector('#dv-sup').value.trim();
+        delivDraft.ref = box.querySelector('#dv-ref').value.trim();
+        delivDraft.holderName = box.querySelector('#dv-holder').value;
+        delivDraft.site = box.querySelector('#dv-site').value.trim();
+        delivDraft.notes = box.querySelector('#dv-notes').value.trim();
+        saveDelivDraft();
+      };
+      ['#dv-sup', '#dv-ref', '#dv-holder', '#dv-site', '#dv-notes'].forEach(sel =>
+        box.querySelector(sel).addEventListener('change', readForm));
+
+      const linesEl = box.querySelector('#dv-lines');
+      const renderLines = () => {
+        linesEl.innerHTML = delivDraft.lines.length ? delivDraft.lines.map((l, i) => `
+          <div class="dv-line">
+            ${l.free
+              ? `<input type="text" class="dv-desc" data-i="${i}" value="${esc(l.desc)}" placeholder="Description (docket only — not booked to stock)">`
+              : `<div class="dv-name">${esc(l.desc)}<div class="aro-sub">${esc(l.pn)}</div></div>`}
+            <input class="aro-count dv-qty" data-i="${i}" type="text" inputmode="decimal" value="${qty(l.qty)}" autocomplete="off">
+            <button class="mini-btn dv-x" data-i="${i}" title="Remove this line">✕</button>
+          </div>`).join('')
+          : '<p class="muted" style="margin:4px 0">Nothing yet — search the catalogue below, or add a non-stock line.</p>';
+        linesEl.querySelectorAll('.dv-qty').forEach(inp => inp.addEventListener('change', () => {
+          const v = parseFloat(String(inp.value).replace(',', '.'));
+          delivDraft.lines[Number(inp.dataset.i)].qty = Number.isFinite(v) && v > 0 ? v : 0;
+          saveDelivDraft();
+        }));
+        linesEl.querySelectorAll('.dv-desc').forEach(inp => inp.addEventListener('change', () => {
+          delivDraft.lines[Number(inp.dataset.i)].desc = inp.value.trim();
+          saveDelivDraft();
+        }));
+        linesEl.querySelectorAll('.dv-x').forEach(btn => btn.addEventListener('click', () => {
+          delivDraft.lines.splice(Number(btn.dataset.i), 1);
+          saveDelivDraft();
+          renderLines();
+        }));
+      };
+      renderLines();
+
+      const searchEl = box.querySelector('#dv-search');
+      const hitsEl = box.querySelector('#dv-hits');
+      const renderHits = () => {
+        const hits = matches(searchEl.value);
+        hitsEl.innerHTML = hits.map(it => `
+          <button class="dv-hit" data-id="${esc(it.id)}">
+            <span class="dv-hitname">${esc(it.desc)}</span><span class="aro-sub">${esc(it.pn)}</span>
+          </button>`).join('');
+        hitsEl.querySelectorAll('.dv-hit').forEach(btn => btn.addEventListener('click', () => {
+          const it = st.items.find(x => x.id === btn.dataset.id);
+          if (!it) return;
+          const have = delivDraft.lines.find(l => !l.free && l.itemid === it.id);
+          if (have) have.qty = (Number(have.qty) || 0) + 1;
+          else delivDraft.lines.push({ itemid: it.id, pn: it.pn, desc: it.desc, qty: 1 });
+          saveDelivDraft();
+          renderLines();
+          searchEl.value = '';
+          renderHits();
+          searchEl.focus();
+        }));
+      };
+      let deb = 0;
+      searchEl.addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(renderHits, 120); });
+      box.querySelector('#dv-free').addEventListener('click', () => {
+        delivDraft.lines.push({ free: true, desc: '', pn: '', qty: 1 });
+        saveDelivDraft();
+        renderLines();
+        const last = linesEl.querySelector('.dv-line:last-child .dv-desc');
+        if (last) last.focus();
+      });
+
+      box.querySelector('#dv-cancel').addEventListener('click', () => { readForm(); close(); });
+      box.querySelector('#dv-past').addEventListener('click', () => { readForm(); close(); deliveriesDialog(); });
+      box.querySelector('#dv-next').addEventListener('click', () => {
+        readForm();
+        delivDraft.lines = delivDraft.lines.filter(l => (Number(l.qty) || 0) > 0 && (!l.free || l.desc));
+        saveDelivDraft();
+        const err = box.querySelector('#dv-err');
+        if (!delivDraft.supplier) { err.hidden = false; err.textContent = 'Who delivered it? Enter the supplier.'; return; }
+        if (!delivDraft.lines.length) { err.hidden = false; err.textContent = 'Add at least one received line (with a quantity).'; renderLines(); return; }
+        close();
+        deliverySignDialog();
+      });
+    });
+  }
+
+  /** Step 2: summary + on-glass signature → book stock + PDF docket. */
+  function deliverySignDialog() {
+    const holdersW = st.allHolders.filter(h => h.id);
+    const holder = holdersW.find(h => h.name === delivDraft.holderName) || null;
+    const stockLines = delivDraft.lines.filter(l => !l.free);
+    const rows = delivDraft.lines.map(l => `<tr>
+      <td>${esc(l.desc)}<div class="aro-sub">${l.free ? 'docket only — not booked to stock' : esc(l.pn)}</div></td>
+      <td class="num">${qty(l.qty)}</td>
+    </tr>`).join('');
+    App.modal(`
+      <h3>Delivery sign-off</h3>
+      <p class="muted">${esc(delivDraft.supplier)}${delivDraft.ref ? ' · ' + esc(delivDraft.ref) : ''} → <b>${esc(delivDraft.holderName || '—')}</b></p>
+      <div style="max-height:26vh;overflow:auto"><table class="to-table">
+        <tr><th>Item</th><th style="text-align:right">Qty</th></tr>${rows}
+      </table></div>
+      ${holder && stockLines.length ? `<label class="chk" style="margin-top:8px"><input type="checkbox" id="dv-book" checked> Book the ${stockLines.length} catalogue line${stockLines.length === 1 ? '' : 's'} into <b>${esc(holder.name)}</b> in AroFlo now</label>` : ''}
+      <div class="prop-cap" style="margin-top:10px">Signature — on-site representative</div>
+      <canvas id="dv-sig"></canvas>
+      <div class="aro-bar">
+        <input type="text" id="dv-signname" placeholder="Print name & company (e.g. C. Onsite — Climatech)" autocomplete="off" style="flex:1">
+        <button class="mini-btn" id="dv-clear">Clear</button>
+      </div>
+      <div class="aro-error" id="dv-serr" hidden></div>
+      <div class="modal-actions">
+        <button class="mini-btn" id="dv-back">Back</button>
+        <button class="mini-btn primary" id="dv-save">Save &amp; download docket</button>
+      </div>`, (box, close) => {
+      const cv = box.querySelector('#dv-sig');
+      const cssW = Math.max(280, cv.clientWidth || 440), cssH = 150;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+      const ctx = cv.getContext('2d');
+      ctx.scale(dpr, dpr);
+      const blank = () => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cssW, cssH); };
+      blank();
+      ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#14213d';
+      let drawn = false, tracing = false;
+      const pos = e => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+      cv.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        cv.setPointerCapture(e.pointerId);
+        tracing = true;
+        const p = pos(e);
+        ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 0.01, p.y + 0.01); ctx.stroke();
+        drawn = true;
+      });
+      cv.addEventListener('pointermove', e => {
+        if (!tracing) return;
+        const p = pos(e);
+        ctx.lineTo(p.x, p.y); ctx.stroke();
+      });
+      const lift = () => { tracing = false; };
+      cv.addEventListener('pointerup', lift);
+      cv.addEventListener('pointercancel', lift);
+      box.querySelector('#dv-clear').addEventListener('click', () => { blank(); drawn = false; });
+
+      box.querySelector('#dv-back').addEventListener('click', () => { close(); deliveryDialog(); });
+      box.querySelector('#dv-save').addEventListener('click', async () => {
+        const err = box.querySelector('#dv-serr');
+        const name = box.querySelector('#dv-signname').value.trim();
+        if (!drawn || !name) { err.hidden = false; err.textContent = 'The docket needs the representative\'s signature and printed name.'; return; }
+        const bookChk = box.querySelector('#dv-book');
+        const wantBook = !!(bookChk && bookChk.checked && holder && stockLines.length);
+        const btn = box.querySelector('#dv-save');
+        btn.disabled = true; btn.textContent = 'Saving…';
+        const rec = {
+          id: nextDocketNo(), when: Date.now(),
+          supplier: delivDraft.supplier, ref: delivDraft.ref, site: delivDraft.site, notes: delivDraft.notes,
+          holder: wantBook || (holder && stockLines.length) ? (holder ? holder.name : '') : '',
+          holderId: holder ? holder.id : '', holderType: holder ? holder.type : '',
+          receivedBy: State.S.author || 'Site crew',
+          lines: delivDraft.lines.map(l => ({ itemid: l.free ? '' : l.itemid, pn: l.pn || '', desc: l.desc, qty: Number(l.qty) || 0, stocked: !l.free })),
+          signName: name, signPng: cv.toDataURL('image/png'),
+          booked: false, bookedAt: 0, pending: false,
+        };
+        let bookErr = '';
+        if (wantBook) {
+          try {
+            await pushMoves(stockLines.map(l => ({ itemid: l.itemid, toId: holder.id, toType: holder.type, delta: Number(l.qty) || 0 })));
+            rec.booked = true; rec.bookedAt = Date.now();
+          } catch (e) {
+            bookErr = e.message;
+            rec.pending = true;
+          }
+        }
+        deliveries.unshift(rec);
+        deliveries = deliveries.slice(0, 40);
+        saveDeliveries();
+        delivDraft = { lines: [] };
+        saveDelivDraft();
+        try { await downloadDocket(rec); } catch (e) {
+          App.toast('Docket PDF failed to build: ' + e.message + ' — it can be retried from Past dockets.', 'error', 9000);
+        }
+        close();
+        render();
+        if (rec.booked) App.toast(`Delivery ${rec.id} signed — ${stockLines.length} line${stockLines.length === 1 ? '' : 's'} booked into ${holder.name}, docket downloaded. ✔`, 'good', 7000);
+        else if (rec.pending) App.toast(`Docket ${rec.id} signed & downloaded, but the stock booking failed: ${bookErr} — retry from Delivery → Past dockets.`, 'warn', 10000);
+        else App.toast(`Docket ${rec.id} signed & downloaded (no stock booked).`, 'good', 6000);
+      });
+    });
+  }
+
+  /** Signed dockets kept on this device: re-download, retry pending bookings. */
+  function deliveriesDialog() {
+    App.modal('<h3>Past delivery dockets</h3><div id="dvl"></div>', (box, close) => {
+      const render2 = () => {
+        const list = box.querySelector('#dvl');
+        list.innerHTML = (deliveries.length ? deliveries.map((r, i) => `
+          <div class="dv-row">
+            <div class="dv-rowmain">
+              <b>${esc(r.id)}</b> · ${esc(r.supplier || '—')}${r.ref ? ' · ' + esc(r.ref) : ''}
+              <div class="aro-sub">${new Date(r.when).toLocaleString()} · ${r.lines.length} line${r.lines.length === 1 ? '' : 's'} · signed ${esc(r.signName)}</div>
+            </div>
+            <span class="dv-chip ${r.booked ? 'ok' : r.pending ? 'warn' : ''}">${r.booked ? 'stock booked' : r.pending ? 'booking pending' : 'docket only'}</span>
+            ${r.pending ? `<button class="mini-btn dv-book" data-i="${i}">Book stock</button>` : ''}
+            <button class="mini-btn dv-pdf" data-i="${i}" title="Re-download the signed PDF docket">PDF</button>
+            <button class="mini-btn dv-del" data-i="${i}" title="Remove this docket from the device">✕</button>
+          </div>`).join('') : '<p class="muted">No dockets yet — they appear here after a delivery is signed off.</p>')
+          + `<div class="modal-actions"><button class="mini-btn" id="dvl-new">New delivery…</button><button class="mini-btn" id="dvl-close">Close</button></div>`;
+        list.querySelector('#dvl-close').addEventListener('click', close);
+        list.querySelector('#dvl-new').addEventListener('click', () => { close(); deliveryDialog(); });
+        list.querySelectorAll('.dv-pdf').forEach(btn => btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try { await downloadDocket(deliveries[Number(btn.dataset.i)]); } catch (e) { App.toast('PDF failed: ' + e.message, 'error', 7000); }
+          btn.disabled = false;
+        }));
+        list.querySelectorAll('.dv-del').forEach(btn => btn.addEventListener('click', () => {
+          const r = deliveries[Number(btn.dataset.i)];
+          if (!confirm('Remove docket ' + r.id + ' from this device? Its PDF can\'t be regenerated afterwards.')) return;
+          deliveries.splice(Number(btn.dataset.i), 1);
+          saveDeliveries();
+          render2();
+        }));
+        list.querySelectorAll('.dv-book').forEach(btn => btn.addEventListener('click', async () => {
+          const r = deliveries[Number(btn.dataset.i)];
+          const moves = r.lines.filter(l => l.stocked && l.itemid)
+            .map(l => ({ itemid: l.itemid, toId: r.holderId, toType: r.holderType, delta: l.qty }));
+          if (!moves.length || !r.holderId) { App.toast('Nothing bookable on this docket.', 'warn'); return; }
+          btn.disabled = true; btn.textContent = 'Booking…';
+          try {
+            await pushMoves(moves);
+            r.booked = true; r.bookedAt = Date.now(); r.pending = false;
+            saveDeliveries();
+            render2();
+            render();
+            App.toast(`Docket ${r.id} — ${moves.length} line${moves.length === 1 ? '' : 's'} booked into ${r.holder}. ✔`, 'good', 6000);
+          } catch (e) {
+            btn.disabled = false; btn.textContent = 'Book stock';
+            App.toast('Still can\'t book it: ' + e.message, 'error', 8000);
+          }
+        }));
+      };
+      render2();
+    });
+  }
+
   /* ---------------- team-managed connection ---------------- */
 
   // Called by the team-cloud module after sign-in: the proxy token and the
@@ -2245,6 +2559,9 @@ const Aro = (() => {
     jobSys = loadJson('abmt:jobsys', {});
     usedDrafts = loadJson('abmt:used', {});
     catParent = loadJson('abmt:cattree', {});
+    deliveries = loadJson('abmt:deliveries', []);
+    delivDraft = loadJson('abmt:delivdraft', { lines: [] });
+    if (!Array.isArray(delivDraft.lines)) delivDraft.lines = [];
     catFold = loadJson('abmt:catfold', {});
     st.catView = !!loadJson('abmt:catview', false);
     if (loadCache()) st.phase = 'ready';
@@ -2271,6 +2588,7 @@ const Aro = (() => {
   return {
     refresh, settingsDialog, call, openPage, closePage,
     zonePopover, zoneLinkDialog, closeZonePopover, usedDialog, adoptTeamConfig,
+    deliveryDialog, deliveriesDialog,
     _state: st, _onScan: onScan, _resolveScan: resolveScan,
   };
 })();

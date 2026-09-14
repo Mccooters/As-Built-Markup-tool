@@ -606,3 +606,23 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 .sp-state.have { color: #43c26b; }
 .sp-state.update { color: #e8b13c; }
 .sp-row.upd .sp-name { color: #e8b13c; }
+
+/* delivery receiving + signed dockets */
+.dv-line { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--edge); }
+.dv-name { flex: 1 1 0; min-width: 0; font-size: 12.5px; }
+.dv-line .dv-qty { width: 64px; }
+.dv-line .dv-desc { flex: 1 1 0; min-width: 0; background: var(--bg3); color: var(--txt);
+  border: 1px solid var(--edge); border-radius: 4px; padding: 5px 7px; font-size: 12.5px; }
+.dv-hit { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  text-align: left; background: var(--bg3); border: 1px solid var(--edge); border-radius: 6px;
+  color: var(--txt); padding: 7px 9px; margin-top: 4px; cursor: pointer; font-size: 12.5px; }
+.dv-hit:hover { border-color: var(--accent); }
+.dv-hitname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dv-sig { display: block; width: 100%; height: 150px; background: #fff;
+  border: 1.5px dashed var(--edge); border-radius: 8px; touch-action: none; cursor: crosshair; margin-bottom: 6px; }
+.dv-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--edge); font-size: 12.5px; }
+.dv-rowmain { flex: 1 1 0; min-width: 0; }
+.dv-chip { flex: 0 0 auto; font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 2px 8px;
+  background: var(--bg3); border: 1px solid var(--edge); color: var(--txt-dim); white-space: nowrap; }
+.dv-chip.ok { color: #43c26b; border-color: #43c26b; }
+.dv-chip.warn { color: #e8b13c; border-color: #e8b13c; }

@@ -137,6 +137,16 @@ The fastest end-of-run loop on site: tap the **area zone** → tap **+ Log parts
 - **Verified saves** — AroFlo can answer "OK" while rejecting every line, so the app counts what actually inserted and re-reads the task before doing anything else. If AroFlo rejected the lines, its own error shows in the review sheet, **nothing is deducted from stock, and the tally is kept** for a retry; if it rejected only the taken-from holder, the lines are booked without it and the save says so.
 - The popover reopens with the new lines straight away, and the project materials rollup picks them up on its next load.
 
+### Deliveries — signed sign-off sheet, straight into stock
+
+**Delivery** (next to Stocktake) receives equipment and parts arriving on site and produces a **signed PDF delivery docket** on the spot:
+
+1. **Receive** — supplier, docket/PO reference, the **stock holder it's going into** (defaults to the linked site holder), notes/exceptions (damage, shortages). Add lines by searching the catalogue (tap a match, set the quantity), plus **non-stock lines** for equipment that isn't AroFlo inventory (a compressor, hire gear) — those appear on the docket but are never booked to stock.
+2. **Sign off** — the summary shows every line, then the **on-site representative signs on the glass** (finger or stylus) and prints their name & company. Both are required — that's the point of the sheet.
+3. **Save** — the catalogue quantities are **booked into the AroFlo holder** (positive stock adjustments through the same audited write path as stocktakes), the local stock list updates instantly, and a clean **A4 PDF docket** downloads: details, itemised table, notes, booking confirmation, the drawn signature, printed name and timestamps.
+
+No signal at the gate? The docket still signs, saves and downloads — the record is marked **booking pending** and **Past dockets** (inside the Delivery screen) re-books it with one tap when you're back online. Past dockets also re-downloads any signed docket's PDF later (the last 40 stay on the device, signature included).
+
 Everything else about the proxy stays read-only (inventory, stock levels, task lookup, task materials); the write path accepts nothing but per-holder quantity adjustments and used-material lines for a named task — capped and validated, and both refused server-side without the proxy token. On the first real push, spot-check the result in AroFlo (the app re-reads and shows the new figures immediately) — adjustments land in AroFlo's stock history like any manual adjustment, so they're auditable.
 
 ## Team cloud (optional) — sign in, shared projects, drawings synced
