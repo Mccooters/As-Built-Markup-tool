@@ -1848,6 +1848,7 @@ const Aro = (() => {
       <div class="prop-cap" style="margin-top:8px">Items received</div>
       <div id="dv-lines"></div>
       <div class="aro-bar" style="margin-top:6px">
+        <button class="mini-btn primary" id="dv-po" title="Pre-fill supplier, reference and lines from a purchase order raised on this project in AroFlo">From PO…</button>
         <input type="text" id="dv-search" placeholder="Search the catalogue to add… (e.g. impress 54)" autocomplete="off" style="flex:1">
         <button class="mini-btn" id="dv-free" title="Equipment or parts that aren't AroFlo inventory items — they appear on the docket but aren't booked to stock">+ Non-stock line</button>
       </div>
@@ -1928,6 +1929,7 @@ const Aro = (() => {
         const last = linesEl.querySelector('.dv-line:last-child .dv-desc');
         if (last) last.focus();
       });
+      box.querySelector('#dv-po').addEventListener('click', () => { readForm(); close(); poPickerDialog(); });
 
       box.querySelector('#dv-cancel').addEventListener('click', () => { readForm(); close(); });
       box.querySelector('#dv-past').addEventListener('click', () => { readForm(); close(); deliveriesDialog(); });
@@ -1941,6 +1943,105 @@ const Aro = (() => {
         close();
         deliverySignDialog();
       });
+    });
+  }
+
+  /** Merge a purchase order into the delivery draft: supplier + reference
+   * fill in when empty, and every PO line lands as a received line — matched
+   * to the catalogue by itemid/part number (bookable to stock), or as a
+   * docket-only line when it isn't an inventory item. */
+  function applyPoToDraft(po) {
+    if (!delivDraft.supplier) delivDraft.supplier = po.supplier || '';
+    const tag = 'PO ' + (po.number || po.id);
+    if (!delivDraft.ref) delivDraft.ref = tag;
+    else if (!delivDraft.ref.includes(tag)) delivDraft.ref += ' · ' + tag;
+    delivDraft.po = po.number || po.id;
+    let matched = 0, docketOnly = 0;
+    for (const l of po.lines || []) {
+      const q = Number(l.qty) || 0;
+      if (!l.pn && !l.desc) continue;
+      const it = (l.itemid && st.items.find(x => x.id === l.itemid))
+        || (l.pn && st.items.find(x => x.pn && x.pn.toLowerCase() === l.pn.toLowerCase()))
+        || (l.desc && st.items.find(x => x.desc && x.desc.toLowerCase() === l.desc.toLowerCase()));
+      if (it) {
+        const have = delivDraft.lines.find(x => !x.free && x.itemid === it.id);
+        if (have) have.qty = (Number(have.qty) || 0) + (q || 1);
+        else delivDraft.lines.push({ itemid: it.id, pn: it.pn, desc: it.desc, qty: q || 1 });
+        matched++;
+      } else {
+        delivDraft.lines.push({ free: true, pn: '', desc: (l.desc || l.pn) + (l.pn && l.desc && l.desc !== l.pn ? ' (' + l.pn + ')' : ''), qty: q || 1 });
+        docketOnly++;
+      }
+    }
+    saveDelivDraft();
+    return { matched, docketOnly };
+  }
+
+  /** The current project's tasks, for scoping the PO listing. */
+  async function poTaskIds() {
+    const num2 = String((State.S.aroSite && State.S.aroSite.project) || '').replace(/\D+/g, '');
+    if (!num2) return [];
+    if (!projCache) {
+      const all = [];
+      for (let page = 1; page <= 4; page++) {
+        const r = await call('projects', { page });
+        all.push(...(r.projects || []));
+        if (r.last) break;
+      }
+      projCache = all;
+    }
+    const p = projCache.find(x => x.number === num2);
+    if (!p) return [];
+    const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
+    return (rt.tasks || []).map(t => t.taskid).filter(Boolean).slice(0, 6);
+  }
+
+  /** Pick a purchase order raised in AroFlo and pre-fill the delivery. */
+  function poPickerDialog() {
+    App.modal(`
+      <h3>Pull from a purchase order</h3>
+      <p class="muted" id="po-note">Looking up purchase orders…</p>
+      <div id="po-list"></div>
+      <div class="modal-actions"><button class="mini-btn" id="po-back">Back</button></div>`, async (box, close) => {
+      box.querySelector('#po-back').addEventListener('click', () => { close(); deliveryDialog(); });
+      const note = box.querySelector('#po-note');
+      const listEl = box.querySelector('#po-list');
+      let pos = [], scoped = false, errMsg = '';
+      try {
+        const tids = await poTaskIds();
+        const seen = {};
+        for (const tid of tids) {
+          const r = await call('purchaseorders', { taskid: tid });
+          for (const po of r.pos || []) {
+            const k = po.id || po.number;
+            if (!seen[k]) { seen[k] = 1; pos.push(po); }
+          }
+        }
+        scoped = !!tids.length && !!pos.length;
+        if (!pos.length) {
+          const r = await call('purchaseorders', {});
+          pos = r.pos || [];
+        }
+      } catch (e) { errMsg = e.message; }
+      if (!box.isConnected) return;
+      pos.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0) || String(b.number).localeCompare(String(a.number)));
+      note.textContent = errMsg ? 'AroFlo purchase orders couldn\'t be read: ' + errMsg
+        : !pos.length ? 'No purchase orders found in AroFlo.'
+        : scoped ? 'Purchase orders on this project\'s tasks — tap one to pre-fill the delivery.'
+        : 'Most recent purchase orders — tap one to pre-fill the delivery.';
+      listEl.innerHTML = pos.map((po, i) => `
+        <button class="dv-hit" data-i="${i}">
+          <span class="dv-hitname"><b>PO ${esc(po.number)}</b> — ${esc(po.supplier || 'supplier n/a')}</span>
+          <span class="aro-sub">${esc([po.date, po.status, po.job ? '#' + po.job : '', po.lines.length + ' line' + (po.lines.length === 1 ? '' : 's')].filter(Boolean).join(' · '))}</span>
+        </button>`).join('');
+      listEl.querySelectorAll('.dv-hit').forEach(btn => btn.addEventListener('click', () => {
+        const po = pos[Number(btn.dataset.i)];
+        if (!po.lines.length) { App.toast('AroFlo returned no line items for PO ' + po.number + ' — add the lines by hand (supplier and reference are filled in).', 'warn', 8000); }
+        const res = applyPoToDraft(po);
+        close();
+        deliveryDialog();
+        if (po.lines.length) App.toast(`PO ${po.number} loaded — ${po.lines.length} line${po.lines.length === 1 ? '' : 's'} (${res.matched} matched to the catalogue${res.docketOnly ? ', ' + res.docketOnly + ' docket-only' : ''}). Adjust quantities to what actually arrived.`, 'good', 8000);
+      }));
     });
   }
 
@@ -1960,6 +2061,7 @@ const Aro = (() => {
         <tr><th>Item</th><th style="text-align:right">Qty</th></tr>${rows}
       </table></div>
       ${holder && stockLines.length ? `<label class="chk" style="margin-top:8px"><input type="checkbox" id="dv-book" checked> Book the ${stockLines.length} catalogue line${stockLines.length === 1 ? '' : 's'} into <b>${esc(holder.name)}</b> in AroFlo now</label>` : ''}
+      ${delivDraft.po ? `<p class="muted">From PO ${esc(delivDraft.po)}. If the office also receives this PO in AroFlo, untick the booking above so the quantities aren't counted twice.</p>` : ''}
       <div class="prop-cap" style="margin-top:10px">Signature — on-site representative</div>
       <canvas id="dv-sig"></canvas>
       <div class="aro-bar">
@@ -2012,6 +2114,7 @@ const Aro = (() => {
         const rec = {
           id: nextDocketNo(), when: Date.now(),
           supplier: delivDraft.supplier, ref: delivDraft.ref, site: delivDraft.site, notes: delivDraft.notes,
+          po: delivDraft.po || '',
           holder: wantBook || (holder && stockLines.length) ? (holder ? holder.name : '') : '',
           holderId: holder ? holder.id : '', holderType: holder ? holder.type : '',
           receivedBy: State.S.author || 'Site crew',

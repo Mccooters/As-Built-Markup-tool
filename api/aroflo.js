@@ -609,6 +609,56 @@ const ACTIONS = {
       }));
     return relay(r, { materials });
   },
+
+  // Purchase orders raised in AroFlo — read-only, so a site delivery can be
+  // pre-filled from what was actually ordered. AroFlo's docs are vague about
+  // this zone's join/field names, so ask for line items the likely way,
+  // tolerate several response spellings, and fall back to a header-only
+  // listing rather than failing the whole call.
+  async purchaseorders(q) {
+    const taskid = str(q.taskid).trim();
+    const where = taskid ? [`and|taskid|=|${taskid}`] : [];
+    const page = Math.max(1, num(q.page) || 1);
+
+    const slimLine = l => {
+      const itemObj = l && typeof l.item === 'object' && l.item ? l.item : null;
+      return {
+        pn: str(l.partnumber || l.itemcode || (itemObj && itemObj.partnumber)),
+        desc: str((itemObj && itemObj.description) || l.description || l.itemdescription
+          || (typeof l.item === 'string' ? l.item : '') || l.partnumber),
+        qty: num(l.quantity != null ? l.quantity : l.qty),
+        itemid: str(l.itemid || (itemObj && itemObj.itemid)),
+      };
+    };
+    const linesOf = po => {
+      for (const k of ['orderitems', 'purchaseorderitems', 'items', 'lineitems', 'materials']) {
+        if (Array.isArray(po[k])) return po[k];
+      }
+      return [];
+    };
+    const slimPo = po => ({
+      id: str(po.purchaseorderid || po.poid || po.id),
+      number: str(po.ponumber || po.purchaseordernumber || po.number || po.purchaseorderid),
+      status: str(po.status || po.postatus),
+      date: str(po.podate || po.date || po.datecreated || po.createddate || po.created),
+      supplier: str((po.supplier && (po.supplier.suppliername || po.supplier.orgname || po.supplier.name))
+        || po.suppliername || (typeof po.supplier === 'string' ? po.supplier : '')),
+      taskid: str((po.task && po.task.taskid) || po.taskid),
+      job: str((po.task && (po.task.jobnumber || po.task.taskname)) || ''),
+      lines: linesOf(po).map(slimLine).filter(l => l.pn || l.desc),
+    });
+    const listOf = zr => zr.purchaseorders || zr.purchaseorder || zr.pos || [];
+
+    // newest-first ordering only when browsing (no task filter); drop the
+    // order, then the join, if AroFlo refuses them
+    let r = await aroGet('purchaseorders', { ...{ where, page, pageSize: 50 }, join: ['orderitems'], order: taskid ? [] : ['podate|desc'] });
+    if (!r.ok && !taskid) r = await aroGet('purchaseorders', { where, page, pageSize: 50, join: ['orderitems'] });
+    if (!r.ok) r = await aroGet('purchaseorders', { where, page, pageSize: 50 });
+    const pos = (Array.isArray(listOf(r.zoneresponse)) ? listOf(r.zoneresponse) : [])
+      .map(slimPo)
+      .filter(p => p.id || p.number);
+    return relay(r, { pos, ...pageMeta(r.zoneresponse, 50) });
+  },
 };
 
 /* ---------------- HTTP handler ---------------- */
