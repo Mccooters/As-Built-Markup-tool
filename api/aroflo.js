@@ -683,18 +683,22 @@ const ACTIONS = {
 
     // primary join guess is `lines` (mirrors the response key); if nothing
     // comes back with lines at all, try the other likely names once
-    let r = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page, pageSize: 100 });
+    const PS = 250;
+    let r = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page, pageSize: PS });
     let raw = Array.isArray(listOf(r.zoneresponse)) ? listOf(r.zoneresponse) : [];
     if (r.ok && raw.length && !raw.some(po => linesOf(po).length)) {
-      const r2 = await aroGet('purchaseorders', { join: ['purchaseorderlines', 'lineitems', 'items'], page, pageSize: 100 });
+      const r2 = await aroGet('purchaseorders', { join: ['purchaseorderlines', 'lineitems', 'items'], page, pageSize: PS });
       const raw2 = Array.isArray(listOf(r2.zoneresponse)) ? listOf(r2.zoneresponse) : [];
       if (r2.ok && raw2.some(po => linesOf(po).length)) { r = r2; raw = raw2; }
     }
     const pos = raw.map(slimPo).filter(p => p.id || p.number);
-    const out = relay(r, { pos, ...pageMeta(r.zoneresponse, 100) });
+    const out = relay(r, { pos, ...pageMeta(r.zoneresponse, PS) });
     if (debug) {
-      // sample the most informative PO — one that shows task links or lines
-      const pick = raw.find(po => linesOf(po).length && (Array.isArray(po.tasks) && po.tasks.length))
+      // sample a requested PO when named (so the picker can show a PROJECT
+      // PO's raw lines), else the most informative one on the page
+      const wantId = str(q.sampleid).trim();
+      const pick = (wantId && raw.find(po => str(po.purchaseorderid || po.poid || po.id) === wantId))
+        || raw.find(po => linesOf(po).length && (Array.isArray(po.tasks) && po.tasks.length))
         || raw.find(po => Array.isArray(po.tasks) && po.tasks.length)
         || raw.find(po => linesOf(po).length)
         || raw[0];

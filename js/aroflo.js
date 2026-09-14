@@ -1972,7 +1972,7 @@ const Aro = (() => {
         else delivDraft.lines.push({ itemid: it.id, pn: it.pn, desc: it.desc, qty: q || 1 });
         matched++;
       } else {
-        delivDraft.lines.push({ free: true, pn: '', desc: (l.desc || l.pn) + (l.pn && l.desc && l.desc !== l.pn ? ' (' + l.pn + ')' : ''), qty: q || 1 });
+        delivDraft.lines.push({ free: true, pn: '', desc: (l.desc || l.pn || 'PO line') + (l.pn && l.desc && l.desc !== l.pn ? ' (' + l.pn + ')' : ''), qty: q || 1 });
         docketOnly++;
       }
     }
@@ -2028,37 +2028,46 @@ const Aro = (() => {
       box.querySelector('#po-back').addEventListener('click', () => { close(); deliveryDialog(); });
       const note = box.querySelector('#po-note');
       const listEl = box.querySelector('#po-list');
-      let pos = [], scoped = false, errMsg = '', tidCount = 0, more = false;
+      let pos = [], mineCount = 0, scoped = false, errMsg = '', tidCount = 0, more = false;
       try {
         const scope = await poProjectScope();
         tidCount = scope.tids.length;
-        const r = await call('purchaseorders', {});
-        const all = r.pos || [];
-        more = !r.last;
+        // one page rarely holds a whole org's POs — crawl a few
+        const all = [];
+        for (let page = 1; page <= 3; page++) {
+          const r = await call('purchaseorders', { page });
+          all.push(...(r.pos || []));
+          if (r.last) { more = false; break; }
+          more = page === 3;
+        }
+        const byDate = (a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0) || String(b.number).localeCompare(String(a.number));
         if (scope.tids.length || scope.pid) {
           const tset = new Set(scope.tids), jset = new Set(scope.jobs);
-          const mine = all.filter(po =>
+          const match = po =>
             (po.taskids || []).some(t => tset.has(t))
             || (po.jobs || []).some(j => jset.has(j))
-            || (po.projectids || []).includes(scope.pid));
-          if (mine.length) { pos = mine; scoped = true; } else pos = all;
+            || (po.projectids || []).includes(scope.pid);
+          const mine = all.filter(match).sort(byDate);
+          const others = all.filter(po => !match(po)).sort(byDate);
           // task links usually ride on the PO's LINES — name the jobs for display
-          for (const po of pos) {
+          for (const po of mine) {
             if (!(po.jobs || []).length && (po.taskids || []).length) {
               po.jobs = [...new Set(po.taskids.map(t => scope.jobByTid[t]).filter(Boolean))];
             }
           }
-        } else pos = all;
+          scoped = mine.length > 0;
+          mineCount = mine.length;
+          pos = [...mine, ...others.slice(0, 80)];
+        } else pos = all.sort(byDate).slice(0, 120);
       } catch (e) { errMsg = e.message; }
       if (!box.isConnected) return;
-      pos.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0) || String(b.number).localeCompare(String(a.number)));
 
       note.textContent = errMsg ? 'AroFlo purchase orders couldn\'t be read: ' + errMsg
         : !pos.length ? 'No purchase orders found in AroFlo.'
-        : scoped ? 'Purchase orders on this project — tap one to pre-fill the delivery.'
-        : 'Purchase orders from AroFlo — tap one to pre-fill the delivery.' + (more ? ' (first 100 shown)' : '');
-      listEl.innerHTML = pos.map((po, i) => `
-        <button class="dv-hit" data-i="${i}">
+        : scoped ? 'This project\'s purchase orders first — tap one to pre-fill the delivery.'
+        : 'Purchase orders from AroFlo — tap one to pre-fill the delivery.' + (more ? ' (most recent shown)' : '');
+      const rowHtml = (po, i) => `
+        <button class="dv-hit po-hit${i < mineCount ? ' po-mine' : ''}" data-i="${i}">
           <span class="dv-hitname"><b>${po.number ? 'PO ' + esc(po.number) : 'PO'}</b> — ${esc(po.supplier || 'supplier n/a')}</span>
           <span class="aro-sub">${esc([
             po.date, po.status,
@@ -2067,29 +2076,35 @@ const Aro = (() => {
             po.received ? 'received ' + po.received : '',
             po.lines.length + ' line' + (po.lines.length === 1 ? '' : 's'),
           ].filter(Boolean).join(' · '))}</span>
-        </button>`).join('');
+        </button>`;
+      listEl.innerHTML = pos.slice(0, mineCount).map(rowHtml).join('')
+        + (scoped && pos.length > mineCount
+          ? `<div class="prop-cap" style="margin-top:10px">Other purchase orders (${pos.length - mineCount})</div>`
+          : '')
+        + pos.slice(mineCount).map((po, k) => rowHtml(po, mineCount + k)).join('');
 
-      // shape trouble → offer the raw reply for a debugging screenshot
+      // shape trouble → explain; the raw-reply view is always available
       const shapeOff = !errMsg && (
-        (pos.length && pos.every(po => !po.lines.length))
+        (pos.length > 0 && pos.every(po => !po.lines.length))
         || pos.some(po => !po.number)
         || (tidCount > 0 && pos.length > 0 && !scoped));
       const warn = box.querySelector('#po-warn');
       const dbgBtn = box.querySelector('#po-debug');
+      dbgBtn.hidden = !pos.length && !errMsg;
       if (shapeOff) {
         warn.hidden = false;
         warn.textContent = (tidCount && !scoped ? 'These POs couldn\'t be matched to this project\'s tasks. ' : '')
           + (pos.length && pos.every(po => !po.lines.length) ? 'AroFlo returned no line items. ' : '')
           + 'Tap "Show AroFlo\'s PO reply" and send a screenshot so the format can be adapted.';
-        dbgBtn.hidden = false;
       }
       dbgBtn.addEventListener('click', async () => {
         dbgBtn.disabled = true; dbgBtn.textContent = 'Loading…';
         try {
-          const r = await call('purchaseorders', { debug: 1 });
+          // sample a project PO when we have one — that's where the questions are
+          const r = await call('purchaseorders', { debug: 1, sampleid: scoped && pos[0] ? pos[0].id : '' });
           const pre = box.querySelector('#po-raw');
           pre.hidden = false;
-          pre.textContent = 'PO fields: ' + JSON.stringify(r.keys || []) + '\n\nFirst PO raw:\n' + (r.sample || '(empty)');
+          pre.textContent = 'PO fields: ' + JSON.stringify(r.keys || []) + '\n\nSample PO raw:\n' + (r.sample || '(empty)');
         } catch (e) { App.toast('Debug read failed: ' + e.message, 'error', 7000); }
         dbgBtn.disabled = false; dbgBtn.textContent = 'Show AroFlo\'s PO reply';
       });

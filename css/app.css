@@ -626,3 +626,11 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
   background: var(--bg3); border: 1px solid var(--edge); color: var(--txt-dim); white-space: nowrap; }
 .dv-chip.ok { color: #43c26b; border-color: #43c26b; }
 .dv-chip.warn { color: #e8b13c; border-color: #e8b13c; }
+
+/* PO picker rows: two-line layout — a nowrap meta line must never crush the name */
+.po-hit { flex-direction: column; align-items: flex-start; gap: 3px; }
+.po-hit .dv-hitname { flex: 0 0 auto; width: 100%; }
+.po-hit .aro-sub { white-space: normal; }
+.po-hit.po-mine { border-color: var(--accent-dim); }
+.dv-line .dv-desc { flex: 1 1 140px; }
+.dv-line .dv-qty { flex: 0 0 64px; }
