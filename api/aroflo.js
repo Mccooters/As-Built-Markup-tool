@@ -679,31 +679,59 @@ const ACTIONS = {
       };
     };
     const listOf = zr => zr.purchaseorders || zr.purchaseorder || zr.pos || [];
-
-    // Two calls with different jobs (field-verified quirks): AroFlo's
-    // DEFAULT listing serves only a short recent-activity window but honours
-    // join=lines — that's the set deliveries arrive against, with line items
-    // and (via them) task links. A where on purchasedate opens the full
-    // history BUT silently drops any join, so the 9-month sweep is
-    // header-only: older POs (back-orders) stay findable, marked `old`.
-    const PS = 250, MAX_PAGES = 4;
     const arr = v => (Array.isArray(v) ? v : []);
+    const idOf = po => str(po.purchaseorderid || po.poid || po.id);
+
+    // Detail-on-demand: fetch ONE PO by id and try to get its lines. AroFlo's
+    // bulk listing expands the `lines` join only opportunistically (it drops
+    // it under load / at scale, field-verified), but a single-record result
+    // is tiny — its best chance of honouring the join. Used when a PO is
+    // tapped so the received-items list can pre-fill even though the list is
+    // header-only.
+    if (str(q.detail).trim()) {
+      const wid = str(q.detail).trim();
+      const byId = UUIDish => aroGet('purchaseorders', { where: [`and|purchaseorderid|=|${UUIDish}`], join: ['lines', 'orderitems'], page: 1, pageSize: 1 });
+      let rd = await byId(wid);
+      let one = arr(listOf(rd.zoneresponse))[0];
+      // fall back to ordernumber if the id where found nothing
+      if ((!one || !linesOf(one).length) && str(q.ordernumber).trim()) {
+        const rn = await aroGet('purchaseorders', { where: [`and|ordernumber|=|${str(q.ordernumber).trim()}`], join: ['lines', 'orderitems'], page: 1, pageSize: 5 });
+        const cand = arr(listOf(rn.zoneresponse)).find(po => linesOf(po).length) || arr(listOf(rn.zoneresponse))[0];
+        if (cand && (linesOf(cand).length || !one)) { one = cand; rd = rn; }
+      }
+      return relay(rd, { po: one ? slimPo(one) : null, gotLines: !!(one && linesOf(one).length) });
+    }
+
+    // Field-verified quirks on this zone:
+    //  • The DEFAULT listing (no where) is the ONLY shape that ever returns
+    //    line items, and even then only opportunistically — small pages have
+    //    the best odds, so crawl a few pages of 50 for the recent set.
+    //  • A where on purchasedate opens the full ~9-month history but silently
+    //    drops every join, so that sweep is header-only (older back-orders
+    //    stay findable and searchable, marked `old`).
     const pad2 = n => String(n).padStart(2, '0');
     const sinceD = new Date(Date.now() - 270 * 86400000); // ~9 months of POs
     const since = sinceD.getFullYear() + '-' + pad2(sinceD.getMonth() + 1) + '-' + pad2(sinceD.getDate());
-    const idOf = po => str(po.purchaseorderid || po.poid || po.id);
 
-    const rA = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page: 1, pageSize: PS });
-    const rawA = arr(listOf(rA.zoneresponse));
+    let rawA = [], rA = null, anyLines = false;
+    for (let pg = 1; pg <= 3; pg++) {
+      const r = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page: pg, pageSize: 50 });
+      if (!rA) rA = r;
+      if (!r.ok) break;
+      const chunk = arr(listOf(r.zoneresponse));
+      rawA = rawA.concat(chunk);
+      if (chunk.some(po => linesOf(po).length)) anyLines = true;
+      if (pageMeta(r.zoneresponse, 50).last) break;
+    }
 
     let rawB = [], usedWhere = false, more = false, pagesB = 0;
-    for (let pg = 1; pg <= MAX_PAGES; pg++) {
-      const rB = await aroGet('purchaseorders', { where: [`and|purchasedate|>|${since}`], page: pg, pageSize: PS });
+    for (let pg = 1; pg <= 4; pg++) {
+      const rB = await aroGet('purchaseorders', { where: [`and|purchasedate|>|${since}`], page: pg, pageSize: 250 });
       if (!rB.ok) break;
       usedWhere = true;
       pagesB++;
       rawB = rawB.concat(arr(listOf(rB.zoneresponse)));
-      const m = pageMeta(rB.zoneresponse, PS);
+      const m = pageMeta(rB.zoneresponse, 250);
       more = !m.last;
       if (m.last) break;
     }
@@ -711,7 +739,8 @@ const ACTIONS = {
     const olderRaw = rawB.filter(po => { const k = idOf(po); return k && !ids.has(k); });
     const pos = rawA.map(slimPo).filter(p => p.id || p.number);
     const older = olderRaw.map(slimPo).filter(p => p.id || p.number).map(p => ({ ...p, old: true }));
-    const out = relay(rA, { pos, older, more, window: { since, usedWhere, pagesB, fetchedA: rawA.length, fetchedB: rawB.length } });
+    const out = relay(rA || { ok: true, httpStatus: 200, status: 0, statusmessage: 'OK', rateLimits: {}, varString: '' },
+      { pos, older, more, anyLines, window: { since, usedWhere, pagesB, fetchedA: rawA.length, fetchedB: rawB.length } });
     if (debug) {
       // sample a requested PO when named (so the picker can show a PROJECT
       // PO's raw lines), else the most informative one in the lined set
@@ -731,13 +760,17 @@ const ACTIONS = {
         lineTasks: [...new Set(linesOf(po).map(l => str(l.taskid)).filter(Boolean))].length,
         projects: Array.isArray(po.projects) ? po.projects.length : -1,
       }));
-      // does a where on status keep the join alive? (would let matching
-      // reach active POs beyond the default window in a future round)
+      // Does a SINGLE-record fetch keep the join alive even with a where?
+      // If yes, detail-on-demand reliably gets any PO's lines on tap. Probe
+      // the first known PO by its id.
       try {
-        const rp = await aroGet('purchaseorders', { where: ['and|status|=|approved'], join: ['lines', 'orderitems'], page: 1, pageSize: 50 });
-        const l = arr(listOf(rp.zoneresponse));
-        out.probe = { statusWhereJoin: { ok: rp.ok, count: l.length, linesSeen: l.some(po => linesOf(po).length) } };
-      } catch (e) { out.probe = { statusWhereJoin: { ok: false, error: String(e && e.message || e) } }; }
+        const probeId = idOf(rawA[0] || olderRaw[0] || {});
+        if (probeId) {
+          const rp = await aroGet('purchaseorders', { where: [`and|purchaseorderid|=|${probeId}`], join: ['lines', 'orderitems'], page: 1, pageSize: 1 });
+          const l = arr(listOf(rp.zoneresponse));
+          out.probe = { singleIdWhereJoin: { ok: rp.ok, count: l.length, linesSeen: l.some(po => linesOf(po).length) }, bulkAnyLines: anyLines };
+        } else out.probe = { note: 'no PO id to probe', bulkAnyLines: anyLines };
+      } catch (e) { out.probe = { singleIdWhereJoin: { ok: false, error: String(e && e.message || e) } }; }
     }
     return out;
   },

@@ -2090,7 +2090,7 @@ const Aro = (() => {
         </button>`;
       const pos = [...mine, ...others, ...older];
       const qwrap = box.querySelector('#po-qwrap');
-      if (pos.length > 8) qwrap.hidden = false;
+      if (pos.length > 6) { qwrap.hidden = false; setTimeout(() => { const q = box.querySelector('#po-q'); if (q) q.focus(); }, 30); }
       const renderList = q2 => {
         const ql = String(q2 || '').trim().toLowerCase();
         const hit = po => !ql || ('po ' + po.number + ' ' + po.supplier + ' ' + (po.jobs || []).join(' ')).toLowerCase().includes(ql);
@@ -2104,14 +2104,24 @@ const Aro = (() => {
           + (d2.length ? `<div class="prop-cap" style="margin-top:10px">Older purchase orders (${older.length}) \u2014 AroFlo returns no line detail this far back; picking one fills supplier &amp; reference only</div>` : '')
           + d2.map(po => rowHtml(po, pos.indexOf(po), false)).join('')
           + (!m2.length && !o2.length && !d2.length && ql ? '<p class="muted">Nothing matches \u201c' + esc(q2) + '\u201d.</p>' : '');
-        listEl.querySelectorAll('.dv-hit').forEach(btn => btn.addEventListener('click', () => {
+        listEl.querySelectorAll('.dv-hit').forEach(btn => btn.addEventListener('click', async () => {
           const po = pos[Number(btn.dataset.i)];
           const label = po.number ? 'PO ' + po.number : 'that PO';
-          if (!po.lines.length) { App.toast('AroFlo returned no line items for ' + label + ' \u2014 add the lines by hand (supplier and reference are filled in).', 'warn', 8000); }
+          // the bulk list is header-only for most POs \u2014 fetch this one's
+          // detail on tap to try for its line items
+          if (!po.lines.length && po.id) {
+            btn.classList.add('po-loading');
+            try {
+              const r = await call('purchaseorders', { detail: po.id, ordernumber: po.number || '' });
+              if (r.po && r.po.lines && r.po.lines.length) po.lines = r.po.lines;
+            } catch (e) { /* fall through to header-only */ }
+            btn.classList.remove('po-loading');
+          }
           const res = applyPoToDraft(po);
           close();
           deliveryDialog();
           if (po.lines.length) App.toast(`${label} loaded \u2014 ${po.lines.length} line${po.lines.length === 1 ? '' : 's'} (${res.matched} matched to the catalogue${res.docketOnly ? ', ' + res.docketOnly + ' docket-only' : ''}). Adjust quantities to what actually arrived.`, 'good', 8000);
+          else App.toast(`${label}: supplier & reference filled in. AroFlo didn\u2019t return this PO\u2019s line items \u2014 add what arrived from the catalogue below.`, 'info', 8000);
         }));
       };
       renderList('');
@@ -2119,20 +2129,17 @@ const Aro = (() => {
       let qDeb = 0;
       qEl.addEventListener('input', () => { clearTimeout(qDeb); qDeb = setTimeout(() => renderList(qEl.value), 130); });
 
-      // shape trouble \u2192 explain; the raw-reply view is always available
+      // A calm heads-up (not an error): AroFlo only returns line detail for
+      // some POs in bulk \u2014 the rest fill supplier + reference, and tapping
+      // fetches the tapped PO's detail to try for its lines.
       const lined = [...mine, ...others];
-      const shapeOff = !errMsg && (
-        (lined.length > 0 && lined.every(po => !po.lines.length))
-        || lined.some(po => !po.number)
-        || (tidCount > 0 && lined.length > 0 && !scoped));
       const warn = box.querySelector('#po-warn');
       const dbgBtn = box.querySelector('#po-debug');
       dbgBtn.hidden = !pos.length && !errMsg;
-      if (shapeOff) {
+      if (!errMsg && pos.length) {
         warn.hidden = false;
-        warn.textContent = (tidCount && !scoped ? 'These POs couldn\u2019t be matched to this project\u2019s tasks. ' : '')
-          + (lined.length && lined.every(po => !po.lines.length) ? 'AroFlo returned no line items. ' : '')
-          + 'Tap "Show AroFlo\u2019s PO reply" and send a screenshot so the format can be adapted.';
+        warn.className = 'cloud-note';
+        warn.textContent = 'Tip: search by PO number to jump straight to one. AroFlo doesn\u2019t return every PO\u2019s line items \u2014 tapping fetches the ones it can; otherwise the supplier & reference fill in and you add items from the catalogue.';
       }
       dbgBtn.addEventListener('click', async () => {
         dbgBtn.disabled = true; dbgBtn.textContent = 'Loading\u2026';
