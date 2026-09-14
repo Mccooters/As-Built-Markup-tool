@@ -1980,10 +1980,13 @@ const Aro = (() => {
     return { matched, docketOnly };
   }
 
-  /** The current project's tasks, for scoping the PO listing. */
-  async function poTaskIds() {
+  /** The current project's task ids, job numbers and project id — POs are
+   * matched against ALL of them, since AroFlo links a PO to tasks and/or
+   * projects and the array entry shapes vary. */
+  async function poProjectScope() {
+    const none = { tids: [], jobs: [], pid: '' };
     const num2 = String((State.S.aroSite && State.S.aroSite.project) || '').replace(/\D+/g, '');
-    if (!num2) return [];
+    if (!num2) return none;
     if (!projCache) {
       const all = [];
       for (let page = 1; page <= 4; page++) {
@@ -1994,9 +1997,13 @@ const Aro = (() => {
       projCache = all;
     }
     const p = projCache.find(x => x.number === num2);
-    if (!p) return [];
+    if (!p) return none;
     const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
-    return (rt.tasks || []).map(t => t.taskid).filter(Boolean);
+    return {
+      tids: (rt.tasks || []).map(t => t.taskid).filter(Boolean),
+      jobs: (rt.tasks || []).map(t => String(t.job || t.jobnumber || '')).filter(Boolean),
+      pid: p.id || '',
+    };
   }
 
   /** Pick a purchase order raised in AroFlo and pre-fill the delivery.
@@ -2021,14 +2028,17 @@ const Aro = (() => {
       const listEl = box.querySelector('#po-list');
       let pos = [], scoped = false, errMsg = '', tidCount = 0, more = false;
       try {
-        const tids = await poTaskIds();
-        tidCount = tids.length;
+        const scope = await poProjectScope();
+        tidCount = scope.tids.length;
         const r = await call('purchaseorders', {});
         const all = r.pos || [];
         more = !r.last;
-        if (tids.length) {
-          const set = new Set(tids);
-          const mine = all.filter(po => po.taskid && set.has(po.taskid));
+        if (scope.tids.length || scope.pid) {
+          const tset = new Set(scope.tids), jset = new Set(scope.jobs);
+          const mine = all.filter(po =>
+            (po.taskids || []).some(t => tset.has(t))
+            || (po.jobs || []).some(j => jset.has(j))
+            || (po.projectids || []).includes(scope.pid));
           if (mine.length) { pos = mine; scoped = true; } else pos = all;
         } else pos = all;
       } catch (e) { errMsg = e.message; }
@@ -2037,12 +2047,18 @@ const Aro = (() => {
 
       note.textContent = errMsg ? 'AroFlo purchase orders couldn\'t be read: ' + errMsg
         : !pos.length ? 'No purchase orders found in AroFlo.'
-        : scoped ? 'Purchase orders on this project\'s tasks — tap one to pre-fill the delivery.'
+        : scoped ? 'Purchase orders on this project — tap one to pre-fill the delivery.'
         : 'Purchase orders from AroFlo — tap one to pre-fill the delivery.' + (more ? ' (first 100 shown)' : '');
       listEl.innerHTML = pos.map((po, i) => `
         <button class="dv-hit" data-i="${i}">
           <span class="dv-hitname"><b>${po.number ? 'PO ' + esc(po.number) : 'PO'}</b> — ${esc(po.supplier || 'supplier n/a')}</span>
-          <span class="aro-sub">${esc([po.date, po.status, po.job ? '#' + po.job : '', po.lines.length + ' line' + (po.lines.length === 1 ? '' : 's')].filter(Boolean).join(' · '))}</span>
+          <span class="aro-sub">${esc([
+            po.date, po.status,
+            po.jobs && po.jobs.length ? '#' + po.jobs.join(' #') : (po.job ? '#' + po.job : ''),
+            po.by, po.totalEx ? '$' + po.totalEx.toFixed(2) + ' ex' : '',
+            po.received ? 'received ' + po.received : '',
+            po.lines.length + ' line' + (po.lines.length === 1 ? '' : 's'),
+          ].filter(Boolean).join(' · '))}</span>
         </button>`).join('');
 
       // shape trouble → offer the raw reply for a debugging screenshot

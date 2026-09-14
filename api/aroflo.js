@@ -611,12 +611,12 @@ const ACTIONS = {
   },
 
   // Purchase orders raised in AroFlo — read-only, so a site delivery can be
-  // pre-filled from what was actually ordered. Field-verified on a real org:
-  // this zone silently IGNORES where/order params it doesn't recognise (a
-  // taskid where returned the whole org), so ask plainly and let the client
-  // filter; ids come back as encrypted strings that must never be shown as
-  // the order number. Field names are still being pinned down, so the slim
-  // is tolerant and debug=1 returns the first raw PO for a screenshot.
+  // pre-filled from what was actually ordered. Field-verified on a real org
+  // (debug screenshot): the number is `ordernumber`, the date `purchasedate`,
+  // line items live in `lines` (joins mirror response keys, so ask for that
+  // join), task links come as a `tasks` ARRAY plus a `projects` array, and
+  // this zone silently IGNORES where params — so no server-side filtering;
+  // the client matches POs to its project locally.
   async purchaseorders(q) {
     const page = Math.max(1, num(q.page) || 1);
     const debug = str(q.debug) === '1';
@@ -639,36 +639,55 @@ const ACTIONS = {
       };
     };
     const linesOf = po => {
-      for (const k of ['orderitems', 'purchaseorderitems', 'items', 'lineitems', 'orderlines', 'materials']) {
-        if (Array.isArray(po[k])) return po[k];
+      for (const k of ['lines', 'orderitems', 'purchaseorderitems', 'items', 'lineitems', 'orderlines']) {
+        if (Array.isArray(po[k]) && po[k].length) return po[k];
       }
       return [];
     };
     const slimPo = po => {
-      const t = (po.task && typeof po.task === 'object' && po.task)
-        || (Array.isArray(po.tasks) && po.tasks[0]) || {};
-      const numberRaw = firstStr(po, ['ponumber', 'orderno', 'ordernumber', 'purchaseordernumber', 'orderid', 'pono', 'number']);
+      const tasks = Array.isArray(po.tasks) ? po.tasks
+        : (po.task && typeof po.task === 'object' ? [po.task] : []);
+      const numberRaw = firstStr(po, ['ordernumber', 'ponumber', 'orderno', 'purchaseordernumber', 'pono', 'number']);
       return {
         id: str(po.purchaseorderid || po.poid || po.id) || numberRaw,
         number: numberRaw && !looksEncoded(numberRaw) ? numberRaw : '',
         status: str(po.status || po.postatus),
-        date: firstStr(po, ['podate', 'orderdate', 'dateordered', 'date', 'datecreated', 'createddate', 'created']),
-        supplier: str((po.supplier && (po.supplier.suppliername || po.supplier.orgname || po.supplier.name))
+        date: firstStr(po, ['purchasedate', 'podate', 'orderdate', 'dateordered', 'date', 'datecreated']),
+        supplier: str((po.supplier && (po.supplier.orgname || po.supplier.suppliername || po.supplier.name))
           || po.suppliername || (typeof po.supplier === 'string' ? po.supplier : '')),
-        taskid: str(po.taskid || t.taskid),
-        job: str(po.jobnumber || t.jobnumber || t.taskname || po.taskname || ''),
+        supInv: str(po.supplierinvoicenumber || po.supinvno || ''),
+        by: str(po.purchasedbyuser && po.purchasedbyuser.username || ''),
+        totalEx: num(po.totalex),
+        received: str(po.datereceived || ''),
+        taskids: tasks.map(t => str(t.taskid || t.id)).filter(Boolean),
+        jobs: tasks.map(t => str(t.jobnumber || t.job)).filter(Boolean),
+        job: tasks.length ? str(tasks[0].jobnumber || tasks[0].job || tasks[0].taskname) : str(po.jobnumber || ''),
+        taskid: tasks.length ? str(tasks[0].taskid || tasks[0].id) : str(po.taskid || ''),
+        projectids: (Array.isArray(po.projects) ? po.projects : []).map(p => str(p.projectid || p.id)).filter(Boolean),
         lines: linesOf(po).map(slimLine).filter(l => l.pn || l.desc),
       };
     };
     const listOf = zr => zr.purchaseorders || zr.purchaseorder || zr.pos || [];
 
-    const r = await aroGet('purchaseorders', { join: ['orderitems'], page, pageSize: 100 });
-    const raw = Array.isArray(listOf(r.zoneresponse)) ? listOf(r.zoneresponse) : [];
+    // primary join guess is `lines` (mirrors the response key); if nothing
+    // comes back with lines at all, try the other likely names once
+    let r = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page, pageSize: 100 });
+    let raw = Array.isArray(listOf(r.zoneresponse)) ? listOf(r.zoneresponse) : [];
+    if (r.ok && raw.length && !raw.some(po => linesOf(po).length)) {
+      const r2 = await aroGet('purchaseorders', { join: ['purchaseorderlines', 'lineitems', 'items'], page, pageSize: 100 });
+      const raw2 = Array.isArray(listOf(r2.zoneresponse)) ? listOf(r2.zoneresponse) : [];
+      if (r2.ok && raw2.some(po => linesOf(po).length)) { r = r2; raw = raw2; }
+    }
     const pos = raw.map(slimPo).filter(p => p.id || p.number);
     const out = relay(r, { pos, ...pageMeta(r.zoneresponse, 100) });
     if (debug) {
-      out.keys = raw[0] ? Object.keys(raw[0]) : [];
-      out.sample = raw[0] ? JSON.stringify(raw[0]).slice(0, 4000) : '(AroFlo returned no purchase orders at all)';
+      // sample the most informative PO — one that shows task links or lines
+      const pick = raw.find(po => linesOf(po).length && (Array.isArray(po.tasks) && po.tasks.length))
+        || raw.find(po => Array.isArray(po.tasks) && po.tasks.length)
+        || raw.find(po => linesOf(po).length)
+        || raw[0];
+      out.keys = pick ? Object.keys(pick) : [];
+      out.sample = pick ? JSON.stringify(pick).slice(0, 4000) : '(AroFlo returned no purchase orders at all)';
     }
     return out;
   },
