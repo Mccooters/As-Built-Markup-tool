@@ -628,14 +628,21 @@ const ACTIONS = {
       for (const k of keys) { const v = str(o[k]).trim(); if (v) return v; }
       return '';
     };
+    // per-line fields, field-verified: partno / qtyordered / description or a
+    // string `item`, and — crucially — the line carries its own taskid (PO
+    // headers often have an EMPTY tasks array even when every line is on a
+    // task, so task links must be collected from the lines too)
     const slimLine = l => {
       const itemObj = l && typeof l.item === 'object' && l.item ? l.item : null;
       return {
-        pn: str(l.partnumber || l.itemcode || (itemObj && itemObj.partnumber)),
-        desc: str((itemObj && itemObj.description) || l.description || l.itemdescription
-          || (typeof l.item === 'string' ? l.item : '') || l.partnumber),
-        qty: num(l.quantity != null ? l.quantity : l.qty),
+        pn: str(l.partno || l.partnumber || l.itemcode || (itemObj && itemObj.partnumber)),
+        desc: str(l.description || (itemObj && itemObj.description) || l.itemdescription
+          || (typeof l.item === 'string' ? l.item : '') || l.partno || l.partnumber),
+        qty: num(l.qtyordered != null ? l.qtyordered
+          : l.quantity != null ? l.quantity
+          : l.qtybilled != null ? l.qtybilled : l.qty),
         itemid: str(l.itemid || (itemObj && itemObj.itemid)),
+        taskid: str(l.taskid || ''),
       };
     };
     const linesOf = po => {
@@ -648,6 +655,11 @@ const ACTIONS = {
       const tasks = Array.isArray(po.tasks) ? po.tasks
         : (po.task && typeof po.task === 'object' ? [po.task] : []);
       const numberRaw = firstStr(po, ['ordernumber', 'ponumber', 'orderno', 'purchaseordernumber', 'pono', 'number']);
+      const lines = linesOf(po).map(slimLine).filter(l => l.pn || l.desc);
+      const taskids = [...new Set([
+        ...tasks.map(t => str(t.taskid || t.id)),
+        ...lines.map(l => l.taskid),
+      ].filter(Boolean))];
       return {
         id: str(po.purchaseorderid || po.poid || po.id) || numberRaw,
         number: numberRaw && !looksEncoded(numberRaw) ? numberRaw : '',
@@ -659,12 +671,12 @@ const ACTIONS = {
         by: str(po.purchasedbyuser && po.purchasedbyuser.username || ''),
         totalEx: num(po.totalex),
         received: str(po.datereceived || ''),
-        taskids: tasks.map(t => str(t.taskid || t.id)).filter(Boolean),
+        taskids,
         jobs: tasks.map(t => str(t.jobnumber || t.job)).filter(Boolean),
         job: tasks.length ? str(tasks[0].jobnumber || tasks[0].job || tasks[0].taskname) : str(po.jobnumber || ''),
-        taskid: tasks.length ? str(tasks[0].taskid || tasks[0].id) : str(po.taskid || ''),
+        taskid: taskids[0] || '',
         projectids: (Array.isArray(po.projects) ? po.projects : []).map(p => str(p.projectid || p.id)).filter(Boolean),
-        lines: linesOf(po).map(slimLine).filter(l => l.pn || l.desc),
+        lines,
       };
     };
     const listOf = zr => zr.purchaseorders || zr.purchaseorder || zr.pos || [];

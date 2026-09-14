@@ -1984,7 +1984,7 @@ const Aro = (() => {
    * matched against ALL of them, since AroFlo links a PO to tasks and/or
    * projects and the array entry shapes vary. */
   async function poProjectScope() {
-    const none = { tids: [], jobs: [], pid: '' };
+    const none = { tids: [], jobs: [], jobByTid: {}, pid: '' };
     const num2 = String((State.S.aroSite && State.S.aroSite.project) || '').replace(/\D+/g, '');
     if (!num2) return none;
     if (!projCache) {
@@ -1999,9 +1999,11 @@ const Aro = (() => {
     const p = projCache.find(x => x.number === num2);
     if (!p) return none;
     const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
+    const pairs = (rt.tasks || []).map(t => ({ tid: String(t.taskid || ''), job: String(t.job || t.jobnumber || '') }));
     return {
-      tids: (rt.tasks || []).map(t => t.taskid).filter(Boolean),
-      jobs: (rt.tasks || []).map(t => String(t.job || t.jobnumber || '')).filter(Boolean),
+      tids: pairs.map(x => x.tid).filter(Boolean),
+      jobs: pairs.map(x => x.job).filter(Boolean),
+      jobByTid: Object.fromEntries(pairs.filter(x => x.tid).map(x => [x.tid, x.job])),
       pid: p.id || '',
     };
   }
@@ -2040,6 +2042,12 @@ const Aro = (() => {
             || (po.jobs || []).some(j => jset.has(j))
             || (po.projectids || []).includes(scope.pid));
           if (mine.length) { pos = mine; scoped = true; } else pos = all;
+          // task links usually ride on the PO's LINES — name the jobs for display
+          for (const po of pos) {
+            if (!(po.jobs || []).length && (po.taskids || []).length) {
+              po.jobs = [...new Set(po.taskids.map(t => scope.jobByTid[t]).filter(Boolean))];
+            }
+          }
         } else pos = all;
       } catch (e) { errMsg = e.message; }
       if (!box.isConnected) return;
