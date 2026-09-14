@@ -680,80 +680,50 @@ const ACTIONS = {
     };
     const listOf = zr => zr.purchaseorders || zr.purchaseorder || zr.pos || [];
 
-    // AroFlo's DEFAULT listing only serves a short recent-activity window
-    // (~2 months on the field org) — but a where on purchasedate works and
-    // opens the full history (field-verified via the date probe). So: ask
-    // with an explicit window, try newest-first ordering, and if AroFlo
-    // ignores the order (it serves oldest-first) crawl to the window's end.
+    // Two calls with different jobs (field-verified quirks): AroFlo's
+    // DEFAULT listing serves only a short recent-activity window but honours
+    // join=lines — that's the set deliveries arrive against, with line items
+    // and (via them) task links. A where on purchasedate opens the full
+    // history BUT silently drops any join, so the 9-month sweep is
+    // header-only: older POs (back-orders) stay findable, marked `old`.
     const PS = 250, MAX_PAGES = 4;
     const arr = v => (Array.isArray(v) ? v : []);
     const pad2 = n => String(n).padStart(2, '0');
     const sinceD = new Date(Date.now() - 270 * 86400000); // ~9 months of POs
     const since = sinceD.getFullYear() + '-' + pad2(sinceD.getMonth() + 1) + '-' + pad2(sinceD.getDate());
-    const fetchPage = (pg, opts = {}) => aroGet('purchaseorders', {
-      where: opts.noWhere ? [] : [`and|purchasedate|>|${since}`],
-      join: ['lines', 'orderitems'],
-      order: opts.noOrder ? [] : ['purchasedate|desc'],
-      page: pg, pageSize: PS,
-    });
+    const idOf = po => str(po.purchaseorderid || po.poid || po.id);
 
-    let usedWhere = true;
-    let r = await fetchPage(1);
-    if (!r.ok) r = await fetchPage(1, { noOrder: true });
-    if (!r.ok) { usedWhere = false; r = await fetchPage(1, { noWhere: true, noOrder: true }); }
-    let raw = arr(listOf(r.zoneresponse));
-    let meta = pageMeta(r.zoneresponse, PS);
-    const dOf = po => Date.parse(str(po.purchasedate)) || 0;
-    const isDesc = raw.length > 1 && dOf(raw[0]) > dOf(raw[raw.length - 1]);
-    let pages = 1;
-    if (usedWhere && !meta.last) {
-      if (isDesc) {
-        // newest already on page 1 — take one more page of depth
-        const r2 = await fetchPage(2);
-        if (r2.ok) { raw = raw.concat(arr(listOf(r2.zoneresponse))); meta = pageMeta(r2.zoneresponse, PS); pages++; }
-      } else {
-        // order ignored → oldest first: crawl toward the end of the window
-        for (let pg = 2; pg <= MAX_PAGES && !meta.last; pg++) {
-          const rn = await fetchPage(pg, { noOrder: true });
-          if (!rn.ok) break;
-          raw = raw.concat(arr(listOf(rn.zoneresponse)));
-          meta = pageMeta(rn.zoneresponse, PS);
-          pages++;
-        }
-        if (!meta.last) {
-          // window bigger than the crawl — merge AroFlo's own recent set so
-          // the newest POs are never the ones missing
-          const rr = await fetchPage(1, { noWhere: true, noOrder: true });
-          if (rr.ok) raw = raw.concat(arr(listOf(rr.zoneresponse)));
-        }
-      }
+    const rA = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page: 1, pageSize: PS });
+    const rawA = arr(listOf(rA.zoneresponse));
+
+    let rawB = [], usedWhere = false, more = false, pagesB = 0;
+    for (let pg = 1; pg <= MAX_PAGES; pg++) {
+      const rB = await aroGet('purchaseorders', { where: [`and|purchasedate|>|${since}`], page: pg, pageSize: PS });
+      if (!rB.ok) break;
+      usedWhere = true;
+      pagesB++;
+      rawB = rawB.concat(arr(listOf(rB.zoneresponse)));
+      const m = pageMeta(rB.zoneresponse, PS);
+      more = !m.last;
+      if (m.last) break;
     }
-    const seen = new Set();
-    raw = raw.filter(po => {
-      const k = str(po.purchaseorderid);
-      if (!k) return true;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-    const pos = raw.map(slimPo).filter(p => p.id || p.number);
-    const out = relay(r, { pos, more: !meta.last, window: { since, usedWhere, isDesc, pages, fetched: raw.length } });
+    const ids = new Set(rawA.map(idOf).filter(Boolean));
+    const olderRaw = rawB.filter(po => { const k = idOf(po); return k && !ids.has(k); });
+    const pos = rawA.map(slimPo).filter(p => p.id || p.number);
+    const older = olderRaw.map(slimPo).filter(p => p.id || p.number).map(p => ({ ...p, old: true }));
+    const out = relay(rA, { pos, older, more, window: { since, usedWhere, pagesB, fetchedA: rawA.length, fetchedB: rawB.length } });
     if (debug) {
       // sample a requested PO when named (so the picker can show a PROJECT
-      // PO's raw lines), else the most informative one on the page
+      // PO's raw lines), else the most informative one in the lined set
       const wantId = str(q.sampleid).trim();
-      const pick = (wantId && raw.find(po => str(po.purchaseorderid || po.poid || po.id) === wantId))
-        || raw.find(po => linesOf(po).length && (Array.isArray(po.tasks) && po.tasks.length))
-        || raw.find(po => Array.isArray(po.tasks) && po.tasks.length)
-        || raw.find(po => linesOf(po).length)
-        || raw[0];
+      const combined = rawA.concat(olderRaw);
+      const pick = (wantId && combined.find(po => idOf(po) === wantId))
+        || rawA.find(po => linesOf(po).length && (Array.isArray(po.tasks) && po.tasks.length))
+        || rawA.find(po => linesOf(po).length)
+        || combined[0];
       out.keys = pick ? Object.keys(pick) : [];
       out.sample = pick ? JSON.stringify(pick).slice(0, 4000) : '(AroFlo returned no purchase orders at all)';
-      // one-screenshot answers to "why is a PO missing from the project
-      // group": where does each PO carry its task link (header tasks /
-      // line taskids / projects), and does an explicit date where widen
-      // the window AroFlo serves by default?
-      out.survey = raw.slice(0, 40).map(po => ({
+      out.survey = rawA.slice(0, 40).map(po => ({
         n: str(po.ordernumber || ''),
         d: str(po.purchasedate || ''),
         st: str(po.status || ''),
@@ -761,6 +731,13 @@ const ACTIONS = {
         lineTasks: [...new Set(linesOf(po).map(l => str(l.taskid)).filter(Boolean))].length,
         projects: Array.isArray(po.projects) ? po.projects.length : -1,
       }));
+      // does a where on status keep the join alive? (would let matching
+      // reach active POs beyond the default window in a future round)
+      try {
+        const rp = await aroGet('purchaseorders', { where: ['and|status|=|approved'], join: ['lines', 'orderitems'], page: 1, pageSize: 50 });
+        const l = arr(listOf(rp.zoneresponse));
+        out.probe = { statusWhereJoin: { ok: rp.ok, count: l.length, linesSeen: l.some(po => linesOf(po).length) } };
+      } catch (e) { out.probe = { statusWhereJoin: { ok: false, error: String(e && e.message || e) } }; }
     }
     return out;
   },
