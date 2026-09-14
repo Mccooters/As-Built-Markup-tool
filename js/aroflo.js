@@ -1952,10 +1952,13 @@ const Aro = (() => {
    * docket-only line when it isn't an inventory item. */
   function applyPoToDraft(po) {
     if (!delivDraft.supplier) delivDraft.supplier = po.supplier || '';
-    const tag = 'PO ' + (po.number || po.id);
-    if (!delivDraft.ref) delivDraft.ref = tag;
-    else if (!delivDraft.ref.includes(tag)) delivDraft.ref += ' · ' + tag;
-    delivDraft.po = po.number || po.id;
+    // encrypted internal ids never masquerade as an order number
+    if (po.number) {
+      const tag = 'PO ' + po.number;
+      if (!delivDraft.ref) delivDraft.ref = tag;
+      else if (!delivDraft.ref.includes(tag)) delivDraft.ref += ' · ' + tag;
+      delivDraft.po = po.number;
+    }
     let matched = 0, docketOnly = 0;
     for (const l of po.lines || []) {
       const q = Number(l.qty) || 0;
@@ -1993,54 +1996,88 @@ const Aro = (() => {
     const p = projCache.find(x => x.number === num2);
     if (!p) return [];
     const rt = await call('projecttasks', { projectid: p.id, clientid: p.clientId || '', name: p.name });
-    return (rt.tasks || []).map(t => t.taskid).filter(Boolean).slice(0, 6);
+    return (rt.tasks || []).map(t => t.taskid).filter(Boolean);
   }
 
-  /** Pick a purchase order raised in AroFlo and pre-fill the delivery. */
+  /** Pick a purchase order raised in AroFlo and pre-fill the delivery.
+   * AroFlo ignores server-side PO filters (field-verified), so this fetches
+   * a page and matches it to the project's tasks locally — and when the org's
+   * response shape looks off (no numbers, no lines, no task match), it can
+   * show AroFlo's raw reply so the field names can be pinned down. */
   function poPickerDialog() {
     App.modal(`
       <h3>Pull from a purchase order</h3>
       <p class="muted" id="po-note">Looking up purchase orders…</p>
       <div id="po-list"></div>
-      <div class="modal-actions"><button class="mini-btn" id="po-back">Back</button></div>`, async (box, close) => {
+      <div class="aro-error" id="po-warn" hidden></div>
+      <pre class="ur-debug" id="po-raw" hidden></pre>
+      <div class="modal-actions">
+        <button class="mini-btn" id="po-debug" hidden>Show AroFlo's PO reply</button>
+        <span style="flex:1 1 0"></span>
+        <button class="mini-btn" id="po-back">Back</button>
+      </div>`, async (box, close) => {
       box.querySelector('#po-back').addEventListener('click', () => { close(); deliveryDialog(); });
       const note = box.querySelector('#po-note');
       const listEl = box.querySelector('#po-list');
-      let pos = [], scoped = false, errMsg = '';
+      let pos = [], scoped = false, errMsg = '', tidCount = 0, more = false;
       try {
         const tids = await poTaskIds();
-        const seen = {};
-        for (const tid of tids) {
-          const r = await call('purchaseorders', { taskid: tid });
-          for (const po of r.pos || []) {
-            const k = po.id || po.number;
-            if (!seen[k]) { seen[k] = 1; pos.push(po); }
-          }
-        }
-        scoped = !!tids.length && !!pos.length;
-        if (!pos.length) {
-          const r = await call('purchaseorders', {});
-          pos = r.pos || [];
-        }
+        tidCount = tids.length;
+        const r = await call('purchaseorders', {});
+        const all = r.pos || [];
+        more = !r.last;
+        if (tids.length) {
+          const set = new Set(tids);
+          const mine = all.filter(po => po.taskid && set.has(po.taskid));
+          if (mine.length) { pos = mine; scoped = true; } else pos = all;
+        } else pos = all;
       } catch (e) { errMsg = e.message; }
       if (!box.isConnected) return;
       pos.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0) || String(b.number).localeCompare(String(a.number)));
+
       note.textContent = errMsg ? 'AroFlo purchase orders couldn\'t be read: ' + errMsg
         : !pos.length ? 'No purchase orders found in AroFlo.'
         : scoped ? 'Purchase orders on this project\'s tasks — tap one to pre-fill the delivery.'
-        : 'Most recent purchase orders — tap one to pre-fill the delivery.';
+        : 'Purchase orders from AroFlo — tap one to pre-fill the delivery.' + (more ? ' (first 100 shown)' : '');
       listEl.innerHTML = pos.map((po, i) => `
         <button class="dv-hit" data-i="${i}">
-          <span class="dv-hitname"><b>PO ${esc(po.number)}</b> — ${esc(po.supplier || 'supplier n/a')}</span>
+          <span class="dv-hitname"><b>${po.number ? 'PO ' + esc(po.number) : 'PO'}</b> — ${esc(po.supplier || 'supplier n/a')}</span>
           <span class="aro-sub">${esc([po.date, po.status, po.job ? '#' + po.job : '', po.lines.length + ' line' + (po.lines.length === 1 ? '' : 's')].filter(Boolean).join(' · '))}</span>
         </button>`).join('');
+
+      // shape trouble → offer the raw reply for a debugging screenshot
+      const shapeOff = !errMsg && (
+        (pos.length && pos.every(po => !po.lines.length))
+        || pos.some(po => !po.number)
+        || (tidCount > 0 && pos.length > 0 && !scoped));
+      const warn = box.querySelector('#po-warn');
+      const dbgBtn = box.querySelector('#po-debug');
+      if (shapeOff) {
+        warn.hidden = false;
+        warn.textContent = (tidCount && !scoped ? 'These POs couldn\'t be matched to this project\'s tasks. ' : '')
+          + (pos.length && pos.every(po => !po.lines.length) ? 'AroFlo returned no line items. ' : '')
+          + 'Tap "Show AroFlo\'s PO reply" and send a screenshot so the format can be adapted.';
+        dbgBtn.hidden = false;
+      }
+      dbgBtn.addEventListener('click', async () => {
+        dbgBtn.disabled = true; dbgBtn.textContent = 'Loading…';
+        try {
+          const r = await call('purchaseorders', { debug: 1 });
+          const pre = box.querySelector('#po-raw');
+          pre.hidden = false;
+          pre.textContent = 'PO fields: ' + JSON.stringify(r.keys || []) + '\n\nFirst PO raw:\n' + (r.sample || '(empty)');
+        } catch (e) { App.toast('Debug read failed: ' + e.message, 'error', 7000); }
+        dbgBtn.disabled = false; dbgBtn.textContent = 'Show AroFlo\'s PO reply';
+      });
+
       listEl.querySelectorAll('.dv-hit').forEach(btn => btn.addEventListener('click', () => {
         const po = pos[Number(btn.dataset.i)];
-        if (!po.lines.length) { App.toast('AroFlo returned no line items for PO ' + po.number + ' — add the lines by hand (supplier and reference are filled in).', 'warn', 8000); }
+        const label = po.number ? 'PO ' + po.number : 'that PO';
+        if (!po.lines.length) { App.toast('AroFlo returned no line items for ' + label + ' — add the lines by hand (supplier and reference are filled in).', 'warn', 8000); }
         const res = applyPoToDraft(po);
         close();
         deliveryDialog();
-        if (po.lines.length) App.toast(`PO ${po.number} loaded — ${po.lines.length} line${po.lines.length === 1 ? '' : 's'} (${res.matched} matched to the catalogue${res.docketOnly ? ', ' + res.docketOnly + ' docket-only' : ''}). Adjust quantities to what actually arrived.`, 'good', 8000);
+        if (po.lines.length) App.toast(`${label} loaded — ${po.lines.length} line${po.lines.length === 1 ? '' : 's'} (${res.matched} matched to the catalogue${res.docketOnly ? ', ' + res.docketOnly + ' docket-only' : ''}). Adjust quantities to what actually arrived.`, 'good', 8000);
       }));
     });
   }
