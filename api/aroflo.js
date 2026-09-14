@@ -618,7 +618,6 @@ const ACTIONS = {
   // this zone silently IGNORES where params — so no server-side filtering;
   // the client matches POs to its project locally.
   async purchaseorders(q) {
-    const page = Math.max(1, num(q.page) || 1);
     const debug = str(q.debug) === '1';
 
     // encrypted-id-ish: base64 padding or a long letter-salad — not a number
@@ -681,18 +680,64 @@ const ACTIONS = {
     };
     const listOf = zr => zr.purchaseorders || zr.purchaseorder || zr.pos || [];
 
-    // primary join guess is `lines` (mirrors the response key); if nothing
-    // comes back with lines at all, try the other likely names once
-    const PS = 250;
-    let r = await aroGet('purchaseorders', { join: ['lines', 'orderitems'], page, pageSize: PS });
-    let raw = Array.isArray(listOf(r.zoneresponse)) ? listOf(r.zoneresponse) : [];
-    if (r.ok && raw.length && !raw.some(po => linesOf(po).length)) {
-      const r2 = await aroGet('purchaseorders', { join: ['purchaseorderlines', 'lineitems', 'items'], page, pageSize: PS });
-      const raw2 = Array.isArray(listOf(r2.zoneresponse)) ? listOf(r2.zoneresponse) : [];
-      if (r2.ok && raw2.some(po => linesOf(po).length)) { r = r2; raw = raw2; }
+    // AroFlo's DEFAULT listing only serves a short recent-activity window
+    // (~2 months on the field org) — but a where on purchasedate works and
+    // opens the full history (field-verified via the date probe). So: ask
+    // with an explicit window, try newest-first ordering, and if AroFlo
+    // ignores the order (it serves oldest-first) crawl to the window's end.
+    const PS = 250, MAX_PAGES = 4;
+    const arr = v => (Array.isArray(v) ? v : []);
+    const pad2 = n => String(n).padStart(2, '0');
+    const sinceD = new Date(Date.now() - 270 * 86400000); // ~9 months of POs
+    const since = sinceD.getFullYear() + '-' + pad2(sinceD.getMonth() + 1) + '-' + pad2(sinceD.getDate());
+    const fetchPage = (pg, opts = {}) => aroGet('purchaseorders', {
+      where: opts.noWhere ? [] : [`and|purchasedate|>|${since}`],
+      join: ['lines', 'orderitems'],
+      order: opts.noOrder ? [] : ['purchasedate|desc'],
+      page: pg, pageSize: PS,
+    });
+
+    let usedWhere = true;
+    let r = await fetchPage(1);
+    if (!r.ok) r = await fetchPage(1, { noOrder: true });
+    if (!r.ok) { usedWhere = false; r = await fetchPage(1, { noWhere: true, noOrder: true }); }
+    let raw = arr(listOf(r.zoneresponse));
+    let meta = pageMeta(r.zoneresponse, PS);
+    const dOf = po => Date.parse(str(po.purchasedate)) || 0;
+    const isDesc = raw.length > 1 && dOf(raw[0]) > dOf(raw[raw.length - 1]);
+    let pages = 1;
+    if (usedWhere && !meta.last) {
+      if (isDesc) {
+        // newest already on page 1 — take one more page of depth
+        const r2 = await fetchPage(2);
+        if (r2.ok) { raw = raw.concat(arr(listOf(r2.zoneresponse))); meta = pageMeta(r2.zoneresponse, PS); pages++; }
+      } else {
+        // order ignored → oldest first: crawl toward the end of the window
+        for (let pg = 2; pg <= MAX_PAGES && !meta.last; pg++) {
+          const rn = await fetchPage(pg, { noOrder: true });
+          if (!rn.ok) break;
+          raw = raw.concat(arr(listOf(rn.zoneresponse)));
+          meta = pageMeta(rn.zoneresponse, PS);
+          pages++;
+        }
+        if (!meta.last) {
+          // window bigger than the crawl — merge AroFlo's own recent set so
+          // the newest POs are never the ones missing
+          const rr = await fetchPage(1, { noWhere: true, noOrder: true });
+          if (rr.ok) raw = raw.concat(arr(listOf(rr.zoneresponse)));
+        }
+      }
     }
+    const seen = new Set();
+    raw = raw.filter(po => {
+      const k = str(po.purchaseorderid);
+      if (!k) return true;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     const pos = raw.map(slimPo).filter(p => p.id || p.number);
-    const out = relay(r, { pos, ...pageMeta(r.zoneresponse, PS) });
+    const out = relay(r, { pos, more: !meta.last, window: { since, usedWhere, isDesc, pages, fetched: raw.length } });
     if (debug) {
       // sample a requested PO when named (so the picker can show a PROJECT
       // PO's raw lines), else the most informative one on the page
@@ -716,12 +761,6 @@ const ACTIONS = {
         lineTasks: [...new Set(linesOf(po).map(l => str(l.taskid)).filter(Boolean))].length,
         projects: Array.isArray(po.projects) ? po.projects.length : -1,
       }));
-      try {
-        const rp = await aroGet('purchaseorders', { where: ['and|purchasedate|>|2026-01-01'], page: 1, pageSize: PS });
-        const rlist = Array.isArray(listOf(rp.zoneresponse)) ? listOf(rp.zoneresponse) : [];
-        const nums = rlist.map(po => str(po.ordernumber)).filter(Boolean).sort();
-        out.probe = { wherePurchasedate: { ok: rp.ok, count: rlist.length, lo: nums[0] || '', hi: nums[nums.length - 1] || '' } };
-      } catch (e) { out.probe = { wherePurchasedate: { ok: false, error: String(e && e.message || e) } }; }
     }
     return out;
   },

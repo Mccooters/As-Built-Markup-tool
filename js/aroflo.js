@@ -2045,14 +2045,11 @@ const Aro = (() => {
       try {
         const scope = await poProjectScope();
         tidCount = scope.tids.length;
-        // one page rarely holds a whole org's POs — crawl a few
-        const all = [];
-        for (let page = 1; page <= 3; page++) {
-          const r = await call('purchaseorders', { page });
-          all.push(...(r.pos || []));
-          if (r.last) { more = false; break; }
-          more = page === 3;
-        }
+        // the proxy fetches the whole recent window in one action (AroFlo's
+        // default listing is too shallow — it asks with a date filter)
+        const r = await call('purchaseorders', {});
+        const all = r.pos || [];
+        more = !!r.more;
         const byDate = (a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0) || String(b.number).localeCompare(String(a.number));
         if (scope.tids.length || scope.pid) {
           const tset = new Set(scope.tids), jset = new Set(scope.jobs);
@@ -2118,8 +2115,8 @@ const Aro = (() => {
           const pre = box.querySelector('#po-raw');
           pre.hidden = false;
           pre.textContent = 'PO fields: ' + JSON.stringify(r.keys || [])
+            + '\n\nListing window: ' + JSON.stringify(r.window || {})
             + '\n\nTask-link survey:\n' + (r.survey || []).map(s => JSON.stringify(s)).join('\n')
-            + '\n\nDate-filter probe: ' + JSON.stringify(r.probe || {})
             + '\n\nSample PO raw:\n' + (r.sample || '(empty)');
         } catch (e) { App.toast('Debug read failed: ' + e.message, 'error', 7000); }
         dbgBtn.disabled = false; dbgBtn.textContent = 'Show AroFlo\'s PO reply';
