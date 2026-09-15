@@ -660,6 +660,11 @@ body.mode-editor #homeShell { display: none; }
 /* visibility (not display) keeps the editor's layout boxes while it is covered,
    and takes its buttons out of the tab order */
 body.mode-home #toolbar, body.mode-home #main, body.mode-home #listPanel, body.mode-home #statusBar { visibility: hidden; }
+/* editor: ≡ slides the same sidebar in as a drawer over the dimmed drawing */
+body.mode-editor.menu-open #homeShell { display: flex; background: rgba(0,0,0,.5); }
+body.mode-editor.menu-open #homeMain { display: none; }
+body.mode-editor.menu-open #homeSide { box-shadow: 16px 0 40px rgba(0,0,0,.55); animation: hs-slide .18s ease-out; }
+@keyframes hs-slide { from { transform: translateX(-28px); opacity: .5; } to { transform: none; opacity: 1; } }
 body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-chip { display: none !important; }
 #toolbar .brand { cursor: pointer; border-radius: 6px; }
 #toolbar .brand:hover { background: var(--bg3); }
@@ -736,24 +741,26 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
 #homeShell.dragging .hm-open { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(77,163,255,.25); }
 
 @media (max-width: 760px) {
-  /* phones: the sidebar becomes a top strip — brand, scrolling nav, account */
-  #homeShell { flex-direction: column; }
-  #homeSide {
+  /* phones, Home: the sidebar becomes a top strip — brand, scrolling nav, account */
+  body.mode-home #homeShell { flex-direction: column; }
+  body.mode-home #homeSide {
     flex: 0 0 auto; flex-direction: row; align-items: center; gap: 2px;
     padding: calc(6px + env(safe-area-inset-top)) 8px 6px; overflow-x: auto; overflow-y: hidden;
     border-right: 0; border-bottom: 1px solid var(--edge);
   }
-  #homeSide > * { flex: 0 0 auto; }
-  .hs-brand { padding: 0 6px 0 2px; gap: 0; }
-  .hs-brand .brand-mark { width: 26px; height: 26px; }
-  .hs-brand .logo { display: none; }
-  .hs-user { width: auto; order: 9; padding: 3px; border: 0; background: transparent; margin-left: 6px; }
-  .hs-usertext { display: none; }
-  .hs-avatar { width: 30px; height: 30px; font-size: 12px; }
-  .hs-nav, .hs-foot { flex-direction: row; margin: 0; border: 0; padding: 0; gap: 2px; }
-  .hs-item { width: auto; padding: 8px 9px; font-size: 12.5px; gap: 7px; }
-  .hs-item svg { width: 18px; height: 18px; }
-  .hs-foot .hs-item span { display: none; }
+  body.mode-home #homeSide > * { flex: 0 0 auto; }
+  body.mode-home .hs-brand { padding: 0 6px 0 2px; gap: 0; }
+  body.mode-home .hs-brand .brand-mark { width: 26px; height: 26px; }
+  body.mode-home .hs-brand .logo { display: none; }
+  body.mode-home .hs-user { width: auto; order: 9; padding: 3px; border: 0; background: transparent; margin-left: 6px; }
+  body.mode-home .hs-usertext { display: none; }
+  body.mode-home .hs-avatar { width: 30px; height: 30px; font-size: 12px; }
+  body.mode-home .hs-nav, body.mode-home .hs-foot { flex-direction: row; margin: 0; border: 0; padding: 0; gap: 2px; }
+  body.mode-home .hs-item { width: auto; padding: 8px 9px; font-size: 12.5px; gap: 7px; }
+  body.mode-home .hs-item svg { width: 18px; height: 18px; }
+  body.mode-home .hs-foot .hs-item span { display: none; }
+  /* phones, editor: the ≡ drawer stays a vertical panel, a little narrower */
+  body.mode-editor.menu-open #homeSide { flex-basis: min(82vw, 300px); }
   #homeMain { padding: 16px 14px calc(26px + env(safe-area-inset-bottom)); }
   .hm-head h1 { font-size: 21px; }
   .hm-card { padding: 12px 13px; border-radius: 10px; }

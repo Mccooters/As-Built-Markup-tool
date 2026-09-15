@@ -276,10 +276,9 @@ const Drawings = (() => {
     maybeAutoSync();
   }
 
-  /** Called by Cloud whenever sign-in state or the deployment probe changes. */
+  /** Called by Cloud whenever sign-in state or the deployment probe changes
+   *  (Home refreshes its Drawings menu item from the same hook). */
   function onCloudState() {
-    const btn = document.getElementById('btnDrawings');
-    if (btn) btn.hidden = !(available() && signedIn());
     renderCards();
     maybeAutoSync();
   }
@@ -288,8 +287,6 @@ const Drawings = (() => {
     st.reg = loadJson(REG_KEY, null);
     st.map = loadJson(MAP_KEY, {});
     st.fold = loadJson(FOLD_KEY, {});
-    const btn = document.getElementById('btnDrawings');
-    if (btn) { btn.hidden = true; btn.addEventListener('click', openDialog); }
     renderCards();
   }
 

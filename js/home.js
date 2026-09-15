@@ -1,12 +1,15 @@
 /* ============ home.js — the home shell: sidebar + landing page ============
  *
  * AirMark opens on a simple Procore-style home: a dark sidebar (Home,
- * Drawings, Site stock, Deliveries, Settings, account) and a page of cards —
- * the drawing you were on, recent projects on this device, the team cloud
- * list and the SharePoint drawing register. The full editor chrome (two
- * toolbar rows, tool rail, properties panel, markups list, status bar) only
- * appears once a drawing is actually open; the Home button / logo in the
- * editor brings the shell back without closing the drawing.
+ * Current drawing, Drawings, Site stock, Deliveries; Settings, Help, Log out;
+ * account chip) and a page of cards — the drawing you were on, recent
+ * projects on this device, the team cloud list and the SharePoint drawing
+ * register. The full editor chrome (toolbar, tool rail, properties panel,
+ * markups list, status bar) only appears once a drawing is actually open.
+ *
+ * The same sidebar is reachable at any time: in the editor the ≡ button
+ * slides it in as a drawer over the drawing (body.menu-open), so nothing
+ * needs to be duplicated in the toolbar. The logo jumps straight Home.
  *
  * The shell is a fixed overlay toggled by body.mode-home / body.mode-editor
  * rather than display:none on the editor: the viewer keeps its real size
@@ -20,14 +23,19 @@ const Home = (() => {
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let mode = 'home';
 
-  /* ---------------- mode switch ---------------- */
+  /* ---------------- mode switch + drawer ---------------- */
+
+  const menuOpen = () => document.body.classList.contains('menu-open');
+  function openMenu() { document.body.classList.add('menu-open'); refresh(); }
+  function closeMenu() { document.body.classList.remove('menu-open'); }
+  function toggleMenu() { if (menuOpen()) closeMenu(); else openMenu(); }
 
   function setMode(m) {
     mode = m === 'editor' ? 'editor' : 'home';
     document.body.classList.toggle('mode-home', mode === 'home');
     document.body.classList.toggle('mode-editor', mode === 'editor');
-    document.body.classList.remove('panel-open');     // phone drawer never survives a switch
-    if (mode === 'home') refresh();
+    document.body.classList.remove('panel-open', 'menu-open');   // no drawer survives a switch
+    refresh();
   }
 
   /* ---------------- who's using it ---------------- */
@@ -52,11 +60,14 @@ const Home = (() => {
 
   function refresh() {
     if (!$('homeShell')) return;
+    const cl = cloudState();
     const u = whoAmI();
     $('hsAvatar').textContent = u.known ? initials(u.name) : '?';
     $('hsUserName').textContent = u.name;
     $('hsUserSub').textContent = u.sub;
     $('hsSignout').hidden = !u.signed;
+    // the Drawings item only exists on deployments with a SharePoint register
+    $('hsDrawingsNav').hidden = !(typeof Drawings !== 'undefined' && cl && cl.enabled === true && cl.sp);
     try {
       $('hsDate').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
     } catch (e) { $('hsDate').textContent = ''; }
@@ -74,16 +85,24 @@ const Home = (() => {
       if (proj) bits.push('AroFlo project ' + proj);
       $('hsContSub').textContent = bits.join(' · ');
     }
+    const active = mode === 'editor' ? 'drawing' : 'home';
+    document.querySelectorAll('#homeSide .hs-item[data-nav]').forEach(b =>
+      b.classList.toggle('active', b.dataset.nav === active));
   }
 
   /* ---------------- navigation ---------------- */
 
   function focusSignIn() {
     const el = $('cl-name');
-    if (!el) return false;
+    if (!el) return;
     try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { el.scrollIntoView(); }
     el.focus();
-    return true;
+  }
+
+  // the sign-in card lives on the Home page — get there first if needed
+  function goSignIn() {
+    if (mode !== 'home') setMode('home');
+    setTimeout(focusSignIn, 60);
   }
 
   function openDrawings() {
@@ -92,7 +111,7 @@ const Home = (() => {
     if (ready && cl.token) { Drawings.openDialog(); return; }
     if (ready) {
       App.toast('Sign in to the team cloud first — the project’s SharePoint drawing register then loads by itself.', 'warn', 6000);
-      focusSignIn();
+      goSignIn();
       return;
     }
     App.toast('The SharePoint drawing register isn’t set up on this deployment yet (see “Site drawings from SharePoint” in the README). PDFs on this device still open from Home.', 'warn', 8000);
@@ -112,9 +131,9 @@ const Home = (() => {
       });
       return;
     }
-    if (focusSignIn()) return;          // team cloud available — the sign-in card is on this page
-    const btn = $('btnAuthor');         // otherwise the plain author-name dialog
-    if (btn) btn.click();
+    const cl = cloudState();
+    if (cl && cl.enabled === true) { goSignIn(); return; }   // team cloud available
+    App.authorDialog();                                       // otherwise the plain author name
   }
 
   const NAV = {
@@ -147,30 +166,30 @@ const Home = (() => {
   /* ---------------- boot ---------------- */
 
   function init() {
-    if (!$('homeShell')) return;
+    const shell = $('homeShell');
+    if (!shell) return;
     document.querySelectorAll('#homeSide .hs-item[data-nav]').forEach(b =>
-      b.addEventListener('click', () => { const fn = NAV[b.dataset.nav]; if (fn) fn(); }));
-    $('hsUser').addEventListener('click', accountTap);
+      b.addEventListener('click', () => { closeMenu(); const fn = NAV[b.dataset.nav]; if (fn) fn(); }));
+    $('hsUser').addEventListener('click', () => { closeMenu(); accountTap(); });
     $('hsContBtn').addEventListener('click', () => setMode('editor'));
-    // the home buttons reuse the toolbar wiring (file pickers, sample loader)
-    $('homeOpen').addEventListener('click', () => $('btnOpen').click());
-    $('homeLoad').addEventListener('click', () => $('btnOpenProject').click());
-    $('homeSample').addEventListener('click', () => $('btnSample').click());
-    // editor → home: the Home button and the logo
-    const homeBtn = $('btnHome');
-    if (homeBtn) homeBtn.addEventListener('click', () => setMode('home'));
+    // editor: ≡ opens the sidebar as a drawer, the logo jumps straight Home
+    const menuBtn = $('btnMenu');
+    if (menuBtn) menuBtn.addEventListener('click', toggleMenu);
     const brand = document.querySelector('#toolbar .brand');
     if (brand) brand.addEventListener('click', () => setMode('home'));
+    // tapping the dimmed drawing (the shell's own background) closes the drawer
+    shell.addEventListener('click', e => { if (e.target === shell && menuOpen()) closeMenu(); });
+    window.addEventListener('keydown', e => { if (e.key === 'Escape' && menuOpen()) { e.preventDefault(); closeMenu(); } });
     wireDrop();
 
     // a drawing opening (file, sample, recents, team cloud, SharePoint,
     // ?proj= deep link) always lands in the editor
     State.on('doc', () => { if (State.S.pdf) setMode('editor'); else refresh(); });
-    State.on('autosave', () => { if (mode === 'home') refresh(); });
+    State.on('autosave', () => { if (mode === 'home' || menuOpen()) refresh(); });
     setMode(State.S.pdf ? 'editor' : 'home');
   }
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, mode: () => mode };
+  return { setMode, refresh, openMenu, closeMenu, toggleMenu, mode: () => mode };
 })();

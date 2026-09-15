@@ -550,20 +550,39 @@ const App = (() => {
     toast('Drop a PDF drawing or an .airmark project file.', 'warn');
   }
 
+  function authorDialog() {
+    modal(`<h3>Author name</h3>
+      <p class="muted">Stamped on every markup you place (shows in the list and CSV).</p>
+      <div class="form-row"><input type="text" id="author-name" value="${State.S.author.replace(/"/g, '&quot;')}"></div>
+      <div class="modal-actions"><button class="mini-btn" id="au-cancel">Cancel</button>
+      <button class="mini-btn primary" id="au-ok">Save</button></div>`, (box, close) => {
+      $('author-name').focus();
+      $('au-ok').onclick = () => {
+        State.S.author = $('author-name').value.trim() || 'Field';
+        localStorage.setItem('abmt:author', State.S.author);
+        if (typeof Home !== 'undefined') Home.refresh();
+        close();
+      };
+      $('au-cancel').onclick = close;
+    });
+  }
+
   /* ================= wiring ================= */
 
   function wireToolbar() {
+    // Open stays in the toolbar; the project-file and sample pickers live on Home
     $('btnOpen').onclick = () => $('filePdf').click();
+    $('homeOpen').onclick = () => $('filePdf').click();
     $('filePdf').addEventListener('change', e => {
       if (e.target.files.length) handleFiles(e.target.files);
       e.target.value = '';
     });
-    $('btnOpenProject').onclick = () => $('fileProject').click();
+    $('homeLoad').onclick = () => $('fileProject').click();
     $('fileProject').addEventListener('change', e => {
       if (e.target.files.length) Project.openProjectFile(e.target.files[0]);
       e.target.value = '';
     });
-    $('btnSample').onclick = () => Export.openSample().catch(err => {
+    $('homeSample').onclick = () => Export.openSample().catch(err => {
       console.error(err); toast('Sample failed: ' + err.message, 'err');
     });
     $('btnSaveProject').onclick = () => Project.saveProject();
@@ -595,24 +614,6 @@ const App = (() => {
       Render.drawPage();
       MarkupList.render();
     });
-
-    $('btnHelp').onclick = helpDialog;
-    $('btnAuthor').onclick = () => {
-      modal(`<h3>Author name</h3>
-        <p class="muted">Stamped on every markup you place (shows in the list and CSV).</p>
-        <div class="form-row"><input type="text" id="author-name" value="${State.S.author.replace(/"/g, '&quot;')}"></div>
-        <div class="modal-actions"><button class="mini-btn" id="au-cancel">Cancel</button>
-        <button class="mini-btn primary" id="au-ok">Save</button></div>`, (box, close) => {
-        $('author-name').focus();
-        $('au-ok').onclick = () => {
-          State.S.author = $('author-name').value.trim() || 'Field';
-          localStorage.setItem('abmt:author', State.S.author);
-          if (typeof Home !== 'undefined') Home.refresh();
-          close();
-        };
-        $('au-cancel').onclick = close;
-      });
-    };
 
     $('statusScale').onclick = () => {
       if (!State.S.pdf) return;
@@ -722,8 +723,6 @@ const App = (() => {
     wireDragDrop();
     wireShortcuts();
 
-    $('btnStock').addEventListener('click', () => Aro.openPage());
-
     // mobile: right panel is a drawer behind the floating button
     $('panelFab').addEventListener('click', () => document.body.classList.toggle('panel-open'));
     $('panelBackdrop').addEventListener('click', () => document.body.classList.remove('panel-open'));
@@ -792,7 +791,7 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles,
+    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog,
     showTab: (...a) => Props.showTab(...a),
   };
 })();
