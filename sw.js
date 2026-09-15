@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const CACHE = 'abmt-shell-v3';
+const CACHE = 'abmt-shell-v4';
 const CORE = [
   './',
   'index.html',
