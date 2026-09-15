@@ -607,6 +607,7 @@ const App = (() => {
         $('au-ok').onclick = () => {
           State.S.author = $('author-name').value.trim() || 'Field';
           localStorage.setItem('abmt:author', State.S.author);
+          if (typeof Home !== 'undefined') Home.refresh();
           close();
         };
         $('au-cancel').onclick = close;
@@ -791,6 +792,7 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, showTab: (...a) => Props.showTab(...a),
+    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles,
+    showTab: (...a) => Props.showTab(...a),
   };
 })();

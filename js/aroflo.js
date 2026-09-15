@@ -2030,7 +2030,7 @@ const Aro = (() => {
     App.modal(`
       <h3>Pull from a purchase order</h3>
       <p class="muted" id="po-note">Looking up purchase orders\u2026</p>
-      <div class="aro-bar" id="po-qwrap" hidden>
+      <div class="aro-bar" id="po-qwrap">
         <input type="search" id="po-q" placeholder="Search PO number / supplier\u2026" autocomplete="off" style="flex:1">
       </div>
       <div id="po-list"></div>
@@ -2089,8 +2089,8 @@ const Aro = (() => {
           ].filter(Boolean).join(' \u00b7 '))}</span>
         </button>`;
       const pos = [...mine, ...others, ...older];
-      const qwrap = box.querySelector('#po-qwrap');
-      if (pos.length > 6) { qwrap.hidden = false; setTimeout(() => { const q = box.querySelector('#po-q'); if (q) q.focus(); }, 30); }
+      // search-first: the box is always there; with a long list it takes focus
+      if (pos.length > 6) setTimeout(() => { const q = box.querySelector('#po-q'); if (q) q.focus(); }, 30);
       const renderList = q2 => {
         const ql = String(q2 || '').trim().toLowerCase();
         const hit = po => !ql || ('po ' + po.number + ' ' + po.supplier + ' ' + (po.jobs || []).join(' ')).toLowerCase().includes(ql);

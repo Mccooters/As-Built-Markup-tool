@@ -7,7 +7,7 @@
  */
 'use strict';
 
-const CACHE = 'abmt-shell-v4';
+const CACHE = 'abmt-shell-v5';
 const CORE = [
   './',
   'index.html',
@@ -15,7 +15,7 @@ const CORE = [
   'js/geometry.js', 'js/units.js', 'js/symbols.js', 'js/state.js',
   'js/store.js', 'js/viewer.js', 'js/render.js', 'js/tools.js',
   'js/props.js', 'js/markuplist.js', 'js/project.js', 'js/export.js', 'js/docket.js',
-  'js/aroflo.js', 'js/cloud.js', 'js/drawings.js', 'js/app.js',
+  'js/aroflo.js', 'js/cloud.js', 'js/drawings.js', 'js/home.js', 'js/app.js',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js', 'vendor/zxing.min.js',
   'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',

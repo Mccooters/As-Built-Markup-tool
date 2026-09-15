@@ -21,7 +21,7 @@ html, body {
   font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
 }
 body { display: flex; flex-direction: column; }
-.hidden { display: none !important; }
+.hidden, [hidden] { display: none !important; }   /* the hidden attribute must beat display:flex rules */
 svg { pointer-events: none; }
 button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -650,3 +650,114 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 /* PO detail fetch in progress */
 .po-loading { opacity: .55; }
 .po-loading .dv-hitname b::after { content: ' \2026'; }
+
+/* ================= home shell — sidebar + landing page ================= */
+/* The shell overlays the editor instead of replacing it: the viewer keeps its
+   real size underneath, so fit-to-page and pinch maths never meet a 0×0
+   viewport while a drawing loads. Toggled by body.mode-home / mode-editor. */
+#homeShell { position: fixed; inset: 0; z-index: 75; display: flex; background: var(--bg); }
+body.mode-editor #homeShell { display: none; }
+/* visibility (not display) keeps the editor's layout boxes while it is covered,
+   and takes its buttons out of the tab order */
+body.mode-home #toolbar, body.mode-home #main, body.mode-home #listPanel, body.mode-home #statusBar { visibility: hidden; }
+body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-chip { display: none !important; }
+#toolbar .brand { cursor: pointer; border-radius: 6px; }
+#toolbar .brand:hover { background: var(--bg3); }
+
+#homeSide {
+  flex: 0 0 236px; display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  background: #1a1d22; border-right: 1px solid var(--edge);
+  padding: calc(14px + env(safe-area-inset-top)) 12px calc(14px + env(safe-area-inset-bottom));
+  overflow-y: auto; scrollbar-width: none;
+}
+#homeSide::-webkit-scrollbar { display: none; }
+.hs-brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; user-select: none; }
+.hs-brand .brand-mark { width: 30px; height: 30px; }
+.hs-brand .logo { font-size: 20px; letter-spacing: -.2px; font-weight: 500; line-height: 1; color: var(--txt); }
+.hs-brand .logo b { font-weight: 700; }
+.hs-user {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
+  padding: 8px 10px; color: var(--txt); cursor: pointer; font: inherit;
+}
+.hs-user:hover { border-color: var(--accent-dim); }
+.hs-avatar {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--accent-dim); color: #fff; font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+.hs-usertext { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.hs-username { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-usersub { font-size: 11.5px; color: var(--txt-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-nav { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; }
+.hs-item {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  background: transparent; border: 0; border-radius: 8px; color: var(--txt);
+  padding: 10px; font: inherit; font-size: 14px; cursor: pointer;
+}
+.hs-item svg { flex: 0 0 auto; width: 20px; height: 20px; color: var(--txt-dim); }
+.hs-item span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-item:hover { background: var(--bg2); }
+.hs-item.active { background: var(--accent-dim); color: #fff; }
+.hs-item.active svg { color: #fff; }
+.hs-foot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--edge); padding-top: 10px; }
+
+#homeMain { flex: 1 1 0; min-width: 0; overflow-y: auto;
+  padding: calc(22px + env(safe-area-inset-top)) 28px calc(32px + env(safe-area-inset-bottom)); }
+.hm-inner { max-width: 760px; margin: 0 auto; }
+.hm-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.hm-head h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.3px; }
+.hm-date { color: var(--txt-dim); font-size: 13px; }
+.hm-card { background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 14px 16px; margin: 0 0 14px; }
+.hm-card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 700; }
+.hm-card p { margin: 0 0 12px; color: var(--txt-dim); font-size: 13px; line-height: 1.45; }
+.hm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.hm-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--bg3); color: var(--txt); border: 1px solid var(--edge); border-radius: 8px;
+  padding: 9px 14px; font: inherit; font-size: 13.5px; cursor: pointer;
+}
+.hm-btn:hover { border-color: var(--accent); }
+.hm-btn.primary { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+.hm-btn svg { width: 18px; height: 18px; }
+.hm-continue { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; border-color: var(--accent-dim); }
+.hm-cont-main { flex: 1 1 200px; min-width: 0; }
+.hm-kicker { font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
+.hm-cont-name { font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-cont-sub { font-size: 12.5px; color: var(--txt-dim); margin-top: 2px; }
+/* recents, team cloud and the SharePoint register render into these — as cards here */
+#homeMain #recentList:not(:empty), #homeMain #cloudCard:not(:empty), #homeMain #spCard:not(:empty) {
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 14px 16px; margin: 0 0 14px;
+}
+#homeMain #recentList { margin-top: 0; }
+#homeMain .cloud-card { margin: 0; max-width: none; }
+#homeMain .recent-cap { font-size: 12.5px; letter-spacing: .7px; margin-bottom: 10px; }
+#homeShell.dragging #homeMain { outline: 2px dashed var(--accent); outline-offset: -10px; }
+#homeShell.dragging .hm-open { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(77,163,255,.25); }
+
+@media (max-width: 760px) {
+  /* phones: the sidebar becomes a top strip — brand, scrolling nav, account */
+  #homeShell { flex-direction: column; }
+  #homeSide {
+    flex: 0 0 auto; flex-direction: row; align-items: center; gap: 2px;
+    padding: calc(6px + env(safe-area-inset-top)) 8px 6px; overflow-x: auto; overflow-y: hidden;
+    border-right: 0; border-bottom: 1px solid var(--edge);
+  }
+  #homeSide > * { flex: 0 0 auto; }
+  .hs-brand { padding: 0 6px 0 2px; gap: 0; }
+  .hs-brand .brand-mark { width: 26px; height: 26px; }
+  .hs-brand .logo { display: none; }
+  .hs-user { width: auto; order: 9; padding: 3px; border: 0; background: transparent; margin-left: 6px; }
+  .hs-usertext { display: none; }
+  .hs-avatar { width: 30px; height: 30px; font-size: 12px; }
+  .hs-nav, .hs-foot { flex-direction: row; margin: 0; border: 0; padding: 0; gap: 2px; }
+  .hs-item { width: auto; padding: 8px 9px; font-size: 12.5px; gap: 7px; }
+  .hs-item svg { width: 18px; height: 18px; }
+  .hs-foot .hs-item span { display: none; }
+  #homeMain { padding: 16px 14px calc(26px + env(safe-area-inset-bottom)); }
+  .hm-head h1 { font-size: 21px; }
+  .hm-card { padding: 12px 13px; border-radius: 10px; }
+  #homeMain #recentList:not(:empty), #homeMain #cloudCard:not(:empty), #homeMain #spCard:not(:empty) { padding: 12px 13px; border-radius: 10px; }
+  .hm-btn { padding: 10px 12px; font-size: 13px; }
+  .hm-continue .hm-btn { width: 100%; justify-content: center; }
+}

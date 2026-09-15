@@ -13,11 +13,126 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="AirMark">
 </head>
-<body>
+<body class="mode-home">
 
-<!-- ======================= TOP TOOLBAR ======================= -->
+<!-- ======================= HOME SHELL — sidebar + landing page ======================= -->
+<!-- Shown until a drawing is open (body.mode-home); the editor chrome below
+     stays laid out underneath so the viewer always has its real size. -->
+<div id="homeShell">
+  <aside id="homeSide">
+    <div class="hs-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <defs>
+          <linearGradient id="bmGradH" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#5cb4ff"/>
+            <stop offset="1" stop-color="#2f74c8"/>
+          </linearGradient>
+        </defs>
+        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="url(#bmGradH)"/>
+        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="none" stroke="#fff" stroke-opacity=".18"/>
+        <path d="M9.5 23 L16 8.5 L22.5 23" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M12.4 17.4 L19.6 17.4" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+      </svg>
+      <span class="logo">Air<b>Mark</b></span>
+    </div>
+
+    <button class="hs-user" id="hsUser" title="Account">
+      <span class="hs-avatar" id="hsAvatar">?</span>
+      <span class="hs-usertext">
+        <span class="hs-username" id="hsUserName">Not signed in</span>
+        <span class="hs-usersub" id="hsUserSub">Tap to sign in</span>
+      </span>
+    </button>
+
+    <nav class="hs-nav">
+      <button class="hs-item active" data-nav="home">
+        <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="hs-item" data-nav="drawing" id="hsDrawing" hidden title="Back to the drawing you have open">
+        <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/><path d="m8 17 3-4 2 2.5L15 13l2 4"/></svg>
+        <span>Current drawing</span>
+      </button>
+      <button class="hs-item" data-nav="drawings" title="Site drawings — the project drawing register from SharePoint">
+        <svg viewBox="0 0 24 24"><path d="M17.5 18a4.5 4.5 0 0 0 .4-9 6 6 0 0 0-11.6 1.6A4 4 0 0 0 6.5 18z"/><path d="M12 10v6m0 0-2.5-2.5M12 16l2.5-2.5"/></svg>
+        <span>Drawings</span>
+      </button>
+      <button class="hs-item" data-nav="stock" title="Site stock — live AroFlo inventory, stocktakes, transfers and project materials">
+        <svg viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+        <span>Site stock</span>
+      </button>
+      <button class="hs-item" data-nav="deliveries" title="Deliveries — receive, sign and book into stock; past dockets">
+        <svg viewBox="0 0 24 24"><path d="M3 7h11v9H3z"/><path d="M14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17.5" cy="18" r="1.8"/></svg>
+        <span>Deliveries</span>
+      </button>
+    </nav>
+
+    <div class="hs-foot">
+      <button class="hs-item" data-nav="settings" title="AroFlo connection settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+        <span>Settings</span>
+      </button>
+      <button class="hs-item" data-nav="help" title="Help &amp; keyboard shortcuts">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.8 2.1c-.8.5-1.3 1-1.3 1.9v.5"/><circle cx="12" cy="17" r=".5"/></svg>
+        <span>Help</span>
+      </button>
+      <button class="hs-item" data-nav="signout" id="hsSignout" hidden title="Sign out of the team cloud">
+        <svg viewBox="0 0 24 24"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5"/><path d="M14 8l4 4-4 4M18 12H9"/></svg>
+        <span>Log out</span>
+      </button>
+    </div>
+  </aside>
+
+  <main id="homeMain">
+    <div class="hm-inner">
+      <div class="hm-head">
+        <h1>Home</h1>
+        <span class="hm-date" id="hsDate"></span>
+      </div>
+
+      <section class="hm-card hm-continue" id="hsContinue" hidden>
+        <div class="hm-cont-main">
+          <div class="hm-kicker">Open drawing</div>
+          <div class="hm-cont-name" id="hsContName"></div>
+          <div class="hm-cont-sub" id="hsContSub"></div>
+        </div>
+        <button class="hm-btn primary" id="hsContBtn">Back to drawing</button>
+      </section>
+
+      <section class="hm-card hm-open">
+        <h2>Open a drawing</h2>
+        <p>Drop a PDF or an <b>.airmark</b> project anywhere on this page, or:</p>
+        <div class="hm-actions">
+          <button class="hm-btn primary" id="homeOpen" title="Open a PDF drawing from this device (Ctrl+O)">
+            <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2H3z"/><path d="M3 8v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V10"/></svg>
+            <span>Open PDF…</span>
+          </button>
+          <button class="hm-btn" id="homeLoad" title="Open a saved .airmark project file">
+            <svg viewBox="0 0 24 24"><path d="M5 3h11l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v5h7V3M7 21v-7h10v7"/></svg>
+            <span>Load project file…</span>
+          </button>
+          <button class="hm-btn" id="homeSample" title="Load a sample plant floor plan to try the tool">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="14" rx="1"/><path d="M3 14h5v4M12 4v6h9M8 18v-4"/></svg>
+            <span>Try the sample plan</span>
+          </button>
+        </div>
+      </section>
+
+      <div id="recentList"></div>
+      <div id="cloudCard"></div>
+      <div id="spCard"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ======================= TOP TOOLBAR (editor) ======================= -->
 <header id="toolbar">
-  <div class="tb-group brand">
+  <div class="tb-group">
+    <button id="btnHome" class="tb-btn icon-only" title="Home — projects, site drawings, stock and deliveries">
+      <svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-6h4v6"/></svg>
+    </button>
+  </div>
+  <div class="tb-group brand" title="Back to Home">
     <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
       <defs>
         <linearGradient id="bmGrad" x1="0" y1="0" x2="0" y2="1">
@@ -263,11 +378,7 @@
       <div class="drop-inner">
         <svg viewBox="0 0 24 24" class="drop-icon"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         <h2>Drop a PDF drawing here</h2>
-        <p>or use <b>Open</b> — or try the <b>Sample</b> plant floor plan</p>
-        <p class="drop-sub">Everything runs in your browser — drawings stay on this device, and sync to your team's private cloud when sign-in is set up.</p>
-        <div id="cloudCard"></div>
-        <div id="spCard"></div>
-        <div id="recentList"></div>
+        <p>or use <b>Open</b> in the toolbar — or go <b>Home</b> for your projects and site drawings</p>
       </div>
     </div>
   </div>
@@ -384,6 +495,7 @@
 <script src="js/aroflo.js"></script>
 <script src="js/cloud.js"></script>
 <script src="js/drawings.js"></script>
+<script src="js/home.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

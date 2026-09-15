@@ -71,6 +71,7 @@ const Cloud = (() => {
     refreshList();
     fetchTeamCfg();
     if (typeof Drawings !== 'undefined') Drawings.onCloudState();
+    if (typeof Home !== 'undefined') Home.refresh();
     return r.name;
   }
 
@@ -96,6 +97,7 @@ const Cloud = (() => {
     renderCard();
     chipSet('idle');
     if (typeof Drawings !== 'undefined') Drawings.onCloudState();
+    if (typeof Home !== 'undefined') Home.refresh();
     if (!silent) App.toast('Signed out of the team cloud.', 'info');
   }
 
@@ -331,6 +333,7 @@ const Cloud = (() => {
     }
     renderCard();
     if (typeof Drawings !== 'undefined') Drawings.onCloudState();
+    if (typeof Home !== 'undefined') Home.refresh();
     if (st.enabled === true && st.token) { refreshList(); fetchTeamCfg(); }
   }
 

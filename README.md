@@ -19,14 +19,16 @@ Everything runs client-side — there is no build, no framework, and drawings st
 
 - **Or host it on GitHub Pages** (Settings → Pages → deploy from branch) — it's a fully static site.
 
-Then drop a PDF drawing onto the window, or click **Sample** to load a built-in plant floor plan (pre-calibrated at 1/4" = 1'-0") and try everything immediately.
+The app opens on **Home**: a sidebar (Home · Drawings · Site stock · Deliveries · Settings · account) and a page of cards — the drawing you were on, **Recent projects on this device**, the team's shared projects and the SharePoint drawing register. Drop a PDF drawing anywhere on it, tap **Open PDF…**, or tap **Try the sample plan** to load a built-in plant floor plan (pre-calibrated at 1/4" = 1'-0") and try everything immediately.
+
+The drawing editor — toolbar, tool rail, properties panel, markups list — only appears once a drawing is open. The **Home** button at the left of the toolbar (or the AirMark logo) brings Home back without closing the drawing; **Current drawing** in the sidebar (or the *Back to drawing* card) returns to it.
 
 ## Install it on your phone or iPad — works offline
 
 AirMark is an installable web app. Open your deployment in Safari/Chrome, then **Share → Add to Home Screen** — you get a real app icon that launches full screen. Two things make this field-proof:
 
 - **Per-project icons.** The URL becomes project-specific the moment a drawing is open (`?proj=…`), so *Add to Home Screen while a job is open* gives that job its own icon — tap it in the morning and the drawing opens directly, markups and all.
-- **No internet needed.** The app shell is cached on the device (service worker), and the last 8 projects — including their PDFs — are stored on-device (IndexedDB). Basement, ceiling space, tin shed: the icon still opens, the drawing still loads, markups still autosave locally. The front page lists **Recent projects on this device** for one-tap reopening. Live AroFlo actions (refresh, stocktake pushes) need signal, but the last stock snapshot is kept for offline reference.
+- **No internet needed.** The app shell is cached on the device (service worker), and the last 8 projects — including their PDFs — are stored on-device (IndexedDB). Basement, ceiling space, tin shed: the icon still opens, the drawing still loads, markups still autosave locally. Home lists **Recent projects on this device** for one-tap reopening. Live AroFlo actions (refresh, stocktake pushes) need signal, but the last stock snapshot is kept for offline reference.
 
 ## The field workflow
 
@@ -212,9 +214,14 @@ js/markuplist.js    markups list + takeoff computation + CSV
 js/project.js       .airmark save/load, autosave
 js/export.js        flattened PDF export, sample floor plan
 js/store.js         on-device project store (IndexedDB) for offline reopening
-js/aroflo.js        Stock manager: live AroFlo inventory via the proxy
+js/docket.js        signed delivery docket PDF (pdf-lib)
+js/aroflo.js        Stock manager: live AroFlo inventory via the proxy, deliveries, PO pre-fill
+js/cloud.js         team cloud: sign-in, shared project list, sync chip
+js/drawings.js      SharePoint site-drawings register
+js/home.js          home shell: sidebar + landing page, home/editor mode switch
 js/app.js           toolbar, shortcuts, modals, wiring
 api/aroflo.js       Vercel serverless proxy that signs AroFlo API calls (keys stay server-side)
+api/cloud.js        Vercel serverless: team cloud (Supabase) + Microsoft Graph for the drawing register
 sw.js               service worker: offline app shell
 manifest.webmanifest + icons/   installable-app metadata
 ```
@@ -227,4 +234,4 @@ Markup geometry is stored in PDF page units (points), so markups stay put at any
 
 - One drawing open at a time; no markup layers/status workflow yet.
 - Symbol library is fixed — a custom "tool chest" editor would be a natural next step.
-- No cloud sync/collaboration — files and browser storage only, by design.
+- Team cloud sync is per drawing and last-save-wins (you're warned when a newer version exists) — no live co-editing.
