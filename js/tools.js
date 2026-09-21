@@ -135,7 +135,10 @@ const Tools = (() => {
     const L = (Geo.polylineLength(pts) + (pts.length ? Geo.dist(pts[pts.length - 1], p) : 0)) * sc.ftPerUnit;
     const z = S().zoom, fs = 12 / z;
     const txt = Units.fmtLen(L, S().unitFormat);
-    return `<text x="${p.x + 14 / z}" y="${p.y - 10 / z}" font-family="Arial" font-size="${fs}" font-weight="bold" fill="#1f6fd0" stroke="#fff" stroke-width="${fs * 0.28}" paint-order="stroke">${txt}</text>`;
+    // under a finger the loupe carries the readout — a sheet copy would only sit
+    // under the fingertip and clip at the loupe's edge
+    if (Loupe.active()) { Loupe.setLabel(txt); return ''; }
+    return `<text class="len-readout" x="${p.x + 14 / z}" y="${p.y - 10 / z}" font-family="Arial" font-size="${fs}" font-weight="bold" fill="#1f6fd0" stroke="#fff" stroke-width="${fs * 0.28}" paint-order="stroke">${txt}</text>`;
   }
 
   function moveBy(m, dx, dy) {
@@ -144,15 +147,18 @@ const Tools = (() => {
     if (m.anchor) { m.anchor.x += dx; m.anchor.y += dy; }
   }
 
-  function windowDrag(onMove, onUp, onAbort) {
+  /** downEvent (optional): the pointerdown that started the drag — a touch gets the loupe. */
+  function windowDrag(onMove, onUp, onAbort, downEvent) {
     dragging = true;
+    if (downEvent) Loupe.begin(downEvent);
     const cleanup = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       dragging = false;
       activeDragAbort = null;
+      Loupe.end();
     };
-    const move = e => onMove(e);
+    const move = e => { onMove(e); Loupe.track(e); };
     const up = e => { cleanup(); if (onUp) onUp(e); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -242,7 +248,7 @@ const Tools = (() => {
       if (tool === 'callout') { State.select([created.id]); editText(created, true); }
       else State.select([created.id]);
       if (tool === 'zone' && typeof Aro !== 'undefined') Aro.zoneLinkDialog(created); // name it + link its jobs straight away
-    }, clearPreview /* abort: second finger arrived — discard, nothing committed */);
+    }, clearPreview /* abort: second finger arrived — discard, nothing committed */, e);
   }
 
   /* ================= creation: multi-click poly tools ================= */
@@ -674,7 +680,7 @@ const Tools = (() => {
       if (started) { State.touch(); State.emit('markups', { changed: [id] }); }
     }, () => {
       if (started) State.undo();
-    });
+    }, e);
   }
 
   function resizeRect(m, kind, p, uniform) {
@@ -710,6 +716,11 @@ const Tools = (() => {
       if (POLY_TOOLS[tool] || CLICK_TOOLS[tool]) {
         pendingTap = { clientX: e.clientX, clientY: e.clientY, pointerId: e.pointerId, moved: false };
         tapConsumedAt = 0;   // new gesture — lets the click fallback fire if pointerup dies
+        // rubber band straight onto the finger (touch has no hover), then the
+        // loupe — the point lands where the finger lifts, so show what it's over
+        if (creating) updatePolyPreview(p, false);
+        else if (tool === 'calibrate' && calPts.length) calibratePreview(p);
+        Loupe.begin(e);
         return;
       }
       if (tool === 'select') {
@@ -776,6 +787,7 @@ const Tools = (() => {
     if (!pendingTap || pendingTap.pointerId !== e.pointerId) return;
     const tap = pendingTap;
     pendingTap = null;
+    Loupe.end();
     if (tap.moved) return;   // it became a pan, not a tap (gestures null pendingTap directly)
     runTapAction(S().tool, Viewer.toPage(e), e.target);
   }
@@ -805,11 +817,13 @@ const Tools = (() => {
         Math.hypot(e.clientX - pendingTap.clientX, e.clientY - pendingTap.clientY) > TAP_SLOP) {
       pendingTap.moved = true;
       panConvertedAt = performance.now();
+      Loupe.end();
       beginTouchPan(e);
       return;
     }
     lastClient = { clientX: e.clientX, clientY: e.clientY };
     hoverPt = Viewer.toPage(e);
+    if (pendingTap && e.pointerId === pendingTap.pointerId) Loupe.track(e);
     if (creating) updatePolyPreview(hoverPt, e.shiftKey);
     else if (S().tool === 'calibrate') calibratePreview(hoverPt);
     else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
@@ -947,6 +961,7 @@ const Tools = (() => {
       if (touchCount() === 2) {
         gestureAt = performance.now();
         pendingTap = null;
+        Loupe.end();
         if (activeDragAbort) activeDragAbort();
         if (!creating) clearPreview();   // keep an in-progress run's rubber band
       }
@@ -962,12 +977,13 @@ const Tools = (() => {
     window.addEventListener('pointerup', touchEnd, true);
     window.addEventListener('pointercancel', touchEnd, true);
     // ground truth from native touch events (always delivered): no fingers = no gesture
-    const touchSync = e => { if (e.touches && e.touches.length === 0) activeTouches.clear(); };
+    const touchSync = e => { if (e.touches && e.touches.length === 0) { activeTouches.clear(); Loupe.end(); } };
     window.addEventListener('touchend', touchSync, true);
     window.addEventListener('touchcancel', touchSync, true);
     // an engine-initiated cancel ends the tap without running it
     o.addEventListener('pointercancel', e => {
       if (pendingTap && pendingTap.pointerId === e.pointerId) pendingTap = null;
+      Loupe.end();
     });
     Viewer.el.sel.addEventListener('pointerdown', e => {
       if (e.target.classList && e.target.classList.contains('handle')) handleDown(e);
@@ -986,6 +1002,7 @@ const Tools = (() => {
       calPts = [];
       closeTextEditor(true);
       clearPreview();
+      Loupe.end();
       toolCursor();
       if (S().tool !== 'select') State.clearSelection();
       if (S().tool === 'photo' && !armedPhoto && S().pdf) photoInput.click();

@@ -7,13 +7,13 @@
  */
 'use strict';
 
-const CACHE = 'abmt-shell-v5';
+const CACHE = 'abmt-shell-v6';
 const CORE = [
   './',
   'index.html',
   'css/app.css',
   'js/geometry.js', 'js/units.js', 'js/symbols.js', 'js/state.js',
-  'js/store.js', 'js/viewer.js', 'js/render.js', 'js/tools.js',
+  'js/store.js', 'js/viewer.js', 'js/render.js', 'js/loupe.js', 'js/tools.js',
   'js/props.js', 'js/markuplist.js', 'js/project.js', 'js/export.js', 'js/docket.js',
   'js/aroflo.js', 'js/cloud.js', 'js/drawings.js', 'js/home.js', 'js/app.js',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js', 'vendor/zxing.min.js',

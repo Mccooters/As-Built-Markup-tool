@@ -228,7 +228,7 @@ manifest.webmanifest + icons/   installable-app metadata
 
 Markup geometry is stored in PDF page units (points), so markups stay put at any zoom and export at exact scale.
 
-**Tablet / iPad:** one finger drags a selected markup (or pans when over empty sheet / in a tap-style tool), taps place points and symbols — tap the last vertex again to finish a pipe run — double-tap edits text or opens a photo, and **two fingers pinch-zoom and pan** anywhere, even mid-run. A second finger cleanly cancels whatever the first finger started, so gestures never leave stray marks.
+**Tablet / iPad:** one finger drags a selected markup (or pans when over empty sheet / in a tap-style tool), taps place points and symbols — tap the last vertex again to finish a pipe run — double-tap edits text or opens a photo, and **two fingers pinch-zoom and pan** anywhere, even mid-run. A second finger cleanly cancels whatever the first finger started, so gestures never leave stray marks. A **touch loupe** appears whenever a finger is held on the sheet with a measuring or drawing tool (or on a vertex / resize handle): a magnified circle just above the fingertip shows the exact point under it — with the live rubber band and length readout — so measurements land on the line, not somewhere under your finger. It shows after a brief hold or the first movement, so rapid taps stay clean.
 
 ## Known limits / ideas for later
 
