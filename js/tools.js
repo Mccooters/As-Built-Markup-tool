@@ -76,12 +76,16 @@ const Tools = (() => {
     else o.classList.add('cur-cross');
   }
 
-  function snapPoint(p) {
+  /** Nearest run endpoint within 9 screen px. `skip` is a point object that must
+   *  never be a snap target — the vertex being dragged, or a slow drag would
+   *  keep snapping it back onto its own last position. */
+  function snapPoint(p, skip) {
     const thr = 9 / S().zoom;
     let best = null, bd = thr;
     for (const m of State.pageMarkups(S().page)) {
       if (!m.pts || !SNAP_TYPES.includes(m.type)) continue;
       for (const q of [m.pts[0], m.pts[m.pts.length - 1]]) {
+        if (q === skip) continue;
         const d = Geo.dist(p, q);
         if (d < bd) { bd = d; best = q; }
       }
@@ -666,10 +670,16 @@ const Tools = (() => {
       if (!started) { State.pushUndo(); started = true; }
       if (kind === 'pt') {
         const idx = Number(h.dataset.idx);
-        const sp = snapPoint(p);
+        const sp = snapPoint(p, m.pts[idx]);
         const ref = m.pts[idx > 0 ? idx - 1 : (m.pts.length > 1 ? 1 : 0)];
         let c = sp.snapped ? sp : (ev.shiftKey && ref ? Geo.constrainAngle(ref, p, 45) : p);
         m.pts[idx].x = c.x; m.pts[idx].y = c.y;
+        // a snap onto another run's endpoint is shown as it happens (the loupe carries it too)
+        preview(null, sp.snapped ? snapIndicator(sp) : '');
+        if (Loupe.active() && (m.type === 'mlength' || m.type === 'mpoly' || m.type === 'pipe')) {
+          const sc = State.scaleForPage(m.page);
+          if (sc) Loupe.setLabel(Units.fmtLen(Geo.polylineLength(m.pts) * sc.ftPerUnit, S().unitFormat));
+        }
       } else if (kind === 'anchor') {
         m.anchor.x = p.x; m.anchor.y = p.y;
       } else {
@@ -677,8 +687,10 @@ const Tools = (() => {
       }
       Render.refresh([id]);
     }, () => {
+      clearPreview();
       if (started) { State.touch(); State.emit('markups', { changed: [id] }); }
     }, () => {
+      clearPreview();
       if (started) State.undo();
     }, e);
   }
@@ -714,7 +726,7 @@ const Tools = (() => {
       // tap-style tools act on pointerUP so a two-finger gesture never marks the sheet;
       // a moved finger converts into a one-finger pan (see onOverlayMove)
       if (POLY_TOOLS[tool] || CLICK_TOOLS[tool]) {
-        pendingTap = { clientX: e.clientX, clientY: e.clientY, pointerId: e.pointerId, moved: false };
+        pendingTap = { clientX: e.clientX, clientY: e.clientY, lastX: e.clientX, lastY: e.clientY, pointerId: e.pointerId, moved: false };
         tapConsumedAt = 0;   // new gesture — lets the click fallback fire if pointerup dies
         // rubber band straight onto the finger (touch has no hover), then the
         // loupe — the point lands where the finger lifts, so show what it's over
@@ -789,7 +801,9 @@ const Tools = (() => {
     pendingTap = null;
     Loupe.end();
     if (tap.moved) return;   // it became a pan, not a tap (gestures null pendingTap directly)
-    runTapAction(S().tool, Viewer.toPage(e), e.target);
+    // the point is the last position the finger was SEEN at (what the loupe showed),
+    // not where the engine reports the lift — a finger rolls as it leaves the glass
+    runTapAction(S().tool, Viewer.toPage({ clientX: tap.lastX, clientY: tap.lastY }), e.target);
   }
 
   /**
@@ -823,7 +837,10 @@ const Tools = (() => {
     }
     lastClient = { clientX: e.clientX, clientY: e.clientY };
     hoverPt = Viewer.toPage(e);
-    if (pendingTap && e.pointerId === pendingTap.pointerId) Loupe.track(e);
+    if (pendingTap && e.pointerId === pendingTap.pointerId) {
+      pendingTap.lastX = e.clientX; pendingTap.lastY = e.clientY;
+      Loupe.track(e);
+    }
     if (creating) updatePolyPreview(hoverPt, e.shiftKey);
     else if (S().tool === 'calibrate') calibratePreview(hoverPt);
     else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);

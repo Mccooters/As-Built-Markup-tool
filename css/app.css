@@ -654,8 +654,10 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 /* ================= touch loupe — magnifier above the fingertip ================= */
 #loupe {
   position: fixed; z-index: 60; width: 150px; height: 150px; border-radius: 50%; overflow: hidden;
-  background: #fff; border: 2px solid #fff; pointer-events: none;
-  box-shadow: 0 8px 26px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.4);
+  background: #fff; border: 0; pointer-events: none;
+  /* the white rim is a shadow, not a border — a border would shrink the content
+     box and put the reticle 2 px off the sampled point */
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0,0,0,.4), 0 8px 26px rgba(0,0,0,.55);
   will-change: left, top;
 }
 #loupe canvas, #loupe svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
