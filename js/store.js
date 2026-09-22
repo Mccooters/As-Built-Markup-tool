@@ -61,14 +61,31 @@ const Store = (() => {
     } catch (e) { return null; }
   }
 
+  /** Every project on the device, newest first, with what the list shows about it. */
   async function list() {
     try {
       const db = await open();
       const all = await reqP(db.transaction('projects').objectStore('projects').getAll());
       return all
-        .map(r => ({ fingerprint: r.fingerprint, name: r.name, savedAt: r.savedAt }))
+        .map(r => {
+          const d = r.data || {}, pj = d.project || {}, aro = d.aroSite || {};
+          return {
+            fingerprint: r.fingerprint, name: r.name, savedAt: r.savedAt,
+            status: pj.status || 'active', site: pj.site || '', client: pj.client || '',
+            aroNo: aro.project || '', jobRef: d.jobRef || '',
+            markups: Array.isArray(d.markups) ? d.markups.length : 0,
+          };
+        })
         .sort((a, b) => b.savedAt - a.savedAt);
     } catch (e) { return []; }
+  }
+
+  /** The stored project record alone (no PDF bytes) — for list-side edits such as a status change. */
+  async function record(fingerprint) {
+    try {
+      const db = await open();
+      return (await reqP(db.transaction('projects').objectStore('projects').get(fingerprint))) || null;
+    } catch (e) { return null; }
   }
 
   async function prune() {
@@ -81,5 +98,5 @@ const Store = (() => {
     }
   }
 
-  return { savePdf, saveProject, get, list };
+  return { savePdf, saveProject, get, record, list };
 })();

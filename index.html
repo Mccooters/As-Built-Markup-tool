@@ -98,7 +98,7 @@
 
       <section class="hm-card hm-continue" id="hsContinue" hidden>
         <div class="hm-cont-main">
-          <div class="hm-kicker">Open drawing</div>
+          <div class="hm-kicker">Open drawing<span id="hsContStatus"></span></div>
           <div class="hm-cont-name" id="hsContName"></div>
           <div class="hm-cont-sub" id="hsContSub"></div>
         </div>
@@ -125,7 +125,15 @@
         </div>
       </section>
 
-      <div id="recentList"></div>
+      <!-- every project this device or the team cloud knows about, grouped
+           In progress / DLP / Completed — rendered by home.js -->
+      <section class="hm-card hm-projects" id="hsProjects">
+        <div class="hm-proj-head">
+          <h2>Projects</h2>
+          <span class="hm-proj-who" id="hsProjWho"></span>
+        </div>
+        <div id="hsProjList"></div>
+      </section>
       <div id="cloudCard"></div>
       <div id="spCard"></div>
     </div>

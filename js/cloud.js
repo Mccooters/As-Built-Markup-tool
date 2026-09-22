@@ -21,6 +21,8 @@ const Cloud = (() => {
     sp: false,            // SharePoint drawings register configured server-side?
     token: '', name: '',
     projects: [], listPhase: 'idle', error: '',
+    listAt: 0,            // when the team list last loaded
+    statusCol: null,      // server has the status column? false → statuses stay per device
     sync: { state: 'idle', at: 0, msg: '' }, // idle|saving|synced|offline|error|conflict
     conflictWith: null,   // registry row that beat us, while unresolved
   };
@@ -107,15 +109,59 @@ const Cloud = (() => {
     if (!st.token || st.enabled === false) return;
     st.listPhase = 'loading'; st.error = '';
     renderCard();
+    if (typeof Home !== 'undefined') Home.refresh();
     try {
       const r = await call('list');
       st.projects = r.projects || [];
+      if (r.statusColumn === false || r.statusColumn === true) st.statusCol = r.statusColumn;
+      st.listAt = Date.now();
       st.listPhase = 'ready';
+      adoptListStatus();
     } catch (e) {
       st.listPhase = 'ready';
       st.error = e.offline ? 'Offline — the team list needs signal. Projects already on this device still open below.' : e.message;
     }
     renderCard();
+    if (typeof Home !== 'undefined') Home.refresh();
+  }
+
+  // Home asks for a fresh list when it comes back into view — at most once a minute.
+  function refreshListIfStale() {
+    if (!st.token || st.enabled !== true || st.listPhase === 'loading') return;
+    if (Date.now() - st.listAt > 60000) refreshList();
+  }
+
+  // The registry's status is the team's shared truth. When the list shows a
+  // status for the OPEN drawing that differs from what this device last saw
+  // in the registry, a teammate changed it — take it on. A change made here
+  // and not yet pushed is left alone (the registry still matches the map).
+  function adoptListStatus() {
+    const fp = State.S.fingerprint;
+    if (!fp || !State.S.pdf) return;
+    const p = st.projects.find(x => x.fingerprint === fp);
+    const known = map[fp];
+    if (!p || !known || !p.status || p.status === known.status) return;
+    known.status = p.status;
+    saveJson(MAP_KEY, map);
+    if (Project.status() !== p.status) Project.setStatus(p.status);
+  }
+
+  // Keep the in-memory team list current after a save or a status change,
+  // so Home regroups without a round trip.
+  function upsertRow(p) {
+    if (!p || !p.id) return;
+    const i = st.projects.findIndex(x => x.id === p.id);
+    if (i >= 0) st.projects[i] = p; else st.projects.unshift(p);
+    if (typeof Home !== 'undefined') Home.refresh();
+  }
+
+  // Move a team project between In progress / DLP / Completed from the list.
+  async function setStatus(id, status) {
+    const r = await call('setstatus', { id, status });
+    const fp = r.project && r.project.fingerprint;
+    if (fp && map[fp]) { map[fp].status = r.project.status; saveJson(MAP_KEY, map); }
+    upsertRow(r.project);
+    return r.project;
   }
 
   // Download a cloud project into the device store, then open it through the
@@ -130,6 +176,11 @@ const Cloud = (() => {
       const data = await dResp.json();
       const fp = r.project.fingerprint || data.fingerprint;
       if (!fp) throw new Error('project has no drawing fingerprint');
+      // the registry's status wins over what the saved JSON carried — a list
+      // change never re-uploads the drawing
+      if (r.project.status && data && typeof data === 'object') {
+        data.project = Object.assign({}, data.project || {}, { status: r.project.status });
+      }
       const have = await Store.get(fp);
       if (!(have && have.pdf)) {
         if (!r.pdfUrl) throw new Error('the drawing PDF is not in the cloud yet — open it from its file once on the device that has it');
@@ -138,7 +189,7 @@ const Cloud = (() => {
         await Store.savePdf(fp, new Uint8Array(await pResp.arrayBuffer()));
       }
       await Store.saveProject(fp, r.project.name || data.fileName || 'Drawing', data);
-      map[fp] = { id: r.project.id, version: r.project.version };
+      map[fp] = { id: r.project.id, version: r.project.version, status: r.project.status || 'active' };
       saveJson(MAP_KEY, map);
       st.conflictWith = null;
       await Project.openFromStore(fp);
@@ -182,10 +233,15 @@ const Cloud = (() => {
       const known = map[fp];
       const name = String((State.S.project && State.S.project.name) || State.S.jobRef || State.S.fileName || 'Drawing').trim().replace(/\.pdf$/i, '');
       const aroNo = String((State.S.aroSite && State.S.aroSite.project) || '');
+      // status rides along only when this device changed it — a stale copy
+      // must never undo a list change made elsewhere
+      const status = Project.status();
+      const sendStatus = !known || known.status !== status;
       const prep = await call('prepare', {
         fingerprint: fp, name, aroNo,
         version: known ? known.version : 0,
         force: !!opts.force,
+        status: sendStatus ? status : undefined,
       });
       if (prep.conflict) { conflictPrompt(prep.project); chipSet('conflict'); return; }
 
@@ -199,12 +255,13 @@ const Cloud = (() => {
         if (up.ok) { pdfUploaded = true; pdfSize = State.S.pdfBytes.length; }
       }
 
-      const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, pdfUploaded, pdfSize });
+      const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, pdfUploaded, pdfSize, status: sendStatus ? status : undefined });
       if (com.conflict) { conflictPrompt(com.project); chipSet('conflict'); return; }
-      map[fp] = { id: prep.id, version: prep.nextVersion };
+      map[fp] = { id: prep.id, version: prep.nextVersion, status: sendStatus ? status : known.status };
       saveJson(MAP_KEY, map);
       st.conflictWith = null;
       chipSet('synced');
+      if (com.project) upsertRow(com.project);
     } catch (e) {
       chipSet(e.offline || navigator.onLine === false ? 'offline' : 'error', e.message);
     } finally {
@@ -243,29 +300,8 @@ const Cloud = (() => {
       pinEl.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
       return;
     }
-    let list;
-    if (st.listPhase === 'loading' && !st.projects.length) list = '<div class="cloud-note">Loading the team list…</div>';
-    else if (!st.projects.length) list = '<div class="cloud-note">No team projects yet — open a drawing and it syncs up automatically.</div>';
-    else {
-      list = st.projects.map(p => `
-        <button class="recent-chip cloud-proj" data-id="${esc(p.id)}" title="${esc(p.name)}${p.hasPdf ? '' : ' (PDF not uploaded yet)'}">
-          ${esc(p.name)}<span>${p.aroNo ? '#' + esc(p.aroNo) + ' · ' : ''}${esc(p.updatedBy)} · ${esc(ageOf(p.updatedAt))}</span>
-        </button>`).join('');
-    }
-    el.innerHTML = `
-      <div class="cloud-card">
-        <div class="recent-cap">Team projects</div>
-        <div class="cloud-who"><span>Signed in as <b>${esc(st.name)}</b></span>
-          <button class="mini-btn" id="cl-refresh" title="Re-load the team list">⟳</button>
-          <button class="mini-btn" id="cl-out">Sign out</button>
-        </div>
-        ${st.error ? `<div class="cloud-err">${esc(st.error)}</div>` : ''}
-        <div class="cloud-list">${list}</div>
-      </div>`;
-    el.querySelector('#cl-refresh').addEventListener('click', refreshList);
-    el.querySelector('#cl-out').addEventListener('click', () => signOut());
-    el.querySelectorAll('.cloud-proj').forEach(b =>
-      b.addEventListener('click', e => { e.stopPropagation(); openCloud(b.dataset.id); }));
+    // signed in: the team's projects are merged into Home's Projects card
+    el.innerHTML = '';
   }
 
   const CHIP_TEXT = {
@@ -339,5 +375,5 @@ const Cloud = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { signIn, signOut, openCloud, push, refreshList, setTeamScope, _state: st };
+  return { signIn, signOut, openCloud, push, refreshList, refreshListIfStale, setStatus, setTeamScope, _state: st };
 })();

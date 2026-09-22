@@ -491,7 +491,6 @@ button.doc-name:empty { display: none; }
   #stockPage input[type="text"], #stockPage input[type="password"], #stockPage select { font-size: 16px; }
   #stockMain, #stockSide { padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
 }
-#recentList { margin-top: 18px; }
 .recent-cap { font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: var(--txt-dim); margin-bottom: 8px; }
 .recent-chip {
   display: inline-flex; align-items: center; gap: 8px; margin: 0 6px 6px 0;
@@ -591,7 +590,7 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 .cloud-chip.offline { color: #e8b13c; }
 .cloud-chip.error, .cloud-chip.conflict { color: #e05555; border-color: #e05555; }
 @media (max-width: 760px) { .cloud-chip { bottom: calc(120px + env(safe-area-inset-bottom)); } }
-#cloudCard, #spCard, #recentList { pointer-events: auto; }
+#cloudCard, #spCard, #hsProjects { pointer-events: auto; }
 .cloud-who { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
   color: var(--txt-dim); margin: 2px 0 8px; }
 .cloud-who .mini-btn:first-of-type { margin-left: auto; }
@@ -807,12 +806,55 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
 .hm-kicker { font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: var(--accent); margin-bottom: 3px; }
 .hm-cont-name { font-size: 16px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-cont-sub { font-size: 12.5px; color: var(--txt-dim); margin-top: 2px; }
-/* recents, team cloud and the SharePoint register render into these — as cards here */
-#homeMain #recentList:not(:empty), #homeMain #cloudCard:not(:empty), #homeMain #spCard:not(:empty) {
+/* the team-cloud sign-in and the SharePoint register render into these — as cards here */
+#homeMain #cloudCard:not(:empty), #homeMain #spCard:not(:empty) {
   background: var(--bg2); border: 1px solid var(--edge); border-radius: 12px; padding: 14px 16px; margin: 0 0 14px;
 }
-#homeMain #recentList { margin-top: 0; }
 #homeMain .cloud-card { margin: 0; max-width: none; }
+/* the project list — In progress / DLP / Completed, device + team cloud merged */
+.hm-proj-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.hm-proj-head h2 { margin: 0; }
+.hm-proj-who { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--txt-dim); }
+.pj-link { background: none; border: 0; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; padding: 0; }
+.pj-link:hover { text-decoration: underline; }
+.pj-sec { margin-top: 4px; }
+.pj-sechead {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--txt-dim); font: inherit; font-size: 11.5px; letter-spacing: .6px; text-transform: uppercase;
+  padding: 10px 2px 6px; cursor: pointer;
+}
+.pj-sechead:hover .pj-sectitle { color: var(--txt); }
+.pj-dot.active, .pj-sel.active { --st: #3fb950; }
+.pj-dot.dlp, .pj-sel.dlp { --st: #e8b13c; }
+.pj-dot.done, .pj-sel.done { --st: #8b949e; }
+.pj-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--st, var(--txt-dim)); }
+.pj-count { background: var(--bg3); border: 1px solid var(--edge); border-radius: 999px; padding: 0 7px; font-size: 11px; letter-spacing: 0; }
+.pj-caret { margin-left: auto; font-size: 12px; }
+.pj-row { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--edge); }
+.pj-row.open .pj-name { color: var(--accent); }
+.pj-main {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left;
+  background: none; border: 0; color: var(--txt); font: inherit; padding: 9px 4px; cursor: pointer;
+}
+.pj-main:hover .pj-name { text-decoration: underline; }
+.pj-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-openchip {
+  font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--accent);
+  border: 1px solid var(--accent-dim); border-radius: 999px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px;
+}
+.pj-meta { font-size: 11.5px; color: var(--txt-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-where.dev { color: #3fb950; }
+.pj-sel {
+  flex: 0 0 auto; background: var(--bg3); color: var(--st, var(--txt)); border: 1px solid var(--edge);
+  border-radius: 999px; padding: 4px 8px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.pj-empty { margin: 6px 0 4px; color: var(--txt-dim); font-size: 13px; }
+.pj-note {
+  margin: 4px 0 8px; padding: 8px 10px; border: 1px solid #8a6d1f; border-radius: 8px;
+  background: rgba(232,177,60,.08); color: #e8b13c; font-size: 12.5px; line-height: 1.45;
+}
+.pj-note code { font-size: 12px; }
+#hsContStatus { color: #e8b13c; }
 #homeMain .recent-cap { font-size: 12.5px; letter-spacing: .7px; margin-bottom: 10px; }
 #homeShell.dragging #homeMain { outline: 2px dashed var(--accent); outline-offset: -10px; }
 #homeShell.dragging .hm-open { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(77,163,255,.25); }
@@ -841,7 +883,9 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
   #homeMain { padding: 16px 14px calc(26px + env(safe-area-inset-bottom)); }
   .hm-head h1 { font-size: 21px; }
   .hm-card { padding: 12px 13px; border-radius: 10px; }
-  #homeMain #recentList:not(:empty), #homeMain #cloudCard:not(:empty), #homeMain #spCard:not(:empty) { padding: 12px 13px; border-radius: 10px; }
+  #homeMain #cloudCard:not(:empty), #homeMain #spCard:not(:empty) { padding: 12px 13px; border-radius: 10px; }
+  .pj-meta { white-space: normal; }
+  .pj-sel { padding: 6px 8px; }
   .hm-btn { padding: 10px 12px; font-size: 13px; }
   .hm-continue .hm-btn { width: 100%; justify-content: center; }
 }

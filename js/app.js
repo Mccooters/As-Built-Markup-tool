@@ -442,10 +442,19 @@ const App = (() => {
     if (linked && !holders.some(h => h.name === linked)) holders.unshift({ name: linked, type: '', kind: '' });
     const holderOpts = '<option value="">— Not linked (all locations) —</option>'
       + holders.map(h => `<option value="${v(h.name)}"${h.name === linked ? ' selected' : ''}>${v(h.name)}${h.kind ? ' — ' + v(h.kind) : ''}</option>`).join('');
+    const stNow = Project.status();
     modal(`
       <h3>Project details</h3>
-      <div class="form-row"><label>Project name</label>
-        <input type="text" id="pj-name" value="${v(d.name)}" placeholder="${v(String(S.fileName || '').replace(/\.pdf$/i, ''))}"></div>
+      <div class="form-row two">
+        <div style="flex:2 1 0"><label>Project name</label>
+          <input type="text" id="pj-name" value="${v(d.name)}" placeholder="${v(String(S.fileName || '').replace(/\.pdf$/i, ''))}"></div>
+        <div><label>Status</label>
+          <select id="pj-status">
+            <option value="active"${stNow === 'active' ? ' selected' : ''}>In progress</option>
+            <option value="dlp"${stNow === 'dlp' ? ' selected' : ''}>DLP — defects liability</option>
+            <option value="done"${stNow === 'done' ? ' selected' : ''}>Completed / archived</option>
+          </select></div>
+      </div>
       <div class="form-row"><label>Site / location</label>
         <input type="text" id="pj-site" value="${v(d.site)}" placeholder="Site name or address"></div>
       <div class="form-row two">
@@ -473,7 +482,7 @@ const App = (() => {
       $('pj-name').focus();
       $('pj-ok').onclick = () => {
         const g = id => $(id).value.trim();
-        Project.setDetails({ name: g('pj-name'), site: g('pj-site'), client: g('pj-client'), contractor: g('pj-contractor'), contact: g('pj-contact'), phone: g('pj-phone') });
+        Project.setDetails({ name: g('pj-name'), site: g('pj-site'), client: g('pj-client'), contractor: g('pj-contractor'), contact: g('pj-contact'), phone: g('pj-phone'), status: g('pj-status') });
         S.jobRef = g('pj-ref');
         const aro = g('pj-aro');
         if (aro || (S.aroSite && S.aroSite.project)) S.aroSite = Object.assign({}, S.aroSite || {}, { project: aro });
@@ -853,7 +862,7 @@ const App = (() => {
       if (State.S.fingerprint) {
         try { history.replaceState(null, '', '?proj=' + encodeURIComponent(State.S.fingerprint)); } catch (e) { /* file:// etc. */ }
       }
-      setTimeout(renderRecents, 2000);
+      setTimeout(() => Home.renderProjects(), 2000);   // once the device store has the record
     });
 
     updateScaleStatus(); updateHint(); updateHistoryUi();
@@ -865,24 +874,7 @@ const App = (() => {
     // reopen a project pinned to the home screen (?proj=<fingerprint>)
     const proj = new URLSearchParams(location.search).get('proj');
     if (proj) Project.openFromStore(proj);
-    renderRecents();
-  }
-
-  /* ---------------- recent projects (on-device, offline) ---------------- */
-
-  async function renderRecents() {
-    const el = $('recentList');
-    if (!el || typeof Store === 'undefined') return;
-    const recents = await Store.list();
-    if (!recents.length) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="recent-cap">Recent projects on this device</div>' +
-      recents.map(r => {
-        const mins = Math.round((Date.now() - r.savedAt) / 60000);
-        const age = mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' h ago' : Math.round(mins / 1440) + ' d ago';
-        return `<button class="recent-chip" data-fp="${r.fingerprint.replace(/"/g, '&quot;')}">${(r.name || 'drawing').replace(/</g, '&lt;')}<span>${age}</span></button>`;
-      }).join('');
-    el.querySelectorAll('.recent-chip').forEach(b =>
-      b.addEventListener('click', e => { e.stopPropagation(); Project.openFromStore(b.dataset.fp); }));
+    Home.renderProjects();   // the project list on Home (device store + team cloud)
   }
 
   document.addEventListener('DOMContentLoaded', init);

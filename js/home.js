@@ -2,10 +2,11 @@
  *
  * AirMark opens on a simple Procore-style home: a dark sidebar (Home,
  * Current drawing, Drawings, Site stock, Deliveries; Settings, Help, Log out;
- * account chip) and a page of cards — the drawing you were on, recent
- * projects on this device, the team cloud list and the SharePoint drawing
- * register. The full editor chrome (toolbar, tool rail, properties panel,
- * markups list, status bar) only appears once a drawing is actually open.
+ * account chip) and a page of cards — the drawing you were on, the project
+ * list (everything on this device and in the team cloud, grouped In progress
+ * / DLP / Completed) and the SharePoint drawing register. The full editor
+ * chrome (toolbar, tool rail, properties panel, markups list, status bar)
+ * only appears once a drawing is actually open.
  *
  * The same sidebar is reachable at any time: in the editor the ≡ button
  * slides it in as a drawer over the drawing (body.menu-open), so nothing
@@ -36,6 +37,8 @@ const Home = (() => {
     document.body.classList.toggle('mode-editor', mode === 'editor');
     document.body.classList.remove('panel-open', 'menu-open');   // no drawer survives a switch
     refresh();
+    // coming back to Home: pick up statuses / saves teammates made meanwhile
+    if (mode === 'home' && typeof Cloud !== 'undefined' && Cloud.refreshListIfStale) Cloud.refreshListIfStale();
   }
 
   /* ---------------- who's using it ---------------- */
@@ -54,6 +57,179 @@ const Home = (() => {
     const author = State.S.author && State.S.author !== 'Field' ? State.S.author : '';
     if (author) return { name: author, sub: canSignIn ? 'Tap to sign in' : 'Author name', signed: false, known: true };
     return { name: 'Not signed in', sub: canSignIn ? 'Tap to sign in' : 'Tap to set your name', signed: false, known: false };
+  }
+
+  /* ---------------- the project list ---------------- */
+  // One list, grouped by status — In progress / DLP / Completed — merging
+  // what's stored on this device with the team cloud's registry. A project
+  // in both shows once. The registry's status is the team's shared truth;
+  // the open drawing shows what's on screen.
+
+  const STATUS_LABEL = { active: 'In progress', dlp: 'DLP — defects liability period', done: 'Completed / archived' };
+  const STATUS_SHORT = { active: 'In progress', dlp: 'DLP', done: 'Completed' };
+  let localRows = [], localSig = '', localSeq = 0;
+  const secOpen = Object.assign({ active: true, dlp: true, done: false },
+    (() => { try { return JSON.parse(localStorage.getItem('abmt:pjsec') || '{}'); } catch (e) { return {}; } })());
+
+  const ageOf = t => {
+    const ms = typeof t === 'number' ? t : Date.parse(t || '');
+    if (!Number.isFinite(ms) || !ms) return '';
+    const mins = Math.round((Date.now() - ms) / 60000);
+    return mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' h ago' : Math.round(mins / 1440) + ' d ago';
+  };
+
+  function mergedProjects() {
+    const cl = cloudState();
+    const cloud = cl && cl.token ? cl.projects || [] : [];
+    const byFp = new Map();
+    for (const r of localRows) {
+      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, onDevice: true });
+    }
+    for (const p of cloud) {
+      const fp = p.fingerprint || ('cloud:' + p.id);
+      const row = byFp.get(fp) || { fp, onDevice: false };
+      row.id = p.id; row.inCloud = true;
+      if (!row.name) row.name = p.name;
+      if (!row.aroNo) row.aroNo = p.aroNo;
+      row.updatedBy = p.updatedBy; row.updatedAt = p.updatedAt;
+      if (p.status) row.status = p.status;
+      byFp.set(fp, row);
+    }
+    if (State.S.pdf && State.S.fingerprint) {
+      const row = byFp.get(State.S.fingerprint) || { fp: State.S.fingerprint };
+      const d = Project.details();
+      row.open = true; row.onDevice = true;
+      row.name = Project.displayName(); row.status = Project.status();
+      row.site = d.site || ''; row.client = d.client || '';
+      row.aroNo = (State.S.aroSite && State.S.aroSite.project) || row.aroNo || '';
+      byFp.set(State.S.fingerprint, row);
+    }
+    const rows = [...byFp.values()];
+    for (const r of rows) {
+      r.status = Project.normStatus(r.status);
+      r.when = Math.max(r.savedAt || 0, Date.parse(r.updatedAt || '') || 0);
+    }
+    rows.sort((a, b) => (b.open ? 1 : 0) - (a.open ? 1 : 0) || b.when - a.when);
+    return rows;
+  }
+
+  function rowHtml(r) {
+    const meta = [];
+    if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
+    if (r.aroNo) meta.push('#' + esc(r.aroNo));
+    if (r.inCloud && r.updatedBy) meta.push(esc(r.updatedBy) + ' · ' + esc(ageOf(r.updatedAt)));
+    else if (r.savedAt) meta.push(esc(ageOf(r.savedAt)));
+    meta.push(r.onDevice
+      ? '<span class="pj-where dev" title="Stored on this device — opens offline">on this device</span>'
+      : '<span class="pj-where cloud" title="In the team cloud — tap to download it to this device">☁ team cloud</span>');
+    const opts = ['active', 'dlp', 'done'].map(s => `<option value="${s}"${r.status === s ? ' selected' : ''}>${STATUS_SHORT[s]}</option>`).join('');
+    return `<div class="pj-row${r.open ? ' open' : ''}" data-fp="${esc(r.fp)}">
+      <button type="button" class="pj-main${r.id ? ' cloud-proj' : ''}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="${esc(r.name)}">
+        <span class="pj-name">${esc(r.name || 'Drawing')}${r.open ? ' <span class="pj-openchip">open now</span>' : ''}</span>
+        <span class="pj-meta">${meta.join(' · ')}</span>
+      </button>
+      <select class="pj-sel ${r.status}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="Project status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${opts}</select>
+    </div>`;
+  }
+
+  function sectionHtml(key, list) {
+    const open = !!secOpen[key];
+    return `<section class="pj-sec ${key}${open ? ' open' : ''}">
+      <button type="button" class="pj-sechead" data-sec="${key}" aria-expanded="${open}">
+        <span class="pj-dot ${key}"></span><span class="pj-sectitle">${STATUS_LABEL[key]}</span>
+        <span class="pj-count">${list.length}</span><span class="pj-caret">${open ? '▾' : '▸'}</span>
+      </button>
+      ${open ? (list.length ? list.map(rowHtml).join('') : '<p class="pj-empty">Nothing in progress — open a drawing and it lands here.</p>') : ''}
+    </section>`;
+  }
+
+  function paintProjects() {
+    const el = $('hsProjList'), who = $('hsProjWho');
+    if (!el) return;
+    const cl = cloudState();
+    const signed = !!(cl && cl.token);
+    if (who) {
+      who.innerHTML = signed
+        ? `Signed in as <b>${esc(cl.name)}</b><button class="mini-btn" id="cl-refresh" title="Re-load the team list">⟳</button><button class="mini-btn" id="cl-out">Sign out</button>`
+        : (cl && cl.enabled === true ? '<button type="button" class="pj-link" id="hsProjSignin">Sign in to see the team’s projects</button>' : '');
+      const rf = who.querySelector('#cl-refresh'); if (rf) rf.addEventListener('click', () => Cloud.refreshList());
+      const out = who.querySelector('#cl-out'); if (out) out.addEventListener('click', () => Cloud.signOut());
+      const si = who.querySelector('#hsProjSignin'); if (si) si.addEventListener('click', goSignIn);
+    }
+    const rows = mergedProjects();
+    const groups = { active: [], dlp: [], done: [] };
+    for (const r of rows) groups[r.status].push(r);
+    let h = '';
+    if (signed && cl.error) h += `<div class="cloud-err">${esc(cl.error)}</div>`;
+    if (signed && cl.statusCol === false) {
+      h += '<div class="pj-note">Project statuses aren’t shared with the team yet — add the <code>status</code> column to <code>am_projects</code> (one line of SQL, top of <code>api/cloud.js</code>). Until then each device keeps its own.</div>';
+    }
+    if (!rows.length) {
+      h += `<p class="pj-empty">${signed && cl.listPhase === 'loading' ? 'Loading the team list…' : 'No projects yet — open a drawing and it appears here.'}</p>`;
+    } else {
+      h += sectionHtml('active', groups.active);
+      if (groups.dlp.length) h += sectionHtml('dlp', groups.dlp);
+      if (groups.done.length) h += sectionHtml('done', groups.done);
+    }
+    el.innerHTML = h;
+    el.querySelectorAll('.pj-sechead').forEach(b => b.addEventListener('click', () => {
+      secOpen[b.dataset.sec] = !secOpen[b.dataset.sec];
+      try { localStorage.setItem('abmt:pjsec', JSON.stringify(secOpen)); } catch (e) { /* ignore */ }
+      paintProjects();
+    }));
+    el.querySelectorAll('.pj-main').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openProject(b.dataset.fp, b.dataset.id); }));
+    el.querySelectorAll('.pj-sel').forEach(s => {
+      s.addEventListener('click', e => e.stopPropagation());
+      s.addEventListener('change', e => { e.stopPropagation(); changeStatus(s.dataset.fp, s.dataset.id, s.value); });
+    });
+  }
+
+  function openProject(fp, id) {
+    closeMenu();
+    if (State.S.pdf && State.S.fingerprint === fp) { setMode('editor'); return; }
+    if (localRows.some(r => r.fingerprint === fp)) { Project.openFromStore(fp); return; }
+    if (id && typeof Cloud !== 'undefined') { Cloud.openCloud(id); return; }
+    App.toast('That project isn’t on this device — open its PDF or .airmark file.', 'warn', 6000);
+  }
+
+  // Status changes from the list: the open drawing changes in place (autosave
+  // and cloud sync carry it); a stored drawing is patched in the device store;
+  // a team project is updated in the registry without touching its drawing.
+  async function changeStatus(fp, id, status) {
+    status = Project.normStatus(status);
+    const row = mergedProjects().find(r => r.fp === fp) || {};
+    const cl = cloudState();
+    try {
+      if (State.S.pdf && State.S.fingerprint === fp) {
+        Project.setStatus(status);
+      } else {
+        const rec = typeof Store !== 'undefined' ? await Store.record(fp) : null;
+        if (rec && rec.data) {
+          rec.data.project = Object.assign({}, rec.data.project || {}, { status });
+          await Store.saveProject(fp, rec.name, rec.data);
+        }
+        if (id && cl && cl.token) await Cloud.setStatus(id, status);
+      }
+      App.toast(`${row.name || 'Project'} → ${STATUS_SHORT[status]}`, 'ok', 2500);
+    } catch (e) {
+      App.toast('Couldn’t change the status: ' + e.message, 'error', 7000);
+    }
+    renderProjects();
+  }
+
+  // Store.list() is async — paint what we have now, repaint only if the
+  // device store says something different
+  function renderProjects() {
+    paintProjects();
+    if (typeof Store === 'undefined') return;
+    const seq = ++localSeq;
+    Store.list().then(rows => {
+      if (seq !== localSeq) return;
+      const sig = JSON.stringify(rows);
+      if (sig === localSig) return;
+      localSig = sig; localRows = rows;
+      paintProjects();
+    }).catch(() => {});
   }
 
   /* ---------------- version + update check ---------------- */
@@ -125,10 +301,13 @@ const Home = (() => {
       const holder = State.S.aroSite && State.S.aroSite.holder;
       if (holder) bits.push('Stock: ' + holder);
       $('hsContSub').textContent = bits.join(' · ');
+      const stNow = Project.status();
+      $('hsContStatus').textContent = stNow === 'active' ? '' : ' · ' + STATUS_SHORT[stNow];
     }
     const active = mode === 'editor' ? 'drawing' : 'home';
     document.querySelectorAll('#homeSide .hs-item[data-nav]').forEach(b =>
       b.classList.toggle('active', b.dataset.nav === active));
+    renderProjects();
   }
 
   /* ---------------- navigation ---------------- */
@@ -237,5 +416,5 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
+  return { setMode, refresh, renderProjects, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();

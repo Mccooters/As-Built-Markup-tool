@@ -89,6 +89,14 @@ const Project = (() => {
     State.touch();
   }
 
+  /* ---------- status: In progress → DLP (defects liability period) → Completed / archived ---------- */
+
+  const STATUSES = { active: 'In progress', dlp: 'DLP', done: 'Completed' };
+  const normStatus = s => (Object.prototype.hasOwnProperty.call(STATUSES, String(s || '')) ? String(s) : 'active');
+  const status = () => normStatus(details().status);
+  const statusLabel = s => STATUSES[normStatus(s)];
+  function setStatus(s) { setDetails({ status: normStatus(s) }); }
+
   function bytesToBase64(bytes) {
     let bin = '';
     const chunk = 0x8000;
@@ -221,5 +229,5 @@ const Project = (() => {
     State.on('doc', onDocOpened);
   }
 
-  return { init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails };
+  return { init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails, status, statusLabel, normStatus, setStatus };
 })();

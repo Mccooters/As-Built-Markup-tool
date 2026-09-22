@@ -37,8 +37,11 @@
  *     pdf_path text not null default '',
  *     pdf_size bigint not null default 0,
  *     updated_by text not null default '',
- *     updated_at timestamptz not null default now()
+ *     updated_at timestamptz not null default now(),
+ *     status text not null default 'active'   -- active | dlp | done — groups the project list
  *   );
+ *   -- existing installs (table created before statuses existed) — one line:
+ *   alter table am_projects add column if not exists status text not null default 'active';
  *   alter table am_projects enable row level security;  -- no policies: only the service key reads it
  *   insert into storage.buckets (id, name, public) values ('airmark', 'airmark', false);
  */
@@ -118,7 +121,27 @@ function slimRow(r) {
     fingerprint: str(r.fingerprint), version: Number(r.version) || 0,
     updatedBy: str(r.updated_by), updatedAt: str(r.updated_at),
     pdfSize: Number(r.pdf_size) || 0, hasPdf: !!str(r.pdf_path),
+    status: normStatus(r.status),
   };
+}
+
+// Project status — In progress (active) / DLP (defects liability period) /
+// Completed (done). It has its own column so the list groups without
+// opening every project. An install that hasn't run the one-line migration
+// keeps working: statuses then stay on each device and the client is told.
+const STATUSES = ['active', 'dlp', 'done'];
+const normStatus = s => (STATUSES.includes(str(s)) ? str(s) : 'active');
+let statusCol = null; // probed once per warm instance
+async function hasStatusCol() {
+  if (statusCol !== null) return statusCol;
+  try {
+    await sb('GET', rowsPath('?select=status&limit=1'));
+    statusCol = true;
+  } catch (e) {
+    if (!/status/i.test(str(e && e.message))) throw e;   // unrelated failure — no verdict cached
+    statusCol = false;
+  }
+  return statusCol;
 }
 
 async function signedUpload(path) {
@@ -345,7 +368,9 @@ const ACTIONS = {
   // The shared project list, newest first.
   async list() {
     const rows = await sb('GET', rowsPath('?select=*&order=updated_at.desc&limit=100'));
-    return { ok: true, projects: (rows || []).map(slimRow) };
+    let statusColumn = null;
+    try { statusColumn = await hasStatusCol(); } catch (e) { /* unknown — say nothing */ }
+    return { ok: true, projects: (rows || []).map(slimRow), statusColumn };
   },
 
   // Start a save: find/create the registry row for this drawing, check the
@@ -358,10 +383,13 @@ const ACTIONS = {
     const aroNo = str(body && body.aroNo).trim().slice(0, 40);
     const baseVersion = Number(body && body.version);
     const force = !!(body && body.force);
+    const status = body && body.status != null ? normStatus(body.status) : null;
 
     let row = (await sb('GET', rowsPath('?fingerprint=eq.' + encodeURIComponent(fingerprint) + '&limit=1')))[0];
     if (!row) {
-      const ins = await sb('POST', rowsPath(''), { name, aro_no: aroNo, fingerprint, updated_by: auth }, { Prefer: 'return=representation' });
+      const fields = { name, aro_no: aroNo, fingerprint, updated_by: auth };
+      if (status && await hasStatusCol()) fields.status = status;
+      const ins = await sb('POST', rowsPath(''), fields, { Prefer: 'return=representation' });
       row = Array.isArray(ins) ? ins[0] : ins;
     }
     if (!row || !UUID.test(str(row.id))) return { ok: false, httpStatus: 500, statusmessage: 'Registry row not created' };
@@ -400,6 +428,9 @@ const ACTIONS = {
     const aroNo = str(body && body.aroNo).trim().slice(0, 40);
     if (name) patch.name = name;
     if (aroNo) patch.aro_no = aroNo;
+    // the client sends status only when that device changed it, so a stale
+    // copy never undoes a list change made elsewhere
+    if (body && body.status != null && await hasStatusCol()) patch.status = normStatus(body.status);
     if (body && body.pdfUploaded) {
       patch.pdf_path = `projects/${id}/drawing.pdf`;
       const sz = Number(body.pdfSize);
@@ -410,6 +441,21 @@ const ACTIONS = {
       const cur = (await sb('GET', rowsPath('?id=eq.' + id + '&limit=1')))[0];
       return { ok: true, conflict: true, project: cur ? slimRow(cur) : null };
     }
+    return { ok: true, project: slimRow(rows[0]) };
+  },
+
+  // Move a project between In progress / DLP / Completed from the list —
+  // status only, no version bump, so nobody's next save is flagged as a
+  // conflict over a list change.
+  async setstatus(q, body) {
+    const id = str(body && body.id).trim();
+    if (!UUID.test(id)) return { ok: false, httpStatus: 400, statusmessage: 'Bad project id' };
+    const status = normStatus(body && body.status);
+    if (!(await hasStatusCol())) {
+      return { ok: false, statusColumn: false, statusmessage: 'Project statuses need the status column on am_projects — run the one-line SQL from the README in Supabase.' };
+    }
+    const rows = await sb('PATCH', rowsPath('?id=eq.' + id), { status }, { Prefer: 'return=representation' });
+    if (!Array.isArray(rows) || !rows.length) return { ok: false, httpStatus: 404, statusmessage: 'Project not found' };
     return { ok: true, project: slimRow(rows[0]) };
   },
 
@@ -452,8 +498,8 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
-const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, open: 1, teamscope: 1, spfile: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
+const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, open: 1, teamscope: 1, spfile: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
 
