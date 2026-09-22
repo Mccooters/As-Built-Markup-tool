@@ -329,23 +329,56 @@ const Aro = (() => {
 
   const pageOpen = () => pageEl && !pageEl.classList.contains('hidden');
 
-  // Stock context remembered per drawing project: the holder you filter to
-  // and the AroFlo project you load travel with the .airmark / autosave.
+  // Stock context remembered per drawing project: the AroFlo project you load
+  // travels with the .airmark / autosave (the stock-list link goes through
+  // linkHolder below).
   function rememberSite(patch) {
     if (!State.S.pdf) return;
     State.S.aroSite = Object.assign({}, State.S.aroSite || {}, patch);
     State.emit('autosave');
   }
 
+  /* ---- the project's stock list ----
+   * One drawing = one job = one AroFlo holder (the site container, the ute,
+   * a store). That holder is the project's stock list: the manager filters
+   * to it, deliveries book into it, the pick list lands on it and used parts
+   * come out of it — and opening another drawing switches lists. The link is
+   * stored on the drawing (aroSite.holder), so it travels with autosave, the
+   * .airmark file and the team cloud like every other project detail. */
+  const linkedHolder = () => (State.S.pdf && State.S.aroSite && State.S.aroSite.holder) || '';
+
+  function linkHolder(name) {
+    if (!State.S.pdf) return false;
+    name = String(name || '');
+    if (name === linkedHolder()) return false;
+    State.S.aroSite = Object.assign({}, State.S.aroSite || {}, { holder: name });
+    st.holder = name;
+    st.lowOnly = false;
+    st.expanded = null;
+    State.touch();
+    State.emit('project');   // Home card, right-panel tab, stock header follow
+    return true;
+  }
+
+  // every holder a project can be linked to — for the Project details dialog
+  const holderList = () => holders().map(([name, type]) => ({ name, type, kind: holderKind(type) }));
+
+  // Follow the open drawing: its list when it has one, all locations when it
+  // has none. Runs on every document / project-details change.
+  function followProject() {
+    const linked = linkedHolder();
+    if (st.holder !== linked) { st.holder = linked; st.lowOnly = false; st.expanded = null; }
+    render();
+  }
+
   function openPage() {
     if (!pageEl) return;
     pageEl.classList.remove('hidden');
     document.body.classList.remove('panel-open');
+    const linked = linkedHolder();
+    if (linked) { st.holder = linked; st.lowOnly = false; }
     const site = State.S.aroSite;
-    if (site) {
-      if (site.holder && !st.holder) st.holder = site.holder;
-      if (site.project && !st.tm.pQuery) { st.tm.pQuery = site.project; st.tm.mode = 'project'; }
-    }
+    if (site && site.project && !st.tm.pQuery) { st.tm.pQuery = site.project; st.tm.mode = 'project'; }
     render();
     // open instantly from the local snapshot — a crawl only runs when there
     // is nothing cached yet; ⟳ is the deliberate way to pull live figures
@@ -373,8 +406,20 @@ const Aro = (() => {
       status = `<b>${st.items.length}</b> items` + (mins != null ? ` · as at ${mins < 1 ? 'just now' : mins + ' min ago'}` : '');
     } else if (st.phase === 'unconfigured' || st.phase === 'idle') status = 'Not connected yet.';
     else status = 'No inventory loaded yet.';
+    // which list this drawing works from
+    let projLine = '';
+    if (State.S.pdf) {
+      const linked = linkedHolder();
+      if (linked) {
+        const n = st.items.filter(it => qtyAt(it, linked) > 0).length;
+        projLine = `<p class="prop-note aro-tab-proj"><b>${esc(Project.displayName())}</b> · stock list: <b>${esc(linked)}</b>${st.items.length ? ` — ${n} item${n === 1 ? '' : 's'} in stock` : ''}</p>`;
+      } else {
+        projLine = `<p class="prop-note aro-tab-proj">No stock list linked to this drawing yet — pick its holder in Project details or in the stock manager.</p>`;
+      }
+    }
     root.innerHTML = `
       <div class="prop-cap">Site stock — AroFlo</div>
+      ${projLine}
       <p class="prop-note">${status}</p>
       ${st.error ? `<div class="aro-error">${esc(st.error)}</div>` : ''}
       <button class="mini-btn primary" id="aro-open">Open stock manager</button>
@@ -382,12 +427,45 @@ const Aro = (() => {
     root.querySelector('#aro-open').addEventListener('click', openPage);
   }
 
+  // The line under the location filter that says whose list is on screen:
+  // the project's own list, another location being browsed, or no link yet.
+  function projectLineHtml() {
+    if (!State.S.pdf) return '';
+    const linked = linkedHolder();
+    const name = esc(Project.displayName());
+    if (!linked) {
+      return `<div class="aro-proj" id="aro-proj"><span class="aro-proj-dot none"></span>
+        <span class="aro-proj-txt"><b>${name}</b> has no stock list yet${st.holder ? '' : ' — pick the site’s location above, then link it'}.</span>
+        ${st.holder ? `<button class="mini-btn primary" id="aro-link" title="Make ${esc(st.holder)} this project’s stock list">Link “${esc(st.holder)}” to this project</button>` : ''}
+        <button class="mini-btn" id="aro-proj-edit" title="Project details">Details…</button></div>`;
+    }
+    if (st.holder === linked) {
+      return `<div class="aro-proj" id="aro-proj"><span class="aro-proj-dot"></span>
+        <span class="aro-proj-txt"><b>${name}</b> · stock list: <b>${esc(linked)}</b></span>
+        <button class="mini-btn" id="aro-proj-edit" title="Change which holder this project’s stock is kept in">Change…</button></div>`;
+    }
+    return `<div class="aro-proj" id="aro-proj"><span class="aro-proj-dot off"></span>
+      <span class="aro-proj-txt">Browsing <b>${esc(st.holder || 'all locations')}</b> — <b>${name}</b>’s stock list is <b>${esc(linked)}</b>.</span>
+      <button class="mini-btn" id="aro-proj-back">Show project stock</button>
+      ${st.holder ? `<button class="mini-btn" id="aro-link" title="Make ${esc(st.holder)} this project’s stock list instead">Link “${esc(st.holder)}” instead</button>` : ''}</div>`;
+  }
+
+  function renderHeadNote() {
+    const note = document.getElementById('stockHeadNote');
+    if (!note) return;
+    if (!State.S.pdf) { note.textContent = ''; return; }
+    const linked = linkedHolder();
+    note.textContent = Project.displayName() + ' — ' + (linked ? linked : 'no stock list linked');
+  }
+
   function renderPage() {
+    renderHeadNote();
     if (st.phase === 'idle' || st.phase === 'unconfigured') {
       renderIntro(mainEl);
       sideEl.innerHTML = '';
       return;
     }
+    const linked = linkedHolder();
     let h = `<div class="stock-controls"><div class="aro-bar">
         <input type="text" id="aro-search" placeholder="Search stock… (e.g. impress 54)" value="${esc(st.filter)}" autocomplete="off">
         <button class="mini-btn" id="aro-scan" title="Scan a barcode or QR label">📷</button>
@@ -408,7 +486,7 @@ const Aro = (() => {
       <div class="aro-bar">
         <select id="aro-holder" title="Show stock held by">
           <option value="">All locations</option>
-          ${holders().map(([to, type]) => `<option value="${esc(to)}"${st.holder === to ? ' selected' : ''}>${esc(to)} — ${esc(holderKind(type))}</option>`).join('')}
+          ${holders().map(([to, type]) => `<option value="${esc(to)}"${st.holder === to ? ' selected' : ''}>${linked === to ? '★ ' : ''}${esc(to)} — ${esc(holderKind(type))}${linked === to ? ' (this project)' : ''}</option>`).join('')}
         </select>
         <label class="chk" title="Hide items with no stock at the selected location"><input type="checkbox" id="aro-zero"${st.hideZero ? ' checked' : ''}> In stock</label>
         ${st.holder ? `<label class="chk" title="Only items below their minimum at this holder"><input type="checkbox" id="aro-low"${st.lowOnly ? ' checked' : ''}> Low</label>` : ''}
@@ -416,7 +494,7 @@ const Aro = (() => {
         <button class="mini-btn" id="aro-deliv" title="Receive a delivery — book it into site stock and produce a signed PDF docket">Delivery</button>
         ${st.holder ? `<button class="mini-btn" id="aro-reorder" title="Everything below its minimum at this holder, as a reorder list">Reorder</button>` : ''}
         <button class="mini-btn" id="aro-labels" title="Print QR labels for the items in the current view">Labels</button>
-      </div>`;
+      </div>${projectLineHtml()}`;
     }
     h += `<div class="aro-status" id="aro-status"></div></div>
       <div class="aro-list" id="aro-list"></div>`;
@@ -450,14 +528,26 @@ const Aro = (() => {
         render();
       });
     } else {
+      // browsing another location is just a view — the project's list only
+      // changes through the Link button or Project details
       mainEl.querySelector('#aro-holder').addEventListener('change', e => {
         st.holder = e.target.value;
-        rememberSite({ holder: st.holder });
-        renderList(); renderStatus();
+        st.lowOnly = false;
+        st.expanded = null;
+        render();
       });
       mainEl.querySelector('#aro-zero').addEventListener('change', e => { st.hideZero = e.target.checked; renderList(); renderStatus(); });
       mainEl.querySelector('#aro-take').addEventListener('click', startStocktake);
       mainEl.querySelector('#aro-deliv').addEventListener('click', () => deliveryDialog());
+      const linkBtn = mainEl.querySelector('#aro-link');
+      if (linkBtn) linkBtn.addEventListener('click', () => {
+        const name = st.holder;
+        if (linkHolder(name)) App.toast(`“${name}” is now the stock list for ${Project.displayName()} — saved with the drawing.`, 'good', 5000);
+      });
+      const backBtn = mainEl.querySelector('#aro-proj-back');
+      if (backBtn) backBtn.addEventListener('click', () => { st.holder = linkedHolder(); st.lowOnly = false; st.expanded = null; render(); });
+      const editBtn = mainEl.querySelector('#aro-proj-edit');
+      if (editBtn) editBtn.addEventListener('click', () => App.projectDialog());
     }
     wireTaskMaterials(sideEl);
     wireRefCard();
@@ -1111,7 +1201,7 @@ const Aro = (() => {
       });
     if (!lines.length) { usedDialog(job, opts); return; }
     const holdersW = st.allHolders.filter(h => h.id);
-    const defFrom = (State.S.aroSite && State.S.aroSite.holder) || st.holder || (holdersW[0] || {}).name || '';
+    const defFrom = linkedHolder() || st.holder || (holdersW[0] || {}).name || '';
     const deductDef = loadJson('abmt:useddeduct', true);
     const rows = lines.map(l => `<tr>
       <td>${esc(l.it.desc)}<div class="aro-sub">${esc(l.it.pn)}</div></td>
@@ -1562,7 +1652,7 @@ const Aro = (() => {
       pick = {
         lines: lines.map(l => ({ ...l, checked: true })),
         source: (pick && pick.source) || loadJson('abmt:picksource', null) || (withIds.find(h => h.type === 'org') || withIds[0] || {}).name || '',
-        dest: (pick && pick.dest) || (State.S.aroSite && State.S.aroSite.holder) || st.holder || '',
+        dest: linkedHolder() || (pick && pick.dest) || st.holder || '',
       };
       pickListDialog();
     });
@@ -1819,13 +1909,19 @@ const Aro = (() => {
   function deliveryDialog() {
     if (!st.items.length) { App.toast('Load the stock list first (⟳) so the delivery can be matched to the catalogue.', 'warn', 6000); return; }
     const holdersW = st.allHolders.filter(h => h.id);
-    if (!delivDraft.holderName) {
-      delivDraft.holderName = (State.S.aroSite && State.S.aroSite.holder) || st.holder || (holdersW[0] || {}).name || '';
+    // an untouched draft left over from another drawing follows the drawing
+    // now open — a half-entered delivery keeps what was typed
+    const fp = State.S.fingerprint || '';
+    const blank = !delivDraft.lines.length && !delivDraft.supplier && !delivDraft.ref && !delivDraft.notes;
+    const switched = blank && delivDraft.doc !== fp;
+    if (!delivDraft.holderName || switched) {
+      delivDraft.holderName = linkedHolder() || st.holder || (holdersW[0] || {}).name || '';
     }
-    if (delivDraft.site == null) {
+    if (delivDraft.site == null || switched) {
       const pj = State.S.project || {};
       delivDraft.site = String(pj.site || pj.name || State.S.jobRef || State.S.fileName || '').replace(/\.pdf$/i, '');
     }
+    delivDraft.doc = fp;
 
     const matches = q => {
       const toks = String(q).toLowerCase().split(/\s+/).filter(Boolean);
@@ -2793,6 +2889,10 @@ const Aro = (() => {
     State.on('page', closeZonePopover);
     State.on('tool', closeZonePopover);
     State.on('doc', closeZonePopover);
+    // another drawing → its own stock list ('doc' resets, 'project' fires once
+    // the saved details — the link included — are back on it)
+    State.on('doc', followProject);
+    State.on('project', followProject);
     document.getElementById('stockClose').addEventListener('click', closePage);
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && pageOpen() && document.getElementById('modalRoot').classList.contains('hidden')) {
@@ -2808,6 +2908,7 @@ const Aro = (() => {
     refresh, settingsDialog, call, openPage, closePage,
     zonePopover, zoneLinkDialog, closeZonePopover, usedDialog, adoptTeamConfig,
     deliveryDialog, deliveriesDialog,
+    linkHolder, linkedHolder, holderList,
     _state: st, _onScan: onScan, _resolveScan: resolveScan,
   };
 })();

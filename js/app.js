@@ -436,6 +436,12 @@ const App = (() => {
     try { contractorDefault = localStorage.getItem('abmt:contractor') || ''; } catch (e) { /* ignore */ }
     const contractor = d.contractor != null && d.contractor !== '' ? d.contractor : (S.project ? '' : contractorDefault);
     const aroNo = (S.aroSite && S.aroSite.project) || '';
+    // the project's stock list: one AroFlo holder (site container, ute, store)
+    const linked = (S.aroSite && S.aroSite.holder) || '';
+    const holders = typeof Aro !== 'undefined' ? Aro.holderList() : [];
+    if (linked && !holders.some(h => h.name === linked)) holders.unshift({ name: linked, type: '', kind: '' });
+    const holderOpts = '<option value="">— Not linked (all locations) —</option>'
+      + holders.map(h => `<option value="${v(h.name)}"${h.name === linked ? ' selected' : ''}>${v(h.name)}${h.kind ? ' — ' + v(h.kind) : ''}</option>`).join('');
     modal(`
       <h3>Project details</h3>
       <div class="form-row"><label>Project name</label>
@@ -454,6 +460,11 @@ const App = (() => {
         <div><label>AroFlo project #</label><input type="text" id="pj-aro" value="${v(aroNo)}" placeholder="e.g. 10" inputmode="numeric"></div>
         <div><label>AroFlo job / task ref</label><input type="text" id="pj-ref" value="${v(S.jobRef)}" placeholder="e.g. Task #48213"></div>
       </div>
+      <div class="form-row"><label>Stock list — AroFlo holder this job draws from</label>
+        <select id="pj-holder">${holderOpts}</select>
+        <div class="muted" style="margin-top:4px">${holders.length
+          ? 'The site container, ute or store for this job. Site stock opens on it, deliveries book into it, the pick list lands on it and used parts come out of it while this drawing is open.'
+          : 'Open Site stock and sync once (⟳) to list your AroFlo holders here.'}</div></div>
       <p class="muted">Saved with the drawing — autosave, the .airmark file and the team cloud. Printed on daily reports, CSV schedules and delivery dockets; the project name is what Home, recents and the team list show.</p>
       <div class="modal-actions">
         <button class="mini-btn" id="pj-cancel">Cancel</button>
@@ -466,6 +477,7 @@ const App = (() => {
         S.jobRef = g('pj-ref');
         const aro = g('pj-aro');
         if (aro || (S.aroSite && S.aroSite.project)) S.aroSite = Object.assign({}, S.aroSite || {}, { project: aro });
+        if (typeof Aro !== 'undefined') Aro.linkHolder($('pj-holder').value);
         try { if (g('pj-contractor')) localStorage.setItem('abmt:contractor', g('pj-contractor')); } catch (e) { /* ignore */ }
         State.touch();
         State.emit('project');

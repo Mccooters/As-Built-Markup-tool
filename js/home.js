@@ -122,6 +122,8 @@ const Home = (() => {
       bits.push(n ? n + ' markup' + (n === 1 ? '' : 's') : 'no markups yet');
       const proj = State.S.aroSite && State.S.aroSite.project;
       if (proj) bits.push('AroFlo project ' + proj);
+      const holder = State.S.aroSite && State.S.aroSite.holder;
+      if (holder) bits.push('Stock: ' + holder);
       $('hsContSub').textContent = bits.join(' · ');
     }
     const active = mode === 'editor' ? 'drawing' : 'home';
