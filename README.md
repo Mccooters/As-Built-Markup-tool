@@ -42,7 +42,7 @@ AirMark is an installable web app. Open your deployment in Safari/Chrome, then *
 8. **Count** (`C`) — create count groups (drops, couplers, elbow fittings…) and click to place marks.
 9. Add **clouds, callouts, text, arrows, highlights** for revision notes.
 10. **Track the day's work** — everything you add is stamped with the active work day; Day mode grays earlier days so the day's progress reads at a glance, and the **Report** button exports the daily handover (PDF + materials CSV + clipboard summary for AroFlo).
-11. Check the **Takeoff** tab — total length per pipe size/material, fitting quantities, counts — and the **Markups List** at the bottom (sortable, filterable, click a row to jump to the markup).
+11. Check the **Takeoff** tab — total length per pipe size/material, fitting quantities, counts — and the **Markups List** at the bottom (grouped by type and area zone, sortable, filterable, click a row to jump to the markup — see [Markups list](#markups-list--groups-collapse-and-hide)).
 12. **Export** — a flattened PDF with every markup burned in (print-ready, true page size), and/or a CSV containing the pipe takeoff, fitting schedule, counts, and the full markup log.
 
 ## Feature map (Bluebeam Revu → AirMark)
@@ -53,7 +53,7 @@ AirMark is an installable web app. Open your deployment in Safari/Chrome, then *
 | Measurement tools (calibrate, length, polylength, area, count) | ✔ Included, metric by default (meters, 1:20…1:500 presets, ratio entry), with ft-in / decimal-ft available |
 | — | ✔ Pipe runs render at their **actual OD width** for the sheet scale (toggleable per run) |
 | Tool Chest custom symbols | ✔ Built-in compressed-air symbol library + stamps |
-| Markups List panel | ✔ Sortable/filterable list with subject, comments, measurement, author, date; CSV export |
+| Markups List panel | ✔ Grouped by type › area zone, each group collapsible and hide-able on the sheet with totals; sortable/filterable with subject, comments, measurement, author, date; CSV export |
 | Quantity takeoff | ✔ Live pipe takeoff by size & material + fitting/count schedules |
 | Flatten & export | ✔ One-click flattened PDF export |
 | Save markups separately from the PDF | ✔ `.airmark` project files (PDF embedded up to 50 MB) + per-drawing browser autosave |
@@ -186,6 +186,15 @@ Setup (one-time, needs a Microsoft 365 admin):
 5. Vercel env vars: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, and `SP_DRAWINGS_URL` = the drawings folder's address pasted straight from the browser. Redeploy.
 
 The credential lives only in server env vars; drawing bytes go browser ← SharePoint via a short-lived pre-authenticated link Graph mints per download (with a streamed proxy fallback), so big sheets never squeeze through the function. Point `SP_DRAWINGS_URL` at the current job's drawings folder; when the next project starts, change that one variable.
+
+## Markups list — groups, collapse and hide
+
+The list at the bottom of the editor is **grouped**: one group per kind of markup — Measurements, Pipe runs, Press fittings, Symbols & equipment, Counts, Penetrations, Text & callouts, Markups, Photos, Area zones — and, once the sheet has area zones, each of those splits again **per zone** (a markup belongs to the smallest zone its centre sits in; the rest land under *Not in a zone*). Every group header shows a count and, for measurements and pipe, the **total length and area** of what's in it. Two controls on each header:
+
+- **▾ / ▸ collapses** the group in the list (the zone sub-groups fold on their own).
+- **The eye hides the group on the drawing** — all measurements at once, or just one section's measurements. Hidden markups stay in the list, greyed, and are skipped by selection, marquee and snapping; **Show all** in the header brings everything back. Hiding a parent hides its sub-groups too.
+
+Collapsed and hidden groups are remembered **per device and per drawing**, never saved into the project: hiding a section's measurements on one iPad doesn't blank them for the rest of the crew, and exports and reports still include them. The **Group** menu switches to zones on top (each zone with everything inside it) or a flat list.
 
 ## Project list
 

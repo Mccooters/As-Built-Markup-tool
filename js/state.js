@@ -217,6 +217,111 @@ const State = (() => {
     return d < ref ? 'gray' : 'hidden';
   }
 
+  /* ---- groups: what the markups list groups by, and what is hidden on the sheet ----
+   * Type groups (Measurements, Pipe runs, …) with the drawing's area zones as
+   * sub-groups. Hidden / collapsed groups are a view aid kept per device and
+   * per drawing (localStorage) — never in the project data, so hiding one
+   * section's measurements on an iPad neither blanks them for the rest of the
+   * crew nor drops them from exports. */
+
+  const CATEGORY = {
+    mlength: 'measure', mpoly: 'measure', marea: 'measure', pipe: 'pipe', fitting: 'fitting',
+    symbol: 'equip', stamp: 'equip', count: 'count', penet: 'penet', text: 'note', callout: 'note',
+    photo: 'photo', zone: 'zone',
+  };
+  const CATEGORY_ORDER = ['measure', 'pipe', 'fitting', 'equip', 'count', 'penet', 'note', 'markup', 'photo', 'zone'];
+  const CATEGORY_NAME = {
+    measure: 'Measurements', pipe: 'Pipe runs', fitting: 'Press fittings', equip: 'Symbols & equipment',
+    count: 'Counts', penet: 'Penetrations', note: 'Text & callouts', markup: 'Markups', photo: 'Photos', zone: 'Area zones',
+  };
+  const categoryOf = m => CATEGORY[m.type] || 'markup';
+
+  /** The area zone a markup sits in: the smallest zone on its page whose box
+   *  holds the markup's centre. A zone counts as sitting in itself, so hiding
+   *  or grouping "everything in the Compressor room" takes the box along. */
+  function zoneOf(m) {
+    if (!m) return null;
+    if (m.type === 'zone') return m;
+    const b = Geo.markupBounds(m);
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    let best = null, bestA = Infinity;
+    for (const z of S.markups) {
+      if (z.type !== 'zone' || z.page !== m.page) continue;
+      if (cx < z.x || cy < z.y || cx > z.x + z.w || cy > z.y + z.h) continue;
+      const a = z.w * z.h;
+      if (a < bestA) { best = z; bestA = a; }
+    }
+    return best;
+  }
+  const zoneName = z => (z.label || z.subject || 'Area zone') + ((z.jobs || []).length ? ' · #' + z.jobs.join(' #') : '');
+
+  /** Every group key a markup belongs to: its type group, its zone, and the type-within-zone. */
+  function groupKeysOf(m) {
+    const c = categoryOf(m), z = zoneOf(m);
+    const zk = 'zone:' + (z ? z.id : 'none');
+    return ['type:' + c, zk, 'type:' + c + '|' + zk];
+  }
+
+  let viewFp = null;
+  const view = { hidden: new Set(), collapsed: new Set() };
+  function ensureView() {
+    if (viewFp === S.fingerprint) return view;
+    viewFp = S.fingerprint;
+    view.hidden = new Set(); view.collapsed = new Set();
+    try {
+      const v = JSON.parse(localStorage.getItem('abmt:view:' + S.fingerprint) || 'null');
+      if (v) { for (const k of v.hidden || []) view.hidden.add(k); for (const k of v.collapsed || []) view.collapsed.add(k); }
+    } catch (e) { /* fresh view */ }
+    return view;
+  }
+  function saveView() {
+    if (!S.fingerprint) return;
+    try { localStorage.setItem('abmt:view:' + S.fingerprint, JSON.stringify({ hidden: [...view.hidden], collapsed: [...view.collapsed] })); } catch (e) { /* ignore */ }
+  }
+  const groupHidden = key => ensureView().hidden.has(key);
+  const groupCollapsed = key => ensureView().collapsed.has(key);
+  const anyGroupHidden = () => ensureView().hidden.size > 0;
+
+  /** Off the sheet: a future work day, or one of its groups switched off in the list. */
+  function isHidden(m) {
+    if (!m) return false;
+    if (dayStateOf(m) === 'hidden') return true;
+    const v = ensureView();
+    if (!v.hidden.size) return false;
+    return groupKeysOf(m).some(k => v.hidden.has(k));
+  }
+
+  function afterViewChange() {
+    // nothing hidden stays selected — its handles would float over an empty spot
+    let pruned = false;
+    for (const id of [...S.selection]) {
+      const m = getMarkup(id);
+      if (m && isHidden(m)) { S.selection.delete(id); pruned = true; }
+    }
+    emit('markups');            // redraw the sheet — no data change, so no autosave
+    if (pruned) emit('selection');
+    emit('view');
+  }
+  function setGroupHidden(key, hidden) {
+    ensureView();
+    if (hidden) view.hidden.add(key); else view.hidden.delete(key);
+    saveView();
+    afterViewChange();
+  }
+  function showAllGroups() {
+    ensureView();
+    if (!view.hidden.size) return;
+    view.hidden.clear();
+    saveView();
+    afterViewChange();
+  }
+  function setGroupCollapsed(key, collapsed) {
+    ensureView();
+    if (collapsed) view.collapsed.add(key); else view.collapsed.delete(key);
+    saveView();
+    emit('view');
+  }
+
   /* ---- tool ---- */
   function setTool(tool) {
     if (S.tool === tool) return;
@@ -312,6 +417,8 @@ const State = (() => {
     addMarkup, updateMarkups, deleteMarkups, getMarkup, pageMarkups,
     select, clearSelection, selectedMarkups, setTool, zoneLocked,
     setWorkDay, setDayMode, dayStateOf,
+    categoryOf, zoneOf, zoneName, groupKeysOf, isHidden, groupHidden, groupCollapsed, anyGroupHidden,
+    setGroupHidden, setGroupCollapsed, showAllGroups, CATEGORY_ORDER, CATEGORY_NAME,
     scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
     resetDoc, newId, touch, addImage,

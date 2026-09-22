@@ -250,7 +250,34 @@ button.doc-name:empty { display: none; }
 #listToggle { background: transparent; border: none; color: var(--txt-dim); cursor: pointer; padding: 3px; }
 #listToggle:hover { color: #fff; }
 #listSearch { background: var(--bg3); border: 1px solid var(--edge); color: var(--txt); border-radius: 4px; padding: 3px 8px; font-size: 12px; width: 150px; }
-#listTypeFilter { background: var(--bg3); border: 1px solid var(--edge); color: var(--txt); border-radius: 4px; padding: 3px 5px; font-size: 12px; }
+#listTypeFilter, #listGroup { background: var(--bg3); border: 1px solid var(--edge); color: var(--txt); border-radius: 4px; padding: 3px 5px; font-size: 12px; }
+/* group rows: collapse caret, eye (hide on the sheet), name, count, totals */
+#listTable tbody tr.grp td {
+  background: var(--bg3); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--edge);
+  white-space: nowrap; max-width: none; overflow: visible;
+}
+#listTable tbody tr.grp.lvl1 td { background: rgba(255,255,255,.035); font-weight: 500; padding-left: 30px; }
+#listTable tbody tr.grp.lvl2 td { padding-left: 52px; }
+#listTable tbody tr.grp:hover td { filter: brightness(1.18); }
+#listTable tbody tr.row.lvl1 td:first-child { padding-left: 30px; }
+#listTable tbody tr.row.lvl2 td:first-child { padding-left: 52px; }
+.grp-tog, .grp-eye {
+  background: transparent; border: 0; color: var(--txt-dim); cursor: pointer; padding: 0 4px;
+  font: inherit; font-size: 12px; line-height: 1; vertical-align: middle;
+}
+.grp-tog { width: 20px; }
+.grp-eye svg { width: 16px; height: 16px; vertical-align: -3px; }
+.grp-tog:hover, .grp-eye:hover { color: #fff; }
+.grp-name { margin-left: 2px; vertical-align: middle; }
+.grp-count {
+  margin-left: 8px; background: var(--bg2); border: 1px solid var(--edge); border-radius: 999px;
+  padding: 0 7px; font-size: 11px; font-weight: 400; color: var(--txt-dim); vertical-align: middle;
+}
+.grp-tot { margin-left: 10px; color: var(--txt-dim); font-weight: 400; font-variant-numeric: tabular-nums; vertical-align: middle; }
+#listTable tbody tr.grp.hid .grp-name, #listTable tbody tr.grp.hid .grp-tot, #listTable tbody tr.grp.hid .grp-count { opacity: .5; }
+#listTable tbody tr.grp.hid .grp-eye { color: #e8b13c; }
+#listTable tbody tr.row.hid td { opacity: .42; }
+#listTable tbody tr.row.hid.sel td { opacity: .7; }
 #listBody { overflow: auto; flex: 1 1 auto; min-height: 0; height: 190px; }
 #listTable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 #listTable th {

@@ -404,8 +404,14 @@
     <select id="listTypeFilter" title="Filter by markup type">
       <option value="">All types</option>
     </select>
+    <select id="listGroup" title="Group the list — every group collapses here and can be hidden on the drawing">
+      <option value="type">Group: type › zone</option>
+      <option value="zone">Group: zone</option>
+      <option value="none">No grouping</option>
+    </select>
     <label class="chk"><input type="checkbox" id="listPageOnly"> This page only</label>
     <div class="tb-flex"></div>
+    <button id="listShowAll" class="mini-btn" hidden title="Show every hidden group on the drawing again">Show all</button>
     <button id="btnDeleteSel" class="mini-btn danger" title="Delete selected markups (Del)">Delete selected</button>
   </div>
   <div id="listBody">

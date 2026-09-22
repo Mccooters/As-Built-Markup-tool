@@ -5,6 +5,8 @@ const MarkupList = (() => {
 
   let sortKey = 'idx', sortDir = 1;
   let els = {};
+  // 'type' = type groups with the area zones as sub-groups · 'zone' = zones on top · 'none' = flat
+  let groupMode = (() => { try { return localStorage.getItem('abmt:listgroup') || 'type'; } catch (e) { return 'type'; } })();
 
   const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
@@ -33,6 +35,11 @@ const MarkupList = (() => {
       author: m.author || '',
       date: m.date || '',
       type: m.type,
+      hidden: State.isHidden(m),
+      cat: State.categoryOf(m),
+      zone: State.zoneOf(m),
+      lenFt: m.type === 'mlength' || m.type === 'mpoly' || m.type === 'pipe' ? State.lengthFt(m) : null,
+      areaFt: m.type === 'marea' ? State.areaFt(m) : null,
     };
   }
 
@@ -59,35 +66,129 @@ const MarkupList = (() => {
     return out;
   }
 
+  /* ================= grouping ================= */
+  // Type groups (Measurements, Pipe runs, …) with the drawing's area zones as
+  // sub-groups — or the zones on top. Every group collapses in the list and
+  // hides on the sheet on its own; a hidden parent hides its children too.
+
+  const zoneKey = z => 'zone:' + (z ? z.id : 'none');
+
+  function byZone(rows, keyPrefix) {
+    const buckets = new Map();
+    for (const r of rows) {
+      const k = zoneKey(r.zone);
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(r);
+    }
+    const out = [];
+    for (const z of State.S.markups) {
+      if (z.type !== 'zone' || !buckets.has(zoneKey(z))) continue;
+      out.push({ key: keyPrefix + zoneKey(z), name: State.zoneName(z), rows: buckets.get(zoneKey(z)), children: [] });
+    }
+    if (buckets.has('zone:none')) out.push({ key: keyPrefix + 'zone:none', name: 'Not in a zone', rows: buckets.get('zone:none'), children: [] });
+    return out;
+  }
+
+  function buildTree(rows) {
+    if (groupMode === 'zone') return byZone(rows, '');
+    const hasZones = State.S.markups.some(m => m.type === 'zone');
+    const cats = new Map();
+    for (const r of rows) { if (!cats.has(r.cat)) cats.set(r.cat, []); cats.get(r.cat).push(r); }
+    const order = [...State.CATEGORY_ORDER, ...[...cats.keys()].filter(c => !State.CATEGORY_ORDER.includes(c))];
+    const out = [];
+    for (const c of order) {
+      if (!cats.has(c)) continue;
+      const g = { key: 'type:' + c, name: State.CATEGORY_NAME[c] || c, rows: cats.get(c), children: [] };
+      if (hasZones && c !== 'zone') {
+        const subs = byZone(g.rows, 'type:' + c + '|');
+        // split only when something actually sits in a zone
+        if (subs.some(s => !/zone:none$/.test(s.key))) { g.children = subs; g.rows = []; }
+      }
+      out.push(g);
+    }
+    return out;
+  }
+
+  const allRows = g => g.rows.concat(...g.children.map(allRows));
+
+  function totals(rows) {
+    let len = 0, lenKnown = false, area = 0, areaKnown = false;
+    for (const r of rows) {
+      if (r.lenFt != null) { len += r.lenFt; lenKnown = true; }
+      if (r.areaFt != null) { area += r.areaFt; areaKnown = true; }
+    }
+    const fmt = State.S.unitFormat;
+    return [lenKnown ? Units.fmtLen(len, fmt) : '', areaKnown ? Units.fmtArea(area, fmt) : ''].filter(Boolean).join(' · ');
+  }
+
+  const EYE_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.3A11 11 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1"/><path d="M6.6 6.7A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 4.4-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
+  function groupEl(g, level, parentHidden) {
+    const own = State.groupHidden(g.key);
+    const off = own || parentHidden;
+    const collapsed = State.groupCollapsed(g.key);
+    const rows = allRows(g);
+    const tot = totals(rows);
+    const tr = document.createElement('tr');
+    tr.className = `grp lvl${level}${off ? ' hid' : ''}${collapsed ? ' closed' : ''}`;
+    tr.dataset.key = g.key;
+    tr.innerHTML = `<td colspan="9">
+      <button type="button" class="grp-tog" title="${collapsed ? 'Expand' : 'Collapse'}" aria-expanded="${!collapsed}">${collapsed ? '▸' : '▾'}</button>
+      <button type="button" class="grp-eye" title="${own ? 'Show these on the drawing' : parentHidden ? 'Hidden with the whole group' : 'Hide these on the drawing'}" aria-pressed="${own}">${off ? EYE_OFF : EYE_ON}</button>
+      <span class="grp-name">${esc(g.name)}</span><span class="grp-count">${rows.length}</span>${tot ? `<span class="grp-tot">${esc(tot)}</span>` : ''}</td>`;
+    tr.querySelector('.grp-tog').addEventListener('click', e => { e.stopPropagation(); State.setGroupCollapsed(g.key, !collapsed); });
+    tr.querySelector('.grp-eye').addEventListener('click', e => { e.stopPropagation(); State.setGroupHidden(g.key, !own); });
+    tr.addEventListener('click', () => State.setGroupCollapsed(g.key, !collapsed));
+    return { tr, off, collapsed };
+  }
+
+  function appendGroup(frag, g, level, parentHidden) {
+    const { tr, off, collapsed } = groupEl(g, level, parentHidden);
+    frag.appendChild(tr);
+    if (collapsed) return;
+    for (const c of g.children) appendGroup(frag, c, level + 1, off);
+    for (const r of g.rows) frag.appendChild(rowEl(r, level + 1));
+  }
+
   /* ================= rendering ================= */
+
+  function rowEl(r, level) {
+    const tr = document.createElement('tr');
+    tr.dataset.id = r.id;
+    tr.className = `row lvl${level}${r.hidden ? ' hid' : ''}${State.S.selection.has(r.id) ? ' sel' : ''}`;
+    const d = r.date ? new Date(r.date) : null;
+    const dateStr = d ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+    tr.innerHTML =
+      `<td>${r.idx + 1}</td><td>${r.page}</td><td>${esc(r.subject)}</td>` +
+      `<td title="${esc(r.label)}">${esc(r.label)}</td>` +
+      `<td>${esc(r.measure)}</td>` +
+      `<td><span class="color-chip" style="background:${r.color || '#888'}"></span></td>` +
+      `<td>${esc(r.author)}</td><td>${dateStr}</td>` +
+      `<td><button class="row-del" title="Delete this markup">✕</button></td>`;
+    tr.addEventListener('click', e => {
+      if (e.target.classList.contains('row-del')) { State.deleteMarkups([r.id]); return; }
+      const m = State.getMarkup(r.id);
+      if (!m) return;
+      if (State.isHidden(m)) {
+        Viewer.flashMarkup(m);
+        App.toast('This markup is hidden on the drawing — tap the eye on its group to show it.', 'info', 3500);
+        return;
+      }
+      State.select([r.id], e.shiftKey);
+      Viewer.flashMarkup(m);
+    });
+    return tr;
+  }
 
   function render() {
     const rows = visibleRows();
-    els.count.textContent = `(${State.S.markups.length})`;
-    const sel = State.S.selection;
+    const hiddenN = State.S.markups.reduce((a, m) => a + (State.isHidden(m) ? 1 : 0), 0);
+    els.count.textContent = `(${State.S.markups.length}${hiddenN ? ' · ' + hiddenN + ' hidden' : ''})`;
+    if (els.showAll) els.showAll.hidden = !State.anyGroupHidden();
     const frag = document.createDocumentFragment();
-    for (const r of rows) {
-      const tr = document.createElement('tr');
-      tr.dataset.id = r.id;
-      if (sel.has(r.id)) tr.classList.add('sel');
-      const d = r.date ? new Date(r.date) : null;
-      const dateStr = d ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
-      tr.innerHTML =
-        `<td>${r.idx + 1}</td><td>${r.page}</td><td>${esc(r.subject)}</td>` +
-        `<td title="${esc(r.label)}">${esc(r.label)}</td>` +
-        `<td>${esc(r.measure)}</td>` +
-        `<td><span class="color-chip" style="background:${r.color || '#888'}"></span></td>` +
-        `<td>${esc(r.author)}</td><td>${dateStr}</td>` +
-        `<td><button class="row-del" title="Delete this markup">✕</button></td>`;
-      tr.addEventListener('click', e => {
-        if (e.target.classList.contains('row-del')) { State.deleteMarkups([r.id]); return; }
-        const m = State.getMarkup(r.id);
-        if (!m) return;
-        State.select([r.id], e.shiftKey);
-        Viewer.flashMarkup(m);
-      });
-      frag.appendChild(tr);
-    }
+    if (groupMode === 'none') for (const r of rows) frag.appendChild(rowEl(r, 0));
+    else for (const g of buildTree(rows)) appendGroup(frag, g, 0, false);
     els.rows.innerHTML = '';
     els.rows.appendChild(frag);
   }
@@ -323,12 +424,23 @@ const MarkupList = (() => {
       typeFilter: document.getElementById('listTypeFilter'),
       pageOnly: document.getElementById('listPageOnly'),
       toggle: document.getElementById('listToggle'),
+      group: document.getElementById('listGroup'),
+      showAll: document.getElementById('listShowAll'),
     };
 
     els.toggle.addEventListener('click', () => els.panel.classList.toggle('collapsed'));
     els.search.addEventListener('input', render);
     els.typeFilter.addEventListener('change', render);
     els.pageOnly.addEventListener('change', render);
+    if (els.group) {
+      els.group.value = groupMode;
+      els.group.addEventListener('change', () => {
+        groupMode = els.group.value;
+        try { localStorage.setItem('abmt:listgroup', groupMode); } catch (e) { /* ignore */ }
+        render();
+      });
+    }
+    if (els.showAll) els.showAll.addEventListener('click', () => State.showAllGroups());
 
     document.querySelectorAll('#listTable th[data-k]').forEach(th => {
       th.addEventListener('click', () => {
@@ -350,6 +462,7 @@ const MarkupList = (() => {
     State.on('page', slow);
     State.on('doc', slow);
     State.on('countGroups', slow);
+    State.on('view', render);   // collapse / hide toggles repaint at once
 
     render();
   }

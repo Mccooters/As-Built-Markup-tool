@@ -446,7 +446,7 @@ const Render = (() => {
     overlay.innerHTML = '';
     elMap.clear();
     for (const m of State.pageMarkups(State.S.page)) {
-      if (State.dayStateOf(m) === 'hidden') continue;   // future work days
+      if (State.isHidden(m)) continue;   // future work days, or a group switched off in the list
       const g = buildMarkupEl(m);
       overlay.appendChild(g);
       elMap.set(m.id, g);
@@ -460,7 +460,7 @@ const Render = (() => {
     for (const id of ids) {
       const m = State.getMarkup(id);
       const old = elMap.get(id);
-      if (!m || m.page !== State.S.page || State.dayStateOf(m) === 'hidden') {
+      if (!m || m.page !== State.S.page || State.isHidden(m)) {
         if (old) { old.remove(); elMap.delete(id); }
         continue;
       }

@@ -84,7 +84,7 @@ const Tools = (() => {
     const thr = 9 / S().zoom;
     let best = null, bd = thr;
     for (const m of State.pageMarkups(S().page)) {
-      if (!m.pts || !SNAP_TYPES.includes(m.type)) continue;
+      if (!m.pts || !SNAP_TYPES.includes(m.type) || State.isHidden(m)) continue;
       for (const q of [m.pts[0], m.pts[m.pts.length - 1]]) {
         if (q === skip) continue;
         const d = Geo.dist(p, q);
@@ -673,7 +673,7 @@ const Tools = (() => {
       if (!moved) { if (!additive) State.clearSelection(); return; }
       const box = { x: Math.min(p0.x, p.x), y: Math.min(p0.y, p.y), w: Math.abs(p.x - p0.x), h: Math.abs(p.y - p0.y) };
       const hits = State.pageMarkups(S().page)
-        .filter(m => Geo.rectsIntersect(box, Geo.markupBounds(m)))
+        .filter(m => !State.isHidden(m) && Geo.rectsIntersect(box, Geo.markupBounds(m)))
         .map(m => m.id);
       State.select(hits, additive);
     }, clearPreview, e, false);
