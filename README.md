@@ -185,6 +185,10 @@ Setup (one-time, needs a Microsoft 365 admin):
 
 The credential lives only in server env vars; drawing bytes go browser ← SharePoint via a short-lived pre-authenticated link Graph mints per download (with a streamed proxy fallback), so big sheets never squeeze through the function. Point `SP_DRAWINGS_URL` at the current job's drawings folder; when the next project starts, change that one variable.
 
+## Project details
+
+Every drawing carries its **project details**: project name, site / location, builder / client, contractor, on-site contact and phone, plus the AroFlo project number and job / task ref. Set them from **Project details** in the ≡ menu, the **Details** button on Home's open-drawing card, or by tapping the drawing's name in the toolbar. They save with the drawing (autosave, `.airmark`, team cloud) and are printed on daily reports, the materials and markup CSVs and delivery dockets; the project name is what Home, recents and the team list show. The contractor you enter is remembered on that device as the default for the next project.
+
 ## Files & saving
 
 - **Autosave** — markups are saved in the browser per drawing (keyed to the PDF's fingerprint) about a second after every change, and synced to the team cloud when sign-in is set up. Re-open the same PDF and you'll be offered a restore.

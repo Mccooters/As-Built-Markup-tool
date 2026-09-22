@@ -61,6 +61,10 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 }
 #zoomLabel { min-width: 44px; text-align: center; }
 .doc-name { color: var(--txt-dim); font-size: 12.5px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the drawing's name is the door to its project details */
+button.doc-name { background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 3px 9px; cursor: pointer; font: inherit; font-size: 12.5px; }
+button.doc-name:hover { background: var(--bg3); border-color: var(--edge); color: var(--txt); }
+button.doc-name:empty { display: none; }
 
 /* ---------- main layout ---------- */
 #main { display: flex; flex: 1 1 0; min-height: 0; }
@@ -290,6 +294,14 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 }
 #modalBox .form-row { margin-bottom: 10px; }
 #modalBox .form-row > label { display: block; font-size: 12px; color: var(--txt-dim); margin-bottom: 4px; }
+#modalBox input[type=tel] {
+  width: 100%; background: var(--bg3); color: var(--txt); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 6px 8px; font-size: 13px;
+}
+/* two fields side by side (project details) */
+#modalBox .form-row.two { display: flex; gap: 10px; }
+#modalBox .form-row.two > div { flex: 1 1 0; min-width: 0; }
+#modalBox .form-row.two > div > label { display: block; font-size: 12px; color: var(--txt-dim); margin-bottom: 4px; }
 #modalBox .muted { font-size: 12px; color: var(--txt-dim); line-height: 1.5; }
 #modalBox kbd {
   background: var(--bg3); border: 1px solid var(--edge); border-bottom-width: 2px;
@@ -423,7 +435,8 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 
   /* inputs: 16px stops iOS zoom-on-focus; bigger touch targets in the panel */
   #rightPanel input[type="text"], #rightPanel input[type="password"], #rightPanel select,
-  #modalBox input[type="text"], #modalBox input[type="password"], #modalBox select { font-size: 16px; }
+  #modalBox input[type="text"], #modalBox input[type="password"], #modalBox input[type="tel"], #modalBox select { font-size: 16px; }
+  #modalBox .form-row.two { flex-direction: column; gap: 10px; }
   .aro-count { width: 88px; padding: 9px 8px; font-size: 16px; }
   .aro-bar input[type="text"], .aro-bar select { padding: 8px; }
   .mini-btn { padding: 7px 11px; }

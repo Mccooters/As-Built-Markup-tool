@@ -213,7 +213,11 @@ const MarkupList = (() => {
 
     const fmt = State.S.unitFormat;
     const lines = [];
-    lines.push(['AirMark markup export', State.S.fileName, new Date().toLocaleString()].map(csvCell).join(','));
+    lines.push(['AirMark markup export', Project.displayName(), State.S.fileName, new Date().toLocaleString()].map(csvCell).join(','));
+    const pd = Project.details();
+    const who = [pd.site && 'SITE: ' + pd.site, pd.client && 'CLIENT: ' + pd.client, pd.contractor && 'CONTRACTOR: ' + pd.contractor,
+      (pd.contact || pd.phone) && 'CONTACT: ' + [pd.contact, pd.phone].filter(Boolean).join(' ')].filter(Boolean);
+    if (who.length) lines.push(who.map(csvCell).join(','));
     if (State.S.jobRef) lines.push(csvCell('JOB/TASK: ' + State.S.jobRef));
     if (dayFilter) lines.push(csvCell('SCOPE: work day ' + dayFilter.day + ' only'));
     if (P.note && P.note.trim()) lines.push(csvCell('NOTE: ' + P.note.trim()));

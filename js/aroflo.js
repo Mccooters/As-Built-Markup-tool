@@ -1822,7 +1822,10 @@ const Aro = (() => {
     if (!delivDraft.holderName) {
       delivDraft.holderName = (State.S.aroSite && State.S.aroSite.holder) || st.holder || (holdersW[0] || {}).name || '';
     }
-    if (delivDraft.site == null) delivDraft.site = String(State.S.jobRef || State.S.fileName || '').replace(/\.pdf$/i, '');
+    if (delivDraft.site == null) {
+      const pj = State.S.project || {};
+      delivDraft.site = String(pj.site || pj.name || State.S.jobRef || State.S.fileName || '').replace(/\.pdf$/i, '');
+    }
 
     const matches = q => {
       const toks = String(q).toLowerCase().split(/\s+/).filter(Boolean);

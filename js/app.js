@@ -309,8 +309,14 @@ const App = (() => {
     const S = State.S;
     const to = MarkupList.computeTakeoff({ day });
     const fmt = S.unitFormat;
+    const d = Project.details();
     const L = [];
     L.push(`DAILY REPORT — ${fmtDayLong(day)}${S.jobRef ? ' — ' + S.jobRef : ''}`);
+    L.push(`Project: ${Project.displayName()}`);
+    if (d.site) L.push(`Site: ${d.site}`);
+    if (d.client) L.push(`Client: ${d.client}`);
+    if (d.contractor) L.push(`Contractor: ${d.contractor}`);
+    if (d.contact || d.phone) L.push(`Site contact: ${[d.contact, d.phone].filter(Boolean).join(' · ')}`);
     L.push(`Drawing: ${S.fileName}`);
     L.push('');
     if (to.pipes.length) {
@@ -348,7 +354,7 @@ const App = (() => {
     const fmt = S.unitFormat;
     const cell = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
     const lines = [];
-    lines.push(['Daily materials', S.fileName, day, S.jobRef || ''].map(cell).join(','));
+    lines.push(['Daily materials', Project.displayName(), S.fileName, day, S.jobRef || '', Project.details().site || ''].map(cell).join(','));
     lines.push('Code,Description,Qty,Unit');
     for (const p of to.pipes) {
       const qty = p.totalFt == null ? p.count : (fmt === 'm' ? (p.totalFt / Units.FT_PER_M).toFixed(1) : p.totalFt.toFixed(1));
@@ -410,13 +416,72 @@ const App = (() => {
         if (wantPdf) {
           await Export.exportFlattenedPdf({
             dayMode: true, day,
-            banner: `DAILY REPORT — ${fmtDayLong(day)}${S.jobRef ? ' — ' + S.jobRef : ''}`,
+            banner: `DAILY REPORT — ${fmtDayLong(day)} — ${S.jobRef || Project.displayName()}`,
             fileSuffix: ` - daily report ${day}`,
           });
         }
       };
       $('rp-cancel').onclick = close;
     });
+  }
+
+  /* ================= project details ================= */
+
+  function projectDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first — project details are saved with it.', 'warn'); return; }
+    const S = State.S, d = Project.details();
+    const v = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    // the contractor is usually us — remembered per device as the default for the next project
+    let contractorDefault = '';
+    try { contractorDefault = localStorage.getItem('abmt:contractor') || ''; } catch (e) { /* ignore */ }
+    const contractor = d.contractor != null && d.contractor !== '' ? d.contractor : (S.project ? '' : contractorDefault);
+    const aroNo = (S.aroSite && S.aroSite.project) || '';
+    modal(`
+      <h3>Project details</h3>
+      <div class="form-row"><label>Project name</label>
+        <input type="text" id="pj-name" value="${v(d.name)}" placeholder="${v(String(S.fileName || '').replace(/\.pdf$/i, ''))}"></div>
+      <div class="form-row"><label>Site / location</label>
+        <input type="text" id="pj-site" value="${v(d.site)}" placeholder="Site name or address"></div>
+      <div class="form-row two">
+        <div><label>Builder / client</label><input type="text" id="pj-client" value="${v(d.client)}" placeholder="Who the work is for"></div>
+        <div><label>Contractor</label><input type="text" id="pj-contractor" value="${v(contractor)}" placeholder="Installing contractor"></div>
+      </div>
+      <div class="form-row two">
+        <div><label>On-site contact</label><input type="text" id="pj-contact" value="${v(d.contact)}" placeholder="Name"></div>
+        <div><label>Contact phone</label><input type="tel" id="pj-phone" value="${v(d.phone)}" placeholder="04…"></div>
+      </div>
+      <div class="form-row two">
+        <div><label>AroFlo project #</label><input type="text" id="pj-aro" value="${v(aroNo)}" placeholder="e.g. 10" inputmode="numeric"></div>
+        <div><label>AroFlo job / task ref</label><input type="text" id="pj-ref" value="${v(S.jobRef)}" placeholder="e.g. Task #48213"></div>
+      </div>
+      <p class="muted">Saved with the drawing — autosave, the .airmark file and the team cloud. Printed on daily reports, CSV schedules and delivery dockets; the project name is what Home, recents and the team list show.</p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="pj-cancel">Cancel</button>
+        <button class="mini-btn primary" id="pj-ok">Save</button>
+      </div>`, (box, close) => {
+      $('pj-name').focus();
+      $('pj-ok').onclick = () => {
+        const g = id => $(id).value.trim();
+        Project.setDetails({ name: g('pj-name'), site: g('pj-site'), client: g('pj-client'), contractor: g('pj-contractor'), contact: g('pj-contact'), phone: g('pj-phone') });
+        S.jobRef = g('pj-ref');
+        const aro = g('pj-aro');
+        if (aro || (S.aroSite && S.aroSite.project)) S.aroSite = Object.assign({}, S.aroSite || {}, { project: aro });
+        try { if (g('pj-contractor')) localStorage.setItem('abmt:contractor', g('pj-contractor')); } catch (e) { /* ignore */ }
+        State.touch();
+        State.emit('project');
+        close();
+        toast('Project details saved with the drawing.', 'ok', 3000);
+      };
+      $('pj-cancel').onclick = close;
+      box.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') $('pj-ok').click(); }));
+    });
+  }
+
+  function updateDocName() {
+    const el = $('docName');
+    if (!el) return;
+    el.textContent = State.S.pdf ? Project.displayName() : '';
+    el.title = 'Project details' + (State.S.fileName ? ' — ' + State.S.fileName : '');
   }
 
   function countGroupDialog() {
@@ -606,6 +671,7 @@ const App = (() => {
       console.error(err); toast('Sample failed: ' + err.message, 'err');
     });
     $('btnSaveProject').onclick = () => Project.saveProject();
+    $('docName').onclick = projectDialog;
     $('btnExportPdf').onclick = () => Export.exportFlattenedPdf();
     $('btnExportCsv').onclick = () => csvExportDialog();
 
@@ -765,9 +831,9 @@ const App = (() => {
       updateHint();
       Render.drawSelection();
     });
+    State.on('project', updateDocName);
     State.on('doc', () => {
-      $('docName').textContent = State.S.fileName;
-      $('docName').title = State.S.fileName;
+      updateDocName();
       Render.drawPage();
       updatePageUi(); updateScaleStatus(); updateZoomLabel(); updateHint();
       // per-project URL: Add to Home Screen from here gives this drawing its
@@ -811,7 +877,7 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog,
+    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog, projectDialog,
     showTab: (...a) => Props.showTab(...a),
   };
 })();

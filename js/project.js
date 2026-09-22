@@ -27,6 +27,7 @@ const Project = (() => {
       exportPrefs: S.exportPrefs,
       workDay: S.workDay, dayMode: S.dayMode, jobRef: S.jobRef, activeFitting: S.activeFitting,
       aroSite: S.aroSite,
+      project: S.project,
     };
     if (includePdf && S.pdfBytes && S.pdfBytes.length < EMBED_LIMIT) {
       data.pdfBase64 = bytesToBase64(S.pdfBytes);
@@ -45,6 +46,7 @@ const Project = (() => {
     if (data.exportPrefs) S.exportPrefs = data.exportPrefs;
     if (data.jobRef != null) S.jobRef = data.jobRef;
     if (data.aroSite) S.aroSite = data.aroSite;
+    S.project = data.project && typeof data.project === 'object' ? data.project : null;
     if (data.activeFitting) S.activeFitting = data.activeFitting;
     if (data.workDay) S.workDay = data.workDay;
     if (data.dayMode != null) S.dayMode = !!data.dayMode;
@@ -68,8 +70,23 @@ const Project = (() => {
     State.clearHistory();
     S.selection.clear();
     State.emit('markups'); State.emit('scale'); State.emit('countGroups'); State.emit('selection');
-    State.emit('day');
+    State.emit('day'); State.emit('project');
     Render.drawPage();
+  }
+
+  /* ---------- project details: name, site, builder / client, contractor, on-site contact ---------- */
+
+  const details = () => State.S.project || {};
+
+  /** What the job is called everywhere — the project name if set, else the file name without .pdf. */
+  const displayName = () => String(details().name || String(State.S.fileName || 'Drawing').replace(/\.pdf$/i, '')).trim() || 'Drawing';
+
+  function setDetails(patch) {
+    const cur = Object.assign({}, details());
+    for (const k of Object.keys(patch || {})) cur[k] = String(patch[k] == null ? '' : patch[k]).trim();
+    State.S.project = Object.values(cur).some(Boolean) ? cur : null;
+    State.emit('project');
+    State.touch();
   }
 
   function bytesToBase64(bytes) {
@@ -174,7 +191,7 @@ const Project = (() => {
     const k = key();
     if (!k) return;
     // offline copy first — IndexedDB has its own (much larger) quota
-    Store.saveProject(State.S.fingerprint, State.S.fileName, serialize(false));
+    Store.saveProject(State.S.fingerprint, displayName(), serialize(false));
     try {
       localStorage.setItem(k, JSON.stringify(serialize(false)));
       App.savedIndicator();
@@ -204,5 +221,5 @@ const Project = (() => {
     State.on('doc', onDocOpened);
   }
 
-  return { init, saveProject, openProjectFile, serialize, applyData, openFromStore };
+  return { init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails };
 })();

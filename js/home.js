@@ -108,10 +108,15 @@ const Home = (() => {
 
     const hasDoc = !!State.S.pdf;
     $('hsDrawing').hidden = !hasDoc;
+    $('hsProjectNav').hidden = !hasDoc;
     $('hsContinue').hidden = !hasDoc;
     if (hasDoc) {
-      $('hsContName').textContent = State.S.fileName || 'Drawing';
+      const d = Project.details();
+      $('hsContName').textContent = Project.displayName();
+      $('hsContName').title = State.S.fileName || '';
       const bits = [];
+      if (d.site) bits.push(d.site);
+      if (d.client) bits.push(d.client);
       if (State.S.pageCount > 1) bits.push(State.S.pageCount + ' pages');
       const n = State.S.markups.length;
       bits.push(n ? n + ' markup' + (n === 1 ? '' : 's') : 'no markups yet');
@@ -173,6 +178,7 @@ const Home = (() => {
   const NAV = {
     home: () => setMode('home'),
     drawing: () => { if (State.S.pdf) setMode('editor'); },
+    project: () => App.projectDialog(),
     drawings: openDrawings,
     stock: () => Aro.openPage(),
     deliveries: () => Aro.deliveriesDialog(),
@@ -206,6 +212,7 @@ const Home = (() => {
       b.addEventListener('click', () => { closeMenu(); const fn = NAV[b.dataset.nav]; if (fn) fn(); }));
     $('hsUser').addEventListener('click', () => { closeMenu(); accountTap(); });
     $('hsContBtn').addEventListener('click', () => setMode('editor'));
+    $('hsContDetails').addEventListener('click', () => App.projectDialog());
     $('hsUpdate').addEventListener('click', applyUpdate);
     window.addEventListener('online', () => { if (mode === 'home') checkForUpdate(true); });
     // editor: ≡ opens the sidebar as a drawer, the logo jumps straight Home
@@ -221,6 +228,7 @@ const Home = (() => {
     // a drawing opening (file, sample, recents, team cloud, SharePoint,
     // ?proj= deep link) always lands in the editor
     State.on('doc', () => { if (State.S.pdf) setMode('editor'); else refresh(); });
+    State.on('project', () => refresh());
     State.on('autosave', () => { if (mode === 'home' || menuOpen()) refresh(); });
     setMode(State.S.pdf ? 'editor' : 'home');
   }

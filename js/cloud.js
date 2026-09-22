@@ -180,7 +180,7 @@ const Cloud = (() => {
     try {
       const fp = State.S.fingerprint;
       const known = map[fp];
-      const name = String(State.S.jobRef || State.S.fileName || 'Drawing').trim().replace(/\.pdf$/i, '');
+      const name = String((State.S.project && State.S.project.name) || State.S.jobRef || State.S.fileName || 'Drawing').trim().replace(/\.pdf$/i, '');
       const aroNo = String((State.S.aroSite && State.S.aroSite.project) || '');
       const prep = await call('prepare', {
         fingerprint: fp, name, aroNo,

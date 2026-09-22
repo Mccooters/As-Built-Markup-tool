@@ -53,6 +53,10 @@
         <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/><path d="m8 17 3-4 2 2.5L15 13l2 4"/></svg>
         <span>Current drawing</span>
       </button>
+      <button class="hs-item" data-nav="project" id="hsProjectNav" hidden title="Project name, site, builder, contractor and on-site contact — saved with the drawing">
+        <svg viewBox="0 0 24 24"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/><path d="M4 12h16"/></svg>
+        <span>Project details</span>
+      </button>
       <button class="hs-item" data-nav="drawings" id="hsDrawingsNav" title="Site drawings — the project drawing register from SharePoint">
         <svg viewBox="0 0 24 24"><path d="M17.5 18a4.5 4.5 0 0 0 .4-9 6 6 0 0 0-11.6 1.6A4 4 0 0 0 6.5 18z"/><path d="M12 10v6m0 0-2.5-2.5M12 16l2.5-2.5"/></svg>
         <span>Drawings</span>
@@ -98,6 +102,7 @@
           <div class="hm-cont-name" id="hsContName"></div>
           <div class="hm-cont-sub" id="hsContSub"></div>
         </div>
+        <button class="hm-btn" id="hsContDetails" title="Project name, site, builder, contractor, on-site contact">Details</button>
         <button class="hm-btn primary" id="hsContBtn">Back to drawing</button>
       </section>
 
@@ -208,7 +213,7 @@
   <div class="tb-flex"></div>
 
   <div class="tb-group">
-    <span id="docName" class="doc-name" title=""></span>
+    <button id="docName" class="doc-name" type="button" title="Project details"></button>
   </div>
 
   <div class="tb-flex"></div>
