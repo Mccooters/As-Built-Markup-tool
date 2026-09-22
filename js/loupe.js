@@ -93,16 +93,18 @@ const Loupe = (() => {
 
   function draw() {
     if (!shown || !last || !State.S.pdf) return;
-    // the page's box measured on the canvas itself — the same box the tools map
-    // pointer positions with, and one no overflowing SVG content can inflate
-    const r = Viewer.pageRect();
-    if (!r.width || !r.height) return;
-    const px = last.x - r.left, py = last.y - r.top;         // fingertip in page CSS px
+    const S = State.S;
+    if (!S.pageW || !S.pageH || !S.zoom) return;
+    // ONE mapping: the page point under the finger, computed exactly as the
+    // tools compute the point they place. Both layers below are centred on it
+    // in page units, so whatever an engine reports for on-screen boxes, what
+    // the loupe shows under the reticle is what lands on the sheet.
+    const P = Viewer.toPage({ clientX: last.x, clientY: last.y });
 
-    // PDF raster: sample a (D/K)² CSS-px window around the finger from the
-    // rendered page canvas, mapping each axis on its own from the canvas's
-    // pixel size to its on-screen box (clipped by hand — partial source rects
-    // are not handled the same way in every engine)
+    // PDF raster: the page canvas always holds the whole page, so page pt →
+    // canvas px is simply its pixel size over the page size, per axis. Sample a
+    // (D/K)/zoom-pt window around P (clipped by hand — partial source rects are
+    // not handled the same way in every engine).
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const W = Math.round(D * dpr);
     if (cv.width !== W) { cv.width = W; cv.height = W; }
@@ -110,12 +112,13 @@ const Loupe = (() => {
     ctx.fillRect(0, 0, W, W);
     const src = Viewer.el.canvas;
     if (src.width && src.height) {
-      const sx = src.width / r.width, sy = src.height / r.height;   // canvas px per CSS px, per axis
-      const halfX = (R / K) * sx, halfY = (R / K) * sy;
-      const sx0 = px * sx - halfX, sy0 = py * sy - halfY;
-      const scaleX = W / (halfX * 2), scaleY = W / (halfY * 2);     // canvas px → loupe device px
+      const kx = src.width / S.pageW, ky = src.height / S.pageH;   // canvas px per page pt
+      const halfPt = (R / K) / S.zoom;                             // half the window, in page pt
+      const sw = 2 * halfPt * kx, sh = 2 * halfPt * ky;
+      const sx0 = (P.x - halfPt) * kx, sy0 = (P.y - halfPt) * ky;
+      const scaleX = W / sw, scaleY = W / sh;                      // canvas px → loupe device px
       const cx0 = Math.max(0, sx0), cy0 = Math.max(0, sy0);
-      const cx1 = Math.min(src.width, sx0 + halfX * 2), cy1 = Math.min(src.height, sy0 + halfY * 2);
+      const cx1 = Math.min(src.width, sx0 + sw), cy1 = Math.min(src.height, sy0 + sh);
       if (cx1 > cx0 && cy1 > cy0) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
@@ -124,8 +127,10 @@ const Loupe = (() => {
       }
     }
 
-    // markup + rubber-band layers: the <use> instances follow the originals live,
-    // so only the transform moves (page CSS px → loupe px, magnified about the finger)
+    // markup + rubber-band layers: the <use> instances follow the originals live;
+    // their user unit is the overlay's CSS px (page pt × zoom), so only the
+    // transform moves — page point P lands on the loupe's centre, magnified K×
+    const px = P.x * S.zoom, py = P.y * S.zoom;
     g.setAttribute('transform', `translate(${R - px * K} ${R - py * K}) scale(${K})`);
 
     // centred above the fingertip; flips below it near the top of the view

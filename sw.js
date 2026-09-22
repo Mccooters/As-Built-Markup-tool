@@ -1,9 +1,14 @@
 /* AirMark service worker — the app shell loads with no internet.
  *
- * Strategy: navigations are network-first (fresh deploys win when online)
- * with the cached shell as the offline fallback; static assets are
- * stale-while-revalidate (instant from cache, refreshed in the background).
- * AroFlo proxy calls are never cached — live data or nothing.
+ * Strategy: one release per load. Every shell file, index.html included, is
+ * served from the cache THIS worker installed with (network only on a miss),
+ * so a page never mixes scripts from two releases — a stale-while-revalidate
+ * shell could hand out a new index.html with old scripts, or the reverse, and
+ * break in ways no one can reproduce. A new release lands whole when the next
+ * worker installs (the browser checks sw.js on every navigation; the cache is
+ * named after the version so the switch is atomic), or straight away through
+ * Home's "tap to update" pill, which empties the cache and reloads.
+ * AroFlo / cloud calls and Home's ?live version probe are never cached.
  */
 'use strict';
 
@@ -47,29 +52,17 @@ self.addEventListener('fetch', e => {
   if (url.pathname.includes('/api/')) return;       // AroFlo proxy: live data or nothing
   if (url.searchParams.has('live')) return;         // Home's version probe must see the deployment, never this cache
 
-  if (req.mode === 'navigate') {
-    e.respondWith(
-      fetch(req)
-        .then(resp => {
-          const copy = resp.clone();
-          caches.open(CACHE).then(c => c.put('index.html', copy)).catch(() => {});
-          return resp;
-        })
-        .catch(() => caches.match('index.html'))
-    );
-    return;
-  }
-
+  // every navigation (/, /?proj=…) is the shell page
+  const key = req.mode === 'navigate' ? 'index.html' : req;
   e.respondWith(
-    caches.match(req).then(cached => {
-      const refresh = fetch(req).then(resp => {
+    caches.open(CACHE)
+      .then(c => c.match(key))
+      .then(cached => cached || fetch(req).then(resp => {
         if (resp && resp.ok && resp.type === 'basic') {
           const copy = resp.clone();
-          caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
+          caches.open(CACHE).then(c => c.put(key, copy)).catch(() => {});
         }
         return resp;
-      }).catch(() => cached);
-      return cached || refresh;
-    })
+      }))
   );
 });
