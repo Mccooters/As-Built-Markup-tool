@@ -116,6 +116,40 @@ button.doc-name:empty { display: none; }
   -webkit-touch-callout: none;   /* no iOS long-press menu over the drawing */
 }
 #pdfCanvas { display: block; }
+/* an earlier revision, tinted red, multiplied over the blue-tinted current sheet */
+#revCanvas { position: absolute; left: 0; top: 0; mix-blend-mode: multiply; pointer-events: none; transform-origin: 0 0; }
+#compareBar {
+  position: absolute; left: 50%; top: 10px; transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+  max-width: calc(100% - 24px); background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px;
+  padding: 6px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.cb-legend { white-space: nowrap; }
+.cb-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin: 0 4px 0 8px; }
+.cb-legend i:first-child { margin-left: 0; }
+.cb-op { display: flex; align-items: center; gap: 6px; color: var(--txt-dim); white-space: nowrap; }
+#compareBar input[type=range] { width: 90px; }
+#compareBar select { background: var(--bg3); color: var(--txt); border: 1px solid var(--edge); border-radius: 4px; padding: 3px 5px; font-size: 12px; max-width: 220px; }
+.cb-nudge { display: inline-flex; align-items: center; gap: 2px; }
+.cb-nudge button {
+  background: var(--bg3); border: 1px solid var(--edge); color: var(--txt); border-radius: 4px;
+  padding: 3px 7px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.cb-nudge button:hover { border-color: var(--accent); }
+body.comparing #btnCompare { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+/* "how does this PDF relate" and SharePoint revision prompts */
+.imp-opts { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 4px; }
+.imp-opt {
+  text-align: left; background: var(--bg3); border: 1px solid var(--edge); border-radius: 8px;
+  padding: 10px 12px; color: var(--txt); cursor: pointer; font: inherit; display: flex; flex-direction: column; gap: 3px;
+}
+.imp-opt:hover { border-color: var(--accent); }
+.imp-opt span { color: var(--txt-dim); font-size: 12.5px; line-height: 1.4; }
+/* revisions dialog */
+.rev-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--edge); font-size: 13px; }
+.rev-row.cur { border-top: 0; }
+.rev-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rev-main .muted { font-size: 12px; }
 #overlay, #previewLayer, #selLayer { position: absolute; inset: 0; overflow: visible; }
 #overlay { pointer-events: auto; touch-action: none; }
 #previewLayer, #selLayer { pointer-events: none; }
@@ -876,6 +910,11 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
   border-radius: 999px; padding: 4px 8px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
 }
 .pj-empty { margin: 6px 0 4px; color: var(--txt-dim); font-size: 13px; }
+/* several sheets on one project: a heading, then the drawings indented under it */
+.pj-projhead { display: flex; align-items: center; gap: 8px; padding: 9px 4px 3px; font-size: 12.5px; font-weight: 600; border-top: 1px solid var(--edge); }
+.pj-projhead .pj-count { margin-left: 0; }
+.pj-row.sub { border-top-color: rgba(255,255,255,.04); }
+.pj-row.sub .pj-main { padding-left: 18px; }
 .pj-note {
   margin: 4px 0 8px; padding: 8px 10px; border: 1px solid #8a6d1f; border-radius: 8px;
   background: rgba(232,177,60,.08); color: #e8b13c; font-size: 12.5px; line-height: 1.45;

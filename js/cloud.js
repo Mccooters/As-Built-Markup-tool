@@ -209,10 +209,22 @@ const Cloud = (() => {
     debTimer = setTimeout(() => push(), window.__cloudDebounce || 8000);
   }
 
-  function conflictPrompt(project) {
+  function conflictPrompt(project, superseded) {
     st.conflictWith = project || st.conflictWith;
+    if (superseded !== undefined) st.superseded = !!superseded;
     const p = st.conflictWith;
     if (!p) return;
+    if (st.superseded) {
+      // someone imported a newer revision of this drawing: this copy is the old sheet
+      App.toast(
+        `${p.updatedBy || 'Someone'} moved this drawing onto a newer revision (${ageOf(p.updatedAt) || 'recently'}). Load it to keep working on the current sheet, or keep this copy as its own project.`,
+        'warn', 0,
+        [
+          { label: 'Load newest revision', run: () => openCloud(p.id) },
+          { label: 'Keep mine as its own project', run: () => { st.conflictWith = null; st.superseded = false; delete map[State.S.fingerprint]; saveJson(MAP_KEY, map); push({ force: true }); } },
+        ]);
+      return;
+    }
     App.toast(
       `${p.updatedBy || 'Someone'} saved a newer version of this drawing (${ageOf(p.updatedAt) || 'recently'}). Loading theirs replaces what's on this screen.`,
       'warn', 0,
@@ -220,6 +232,33 @@ const Cloud = (() => {
         { label: 'Load newest', run: () => openCloud(p.id) },
         { label: 'Keep mine — overwrite', run: () => { st.conflictWith = null; push({ force: true }); } },
       ]);
+  }
+
+  // A new revision replaced the drawing: the project keeps its registry row,
+  // and the next save tells the server which fingerprint it moved from.
+  function rekey(oldFp, newFp) {
+    if (!oldFp || !newFp || oldFp === newFp) return;
+    const known = map[oldFp];
+    if (known) {
+      map[newFp] = { ...known, prevFp: known.prevFp || oldFp };
+      delete map[oldFp];
+      saveJson(MAP_KEY, map);
+    }
+    st.conflictWith = null; st.superseded = false;
+    chipSet('idle');
+    schedulePush();
+  }
+
+  // An earlier revision's PDF, from the team cloud into the device store.
+  async function fetchRevision(fp) {
+    const known = map[State.S.fingerprint];
+    if (!st.token || !known) throw new Error('not signed in, or this drawing isn’t in the team cloud yet');
+    const r = await call('revurl', { id: known.id, fp });
+    const resp = await fetch(r.url, { signal: AbortSignal.timeout(300000) });
+    if (!resp.ok) throw new Error('that revision hasn’t been uploaded from the device that has it (HTTP ' + resp.status + ')');
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    await Store.savePdf(fp, bytes);
+    return bytes;
   }
 
   async function push(opts = {}) {
@@ -237,13 +276,20 @@ const Cloud = (() => {
       // must never undo a list change made elsewhere
       const status = Project.status();
       const sendStatus = !known || known.status !== status;
+      // earlier revisions this device holds that the cloud hasn't been sent yet
+      const sentRevs = (known && known.revs) || [];
+      const revFps = (State.S.revisions || []).map(r => r.fp).filter(f => f && !sentRevs.includes(f));
+      const fileName = String(State.S.fileName || '').slice(0, 200);
       const prep = await call('prepare', {
-        fingerprint: fp, name, aroNo,
+        fingerprint: fp, name, aroNo, fileName,
         version: known ? known.version : 0,
         force: !!opts.force,
         status: sendStatus ? status : undefined,
+        id: known ? known.id : undefined,
+        prevFingerprint: known && known.prevFp ? known.prevFp : undefined,
+        revFingerprints: revFps.length ? revFps : undefined,
       });
-      if (prep.conflict) { conflictPrompt(prep.project); chipSet('conflict'); return; }
+      if (prep.conflict) { conflictPrompt(prep.project, !!prep.superseded); chipSet('conflict'); return; }
 
       const body = JSON.stringify(Project.serialize(false));
       let up = await fetch(prep.uploadData, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(120000) });
@@ -255,13 +301,22 @@ const Cloud = (() => {
         if (up.ok) { pdfUploaded = true; pdfSize = State.S.pdfBytes.length; }
       }
 
-      const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, pdfUploaded, pdfSize, status: sendStatus ? status : undefined });
-      if (com.conflict) { conflictPrompt(com.project); chipSet('conflict'); return; }
-      map[fp] = { id: prep.id, version: prep.nextVersion, status: sendStatus ? status : known.status };
+      const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, fileName, pdfUploaded, pdfSize, pdfPath: prep.pdfPath || '', status: sendStatus ? status : undefined });
+      if (com.conflict) { conflictPrompt(com.project, false); chipSet('conflict'); return; }
+      map[fp] = { id: prep.id, version: prep.nextVersion, status: sendStatus ? status : known.status, revs: sentRevs.slice() };
       saveJson(MAP_KEY, map);
-      st.conflictWith = null;
+      st.conflictWith = null; st.superseded = false;
       chipSet('synced');
       if (com.project) upsertRow(com.project);
+      // earlier revisions go up after the save (best-effort — a miss retries next save)
+      for (const [rf, url] of Object.entries(prep.uploadRevs || {})) {
+        try {
+          const bytes = await Store.getPdf(rf);
+          if (!bytes) continue;
+          const r = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: bytes, signal: AbortSignal.timeout(600000) });
+          if (r.ok || r.status === 409) { map[fp].revs.push(rf); saveJson(MAP_KEY, map); }
+        } catch (e) { /* next save tries again */ }
+      }
     } catch (e) {
       chipSet(e.offline || navigator.onLine === false ? 'offline' : 'error', e.message);
     } finally {
@@ -375,5 +430,5 @@ const Cloud = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { signIn, signOut, openCloud, push, refreshList, refreshListIfStale, setStatus, setTeamScope, _state: st };
+  return { signIn, signOut, openCloud, push, refreshList, refreshListIfStale, setStatus, rekey, fetchRevision, setTeamScope, _state: st };
 })();

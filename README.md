@@ -162,7 +162,7 @@ With a small free backend attached, AirMark stops being single-device: employees
 Setup (about 10 minutes, once):
 
 1. Create a free project at [supabase.com](https://supabase.com) (any name, nearest region).
-2. In the Supabase **SQL editor**, run the snippet from the top of [`api/cloud.js`](api/cloud.js) — it creates the `am_projects` registry table (locked down) and a **private** `airmark` storage bucket. **Existing installs** set up before project statuses existed: run the one-line `alter table am_projects add column … status …` from the same snippet — until then statuses stay on each device and Home says so.
+2. In the Supabase **SQL editor**, run the snippet from the top of [`api/cloud.js`](api/cloud.js) — it creates the `am_projects` registry table (locked down) and a **private** `airmark` storage bucket. **Existing installs** set up before project statuses existed: run the two `alter table am_projects add column …` lines from the same snippet (the `status` and `file_name` columns) — until then statuses stay on each device and Home says so.
 3. In Vercel → Project → Settings → Environment Variables, add:
    - `SUPABASE_URL` — the project URL (Supabase → Project Settings → API)
    - `SUPABASE_SERVICE_KEY` — the `service_role` key from the same page (server-side only; the browser never sees it)
@@ -204,6 +204,14 @@ Home's **Projects** card is one list of every job this device or the team cloud 
 
 Every drawing carries its **project details**: **status** (In progress / DLP / Completed), project name, site / location, builder / client, contractor, on-site contact and phone, plus the AroFlo project number, job / task ref and the job's **stock list** (the AroFlo holder its stock is kept in — see [one stock list per project](#live-site-stock-aroflo)). Set them from **Project details** in the ≡ menu, the **Details** button on Home's open-drawing card, or by tapping the drawing's name in the toolbar. They save with the drawing (autosave, `.airmark`, team cloud) and are printed on daily reports, the materials and markup CSVs and delivery dockets; the project name is what Home, recents and the team list show. The contractor you enter is remembered on that device as the default for the next project.
 
+## Revisions & compare
+
+Drawings get revised, and the work has to move with them. Open the updated PDF while the job is open — toolbar **Open**, drag-drop, or **Compare → Import new revision…** — and pick **New revision of this drawing**: the new sheet goes underneath and every markup, the project details, zones, status and stock link stay put. The sheet it replaced is kept as **Rev 1**, **Rev 2**… (Project details → *Drawing revisions*, or the Compare button). A revision printed at a different sheet size gets an offer to **scale the markups** onto it. The team cloud entry follows the new revision — still one project, one row — and the earlier sheets are uploaded so any device can compare; a device still on the old sheet is told a newer revision was imported the next time it saves, and can load it or keep its copy as a project of its own. The SharePoint register does the same thing: tapping a sheet flagged **↻ updated** offers to import it as a new revision whenever the earlier one carries work.
+
+**Compare** (toolbar) overlays an earlier revision under the current sheet, Bluebeam-style: the current linework is tinted **blue**, the old revision **red**, and wherever they agree the lines go **black** — so additions show blue, removals red, and unchanged work fades into the background. The bar at the top picks which revision to overlay, sets its opacity, and nudges the old sheet a point at a time (Shift for ten) if the two don't sit exactly on top of each other. Markups stay on top throughout; hide groups from the markups list if they get in the way. **Done** returns to the normal view.
+
+**Several sheets, one project.** Pick **Another drawing for this project** when opening a PDF and the new sheet gets the same project details, status and stock list; Home lists drawings that share a project name together under one heading.
+
 ## Files & saving
 
 - **Autosave** — markups are saved in the browser per drawing (keyed to the PDF's fingerprint) about a second after every change, and synced to the team cloud when sign-in is set up. Re-open the same PDF and you'll be offered a restore.
@@ -228,6 +236,7 @@ js/symbols.js       compressed-air symbol library, stamps, pipe presets
 js/state.js         app state, events, undo/redo
 js/viewer.js        PDF.js viewing: pages, zoom, pan, thumbnails
 js/render.js        SVG rendering of every markup type
+js/compare.js       revision overlay: old sheet in red under the current one in blue
 js/tools.js         pointer state machine for all tools
 js/props.js         right panel: properties / symbols / takeoff
 js/markuplist.js    markups list + takeoff computation + CSV

@@ -83,13 +83,17 @@ const Home = (() => {
     const cloud = cl && cl.token ? cl.projects || [] : [];
     const byFp = new Map();
     for (const r of localRows) {
-      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, onDevice: true });
+      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, pname: r.pname || '', fileName: r.fileName || '', status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, onDevice: true });
     }
     for (const p of cloud) {
       const fp = p.fingerprint || ('cloud:' + p.id);
       const row = byFp.get(fp) || { fp, onDevice: false };
       row.id = p.id; row.inCloud = true;
       if (!row.name) row.name = p.name;
+      // the registry name is the project name unless it is just the file's
+      const fromFile = p.fileName && p.name === String(p.fileName).replace(/\.pdf$/i, '');
+      if (!row.pname && !fromFile) row.pname = p.name || '';
+      if (!row.fileName) row.fileName = p.fileName || '';
       if (!row.aroNo) row.aroNo = p.aroNo;
       row.updatedBy = p.updatedBy; row.updatedAt = p.updatedAt;
       if (p.status) row.status = p.status;
@@ -100,6 +104,7 @@ const Home = (() => {
       const d = Project.details();
       row.open = true; row.onDevice = true;
       row.name = Project.displayName(); row.status = Project.status();
+      row.pname = d.name || ''; row.fileName = State.S.fileName || '';
       row.site = d.site || ''; row.client = d.client || '';
       row.aroNo = (State.S.aroSite && State.S.aroSite.project) || row.aroNo || '';
       byFp.set(State.S.fingerprint, row);
@@ -113,7 +118,28 @@ const Home = (() => {
     return rows;
   }
 
-  function rowHtml(r) {
+  // drawings that share a project name sit together under one heading
+  function rowsHtml(list) {
+    const key = r => (r.pname || '').trim().toLowerCase();
+    const byP = new Map();
+    for (const r of list) { const k = key(r); if (!byP.has(k)) byP.set(k, []); byP.get(k).push(r); }
+    const done = new Set();
+    let h = '';
+    for (const r of list) {
+      const k = key(r);
+      const grp = byP.get(k);
+      if (k && grp.length > 1) {
+        if (done.has(k)) continue;
+        done.add(k);
+        h += `<div class="pj-projhead"><span class="pj-projname">${esc(r.pname)}</span><span class="pj-count">${grp.length} drawings</span></div>`;
+        h += grp.map(x => rowHtml(x, true)).join('');
+      } else h += rowHtml(r, false);
+    }
+    return h;
+  }
+
+  function rowHtml(r, inProject) {
+    const shown = inProject ? (String(r.fileName || '').replace(/\.pdf$/i, '') || r.name) : r.name;
     const meta = [];
     if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
     if (r.aroNo) meta.push('#' + esc(r.aroNo));
@@ -123,9 +149,9 @@ const Home = (() => {
       ? '<span class="pj-where dev" title="Stored on this device — opens offline">on this device</span>'
       : '<span class="pj-where cloud" title="In the team cloud — tap to download it to this device">☁ team cloud</span>');
     const opts = ['active', 'dlp', 'done'].map(s => `<option value="${s}"${r.status === s ? ' selected' : ''}>${STATUS_SHORT[s]}</option>`).join('');
-    return `<div class="pj-row${r.open ? ' open' : ''}" data-fp="${esc(r.fp)}">
-      <button type="button" class="pj-main${r.id ? ' cloud-proj' : ''}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="${esc(r.name)}">
-        <span class="pj-name">${esc(r.name || 'Drawing')}${r.open ? ' <span class="pj-openchip">open now</span>' : ''}</span>
+    return `<div class="pj-row${r.open ? ' open' : ''}${inProject ? ' sub' : ''}" data-fp="${esc(r.fp)}">
+      <button type="button" class="pj-main${r.id ? ' cloud-proj' : ''}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="${esc(r.name)}${r.fileName ? ' — ' + esc(r.fileName) : ''}">
+        <span class="pj-name">${esc(shown || 'Drawing')}${r.open ? ' <span class="pj-openchip">open now</span>' : ''}</span>
         <span class="pj-meta">${meta.join(' · ')}</span>
       </button>
       <select class="pj-sel ${r.status}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="Project status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${opts}</select>
@@ -139,7 +165,7 @@ const Home = (() => {
         <span class="pj-dot ${key}"></span><span class="pj-sectitle">${STATUS_LABEL[key]}</span>
         <span class="pj-count">${list.length}</span><span class="pj-caret">${open ? '▾' : '▸'}</span>
       </button>
-      ${open ? (list.length ? list.map(rowHtml).join('') : '<p class="pj-empty">Nothing in progress — open a drawing and it lands here.</p>') : ''}
+      ${open ? (list.length ? rowsHtml(list) : '<p class="pj-empty">Nothing in progress — open a drawing and it lands here.</p>') : ''}
     </section>`;
   }
 
@@ -300,6 +326,8 @@ const Home = (() => {
       if (proj) bits.push('AroFlo project ' + proj);
       const holder = State.S.aroSite && State.S.aroSite.holder;
       if (holder) bits.push('Stock: ' + holder);
+      const nrev = (State.S.revisions || []).length;
+      if (nrev) bits.push(nrev + ' earlier revision' + (nrev === 1 ? '' : 's'));
       $('hsContSub').textContent = bits.join(' · ');
       const stNow = Project.status();
       $('hsContStatus').textContent = stNow === 'active' ? '' : ' · ' + STATUS_SHORT[stNow];

@@ -28,6 +28,7 @@ const Project = (() => {
       workDay: S.workDay, dayMode: S.dayMode, jobRef: S.jobRef, activeFitting: S.activeFitting,
       aroSite: S.aroSite,
       project: S.project,
+      revisions: S.revisions,
     };
     if (includePdf && S.pdfBytes && S.pdfBytes.length < EMBED_LIMIT) {
       data.pdfBase64 = bytesToBase64(S.pdfBytes);
@@ -47,6 +48,7 @@ const Project = (() => {
     if (data.jobRef != null) S.jobRef = data.jobRef;
     if (data.aroSite) S.aroSite = data.aroSite;
     S.project = data.project && typeof data.project === 'object' ? data.project : null;
+    S.revisions = Array.isArray(data.revisions) ? data.revisions.filter(r => r && r.fp) : [];
     if (data.activeFitting) S.activeFitting = data.activeFitting;
     if (data.workDay) S.workDay = data.workDay;
     if (data.dayMode != null) S.dayMode = !!data.dayMode;
@@ -96,6 +98,115 @@ const Project = (() => {
   const status = () => normStatus(details().status);
   const statusLabel = s => STATUSES[normStatus(s)];
   function setStatus(s) { setDetails({ status: normStatus(s) }); }
+
+  /* ---------- revisions: an updated sheet replaces the PDF, the work stays ---------- */
+
+  let revisionImport = false;   // while a new revision opens: apply the carried data, skip the "different PDF" warning
+
+  /**
+   * Replace the open drawing's PDF with a newer revision. Markups, details,
+   * zones, stock link and status carry over; the sheet being replaced is kept
+   * as Rev N (its PDF stays in the device store, and goes up to the team cloud
+   * on the next save) so Compare can overlay it. The project now lives under
+   * the new drawing's fingerprint: device record, autosave, view prefs and the
+   * cloud registry row all move with it.
+   */
+  async function importRevision(bytes, fileName) {
+    const S = State.S;
+    if (!S.pdf) { await Viewer.openPdf(bytes, fileName); return; }
+    const oldFp = S.fingerprint;
+    const old = {
+      fp: oldFp, fileName: S.fileName, label: 'Rev ' + ((S.revisions || []).length + 1),
+      when: new Date().toISOString(), pages: S.pageCount, w: S.pageW, h: S.pageH,
+    };
+    if (S.pdfBytes) await Store.savePdf(oldFp, S.pdfBytes);   // the sheet Compare will overlay
+    const data = serialize(false);
+    data.revisions = [...(S.revisions || []), old];
+    let oldView = null;
+    try { oldView = localStorage.getItem('abmt:view:' + oldFp); } catch (e) { /* ignore */ }
+    pendingData = data;
+    revisionImport = true;
+    try {
+      await Viewer.openPdf(bytes, fileName, {
+        // re-key before 'doc' fires: the cloud push it schedules must already
+        // know this is the same project under a new fingerprint
+        beforeEmit: fp => {
+          if (fp === oldFp) return;
+          if (typeof Cloud !== 'undefined' && Cloud.rekey) Cloud.rekey(oldFp, fp);
+          if (typeof Drawings !== 'undefined' && Drawings.rekey) Drawings.rekey(oldFp, fp);
+        },
+      });
+    } finally { revisionImport = false; pendingData = null; }
+    const newFp = S.fingerprint;
+    if (newFp === oldFp) {
+      S.revisions = (S.revisions || []).filter(r => r.fp !== oldFp);
+      App.toast('That is the same PDF as the current revision — nothing changed.', 'info', 5000);
+      return;
+    }
+    try {
+      localStorage.removeItem('abmt:doc:' + oldFp);
+      if (oldView) localStorage.setItem('abmt:view:' + newFp, oldView);
+    } catch (e) { /* ignore */ }
+    await Store.deleteProject(oldFp);
+    autosave();
+    State.emit('project');
+    const n = S.markups.length;
+    App.toast(`${old.label} kept — ${n} markup${n === 1 ? '' : 's'} carried onto ${String(fileName).replace(/\.pdf$/i, '')}. Compare overlays the old sheet.`, 'good', 7000);
+    // a different sheet size: the markups were drawn in the old sheet's units
+    const sx = old.w ? S.pageW / old.w : 1, sy = old.h ? S.pageH / old.h : 1;
+    if (Math.abs(sx - 1) > 0.005 || Math.abs(sy - 1) > 0.005) {
+      App.toast(`The new revision is a different sheet size (${Math.round(sx * 100)}% wide, ${Math.round(sy * 100)}% high). Scale the markups to match?`, 'warn', 0, [
+        { label: 'Scale markups', run: () => scaleMarkups(sx, sy) },
+        { label: 'Leave them', run: () => {} },
+      ]);
+    }
+  }
+
+  /** Stretch every markup (and the calibration) by sx / sy — for a revision printed at another sheet size. */
+  function scaleMarkups(sx, sy) {
+    const S = State.S;
+    State.pushUndo();
+    const sc = p => { p.x *= sx; p.y *= sy; };
+    for (const m of S.markups) {
+      if (Array.isArray(m.pts)) m.pts.forEach(sc);
+      if (m.x != null) m.x *= sx;
+      if (m.y != null) m.y *= sy;
+      if (m.w != null) m.w *= sx;
+      if (m.h != null) m.h *= sy;
+      if (m.anchor) sc(m.anchor);
+    }
+    // the same real-world foot now spans f times as many page units
+    const f = (sx + sy) / 2;
+    if (S.defaultScale) S.defaultScale = { ftPerUnit: S.defaultScale.ftPerUnit / f };
+    for (const k of Object.keys(S.pageScales)) S.pageScales[k] = { ftPerUnit: S.pageScales[k].ftPerUnit / f };
+    State.emit('markups'); State.emit('scale');
+    State.touch();
+    App.toast('Markups scaled onto the new sheet.', 'ok', 3000);
+  }
+
+  function removeRevision(fp) {
+    State.S.revisions = (State.S.revisions || []).filter(r => r.fp !== fp);
+    State.emit('project');
+    State.touch();
+  }
+
+  /* ---------- another drawing for the same project: the details come along ---------- */
+
+  const detailsSnapshot = () => ({
+    project: State.S.project ? { ...State.S.project } : null,
+    aroSite: State.S.aroSite ? { ...State.S.aroSite } : null,
+    jobRef: State.S.jobRef || '',
+  });
+
+  function adoptDetails(snap) {
+    if (!snap) return;
+    const S = State.S;
+    if (snap.project) S.project = { ...snap.project };
+    if (snap.aroSite) S.aroSite = { ...snap.aroSite };
+    if (snap.jobRef) S.jobRef = snap.jobRef;
+    State.emit('project');
+    State.touch();
+  }
 
   function bytesToBase64(bytes) {
     let bin = '';
@@ -167,7 +278,7 @@ const Project = (() => {
     if (pendingData) {
       const d = pendingData;
       pendingData = null;
-      if (d.fingerprint && d.fingerprint !== S.fingerprint) {
+      if (!revisionImport && d.fingerprint && d.fingerprint !== S.fingerprint) {
         App.toast('Heads up — this PDF differs from the one the project was made on. Markups loaded anyway; check alignment.', 'warn', 9000);
       }
       applyData(d);
@@ -229,5 +340,9 @@ const Project = (() => {
     State.on('doc', onDocOpened);
   }
 
-  return { init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails, status, statusLabel, normStatus, setStatus };
+  return {
+    init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails,
+    status, statusLabel, normStatus, setStatus,
+    importRevision, scaleMarkups, removeRevision, detailsSnapshot, adoptDetails,
+  };
 })();

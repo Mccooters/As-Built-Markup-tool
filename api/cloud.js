@@ -38,10 +38,12 @@
  *     pdf_size bigint not null default 0,
  *     updated_by text not null default '',
  *     updated_at timestamptz not null default now(),
- *     status text not null default 'active'   -- active | dlp | done — groups the project list
+ *     status text not null default 'active',  -- active | dlp | done — groups the project list
+ *     file_name text not null default ''      -- the drawing's file name (projects with several sheets)
  *   );
- *   -- existing installs (table created before statuses existed) — one line:
+ *   -- existing installs (table created before statuses / file names existed) — two lines:
  *   alter table am_projects add column if not exists status text not null default 'active';
+ *   alter table am_projects add column if not exists file_name text not null default '';
  *   alter table am_projects enable row level security;  -- no policies: only the service key reads it
  *   insert into storage.buckets (id, name, public) values ('airmark', 'airmark', false);
  */
@@ -122,6 +124,7 @@ function slimRow(r) {
     updatedBy: str(r.updated_by), updatedAt: str(r.updated_at),
     pdfSize: Number(r.pdf_size) || 0, hasPdf: !!str(r.pdf_path),
     status: normStatus(r.status),
+    fileName: str(r.file_name),
   };
 }
 
@@ -131,18 +134,19 @@ function slimRow(r) {
 // keeps working: statuses then stay on each device and the client is told.
 const STATUSES = ['active', 'dlp', 'done'];
 const normStatus = s => (STATUSES.includes(str(s)) ? str(s) : 'active');
-let statusCol = null; // probed once per warm instance
-async function hasStatusCol() {
-  if (statusCol !== null) return statusCol;
+const colKnown = {};   // column → true/false, probed once per warm instance
+async function hasCol(col) {
+  if (colKnown[col] !== undefined) return colKnown[col];
   try {
-    await sb('GET', rowsPath('?select=status&limit=1'));
-    statusCol = true;
+    await sb('GET', rowsPath('?select=' + col + '&limit=1'));
+    colKnown[col] = true;
   } catch (e) {
-    if (!/status/i.test(str(e && e.message))) throw e;   // unrelated failure — no verdict cached
-    statusCol = false;
+    if (!new RegExp(col, 'i').test(str(e && e.message))) throw e;   // unrelated failure — no verdict cached
+    colKnown[col] = false;
   }
-  return statusCol;
+  return colKnown[col];
 }
+const hasStatusCol = () => hasCol('status');
 
 async function signedUpload(path) {
   const r = await sb('POST', `/storage/v1/object/upload/sign/${BUCKET}/${path}`, {});
@@ -384,11 +388,31 @@ const ACTIONS = {
     const baseVersion = Number(body && body.version);
     const force = !!(body && body.force);
     const status = body && body.status != null ? normStatus(body.status) : null;
+    const fileName = str(body && body.fileName).trim().slice(0, 200);
+    const knownId = str(body && body.id).trim();                        // the row this device last synced with
+    const prevFingerprint = str(body && body.prevFingerprint).trim();   // set when a new revision replaced the PDF
 
     let row = (await sb('GET', rowsPath('?fingerprint=eq.' + encodeURIComponent(fingerprint) + '&limit=1')))[0];
+    let rekeyed = false;
+    if (!row && UUID.test(knownId)) {
+      // the device knows a row, but the drawing's fingerprint has changed
+      const byId = (await sb('GET', rowsPath('?id=eq.' + knownId + '&limit=1')))[0];
+      if (byId) {
+        if (prevFingerprint && str(byId.fingerprint) === prevFingerprint) {
+          // a new revision of the drawing: the project keeps its row, the row follows the new PDF
+          const patched = await sb('PATCH', rowsPath('?id=eq.' + knownId), { fingerprint, pdf_path: '', pdf_size: 0 }, { Prefer: 'return=representation' });
+          row = (Array.isArray(patched) && patched[0]) || null;
+          rekeyed = !!row;
+        } else if (!force) {
+          // someone else moved the project onto a newer revision — this copy is the old sheet
+          return { ok: true, conflict: true, superseded: true, project: slimRow(byId) };
+        }
+      }
+    }
     if (!row) {
       const fields = { name, aro_no: aroNo, fingerprint, updated_by: auth };
       if (status && await hasStatusCol()) fields.status = status;
+      if (fileName && await hasCol('file_name')) fields.file_name = fileName;
       const ins = await sb('POST', rowsPath(''), fields, { Prefer: 'return=representation' });
       row = Array.isArray(ins) ? ins[0] : ins;
     }
@@ -400,13 +424,21 @@ const ACTIONS = {
     const nextVersion = (Number(row.version) || 0) + 1;
     const dataPath = `projects/${row.id}/data-v${nextVersion}.json`;
     const needPdf = !str(row.pdf_path);
+    // a revision's PDF gets its own object — a signed upload can't overwrite the first one
+    const pdfPath = needPdf ? `projects/${row.id}/drawing${rekeyed ? '-' + fingerprint : ''}.pdf` : '';
+    // earlier revisions this device holds and the cloud doesn't yet: one signed upload each
+    const uploadRevs = {};
+    const revFps = Array.isArray(body && body.revFingerprints) ? body.revFingerprints.map(f => str(f)).filter(f => FP.test(f)).slice(0, 12) : [];
+    for (const rf of revFps) uploadRevs[rf] = await signedUpload(`projects/${row.id}/rev-${rf}.pdf`);
     return {
       ok: true,
       id: str(row.id),
       nextVersion,
       needPdf,
+      pdfPath,
       uploadData: await signedUpload(dataPath),
-      uploadPdf: needPdf ? await signedUpload(`projects/${row.id}/drawing.pdf`) : null,
+      uploadPdf: needPdf ? await signedUpload(pdfPath) : null,
+      uploadRevs,
     };
   },
 
@@ -431,8 +463,11 @@ const ACTIONS = {
     // the client sends status only when that device changed it, so a stale
     // copy never undoes a list change made elsewhere
     if (body && body.status != null && await hasStatusCol()) patch.status = normStatus(body.status);
+    const fileName = str(body && body.fileName).trim().slice(0, 200);
+    if (fileName && await hasCol('file_name')) patch.file_name = fileName;
     if (body && body.pdfUploaded) {
-      patch.pdf_path = `projects/${id}/drawing.pdf`;
+      const pp = str(body.pdfPath);
+      patch.pdf_path = new RegExp('^projects/' + id + '/drawing(-[A-Za-z0-9_-]{4,80})?\\.pdf$').test(pp) ? pp : `projects/${id}/drawing.pdf`;
       const sz = Number(body.pdfSize);
       if (Number.isFinite(sz) && sz > 0) patch.pdf_size = Math.round(sz);
     }
@@ -442,6 +477,14 @@ const ACTIONS = {
       return { ok: true, conflict: true, project: cur ? slimRow(cur) : null };
     }
     return { ok: true, project: slimRow(rows[0]) };
+  },
+
+  // A signed download for one earlier revision of a project's drawing.
+  async revurl(q, body) {
+    const id = str(body && body.id).trim();
+    const fp = str(body && body.fp).trim();
+    if (!UUID.test(id) || !FP.test(fp)) return { ok: false, httpStatus: 400, statusmessage: 'Bad revision reference' };
+    return { ok: true, url: await signedDownload(`projects/${id}/rev-${fp}.pdf`, 600) };
   },
 
   // Move a project between In progress / DLP / Completed from the list —
@@ -498,8 +541,8 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
-const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, open: 1, teamscope: 1, spfile: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
+const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, open: 1, teamscope: 1, spfile: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
 

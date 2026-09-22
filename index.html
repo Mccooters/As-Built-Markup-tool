@@ -241,6 +241,10 @@
       <svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>
       <span>Report</span>
     </button>
+    <button id="btnCompare" class="tb-btn" title="Compare with an earlier revision — the old sheet overlaid in red under the current one in blue; or import a new revision">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="13" height="13" rx="1.5"/><rect x="8" y="8" width="13" height="13" rx="1.5"/></svg>
+      <span>Compare</span>
+    </button>
   </div>
 
   <div class="tb-sep"></div>
@@ -361,6 +365,7 @@
     <div id="viewport">
       <div id="pageWrap" class="hidden">
         <canvas id="pdfCanvas"></canvas>
+        <canvas id="revCanvas" hidden></canvas>
         <svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
         <svg id="previewLayer" xmlns="http://www.w3.org/2000/svg"></svg>
         <svg id="selLayer" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -374,6 +379,8 @@
         <p>or use <b>Open</b> in the toolbar — or go <b>Home</b> for your projects and site drawings</p>
       </div>
     </div>
+    <!-- revision overlay controls (compare.js) -->
+    <div id="compareBar" hidden></div>
   </div>
 
   <!-- Right panel -->
@@ -485,6 +492,7 @@
 <script src="js/store.js"></script>
 <script src="js/viewer.js"></script>
 <script src="js/render.js"></script>
+<script src="js/compare.js"></script>
 <script src="js/loupe.js"></script>
 <script src="js/tools.js"></script>
 <script src="js/props.js"></script>

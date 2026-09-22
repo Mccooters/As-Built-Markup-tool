@@ -61,6 +61,23 @@ const Store = (() => {
     } catch (e) { return null; }
   }
 
+  /** Just a PDF's bytes (earlier revisions keep theirs here without a project record). */
+  async function getPdf(fingerprint) {
+    try {
+      const db = await open();
+      const pdf = await reqP(db.transaction('pdfs').objectStore('pdfs').get(fingerprint));
+      return pdf ? pdf.bytes : null;
+    } catch (e) { return null; }
+  }
+
+  /** Drop a project record (a superseded revision) — its PDF stays for Compare. */
+  async function deleteProject(fingerprint) {
+    try {
+      const db = await open();
+      await reqP(db.transaction('projects', 'readwrite').objectStore('projects').delete(fingerprint));
+    } catch (e) { /* ignore */ }
+  }
+
   /** Every project on the device, newest first, with what the list shows about it. */
   async function list() {
     try {
@@ -73,6 +90,7 @@ const Store = (() => {
             fingerprint: r.fingerprint, name: r.name, savedAt: r.savedAt,
             status: pj.status || 'active', site: pj.site || '', client: pj.client || '',
             aroNo: aro.project || '', jobRef: d.jobRef || '',
+            pname: pj.name || '', fileName: d.fileName || '',
             markups: Array.isArray(d.markups) ? d.markups.length : 0,
           };
         })
@@ -98,5 +116,5 @@ const Store = (() => {
     }
   }
 
-  return { savePdf, saveProject, get, record, list };
+  return { savePdf, saveProject, get, getPdf, record, deleteProject, list };
 })();

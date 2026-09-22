@@ -170,7 +170,10 @@ const Viewer = (() => {
 
   /* ================= document ================= */
 
-  async function openPdf(bytes, name) {
+  /** `opts.beforeEmit(fingerprint)` runs once the new document is known but before
+   *  'doc' fires — a revision import re-keys the project there, so nothing that
+   *  reacts to 'doc' (the cloud push included) can see a half-moved project. */
+  async function openPdf(bytes, name, opts = {}) {
     const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     // keep an untransferred copy — pdf.js may transfer the buffer to the worker
     const keep = data.slice();
@@ -190,6 +193,7 @@ const Viewer = (() => {
     el.dropHint.classList.add('hidden');
     el.wrap.classList.remove('hidden');
 
+    if (opts.beforeEmit) opts.beforeEmit(S.fingerprint);
     State.emit('doc');
     await renderPage();
     fitPage();
@@ -240,6 +244,7 @@ const Viewer = (() => {
     canvas.width = off.width; canvas.height = off.height;
     canvas.getContext('2d').drawImage(off, 0, 0);
     layout();
+    State.emit('pagerender');   // fresh pixels on the sheet (the revision overlay redraws on this)
   }
 
   /** Apply current zoom to wrap / canvas CSS / svg layers. */

@@ -41,7 +41,8 @@ const State = (() => {
     dayMode: false,          // true = gray out earlier days, hide future days
     jobRef: '',              // AroFlo task / job reference for reports
     aroSite: null,           // remembered stock context {holder, project} for this drawing
-    project: null,           // project details {name, site, client, contractor, contact, phone} — saved with the drawing
+    project: null,           // project details {name, site, client, contractor, contact, phone, status} — saved with the drawing
+    revisions: [],           // earlier revisions of this drawing [{fp, fileName, label, when, pages, w, h}] — the PDFs live in the device store / team cloud
     activeFitting: 'e90',    // armed press-fitting id
 
     idCounter: 1,
@@ -401,6 +402,7 @@ const State = (() => {
     S.images = {};
     S.aroSite = null;
     S.project = null;
+    S.revisions = [];
     S.selection.clear(); S.unlockedZones.clear(); S.idCounter = 1; S.dirty = false;
     clearHistory();
   }

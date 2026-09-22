@@ -143,16 +143,32 @@ const Drawings = (() => {
 
       const prevFp = m && m.fp;
       if (dlg) dlg.close();
-      await Viewer.openPdf(bytes, f.name);
+      // a revised sheet whose earlier revision carries work on this device:
+      // offer to bring the markups across instead of starting a blank one
+      const prevRec = prevFp ? await Store.record(prevFp) : null;
+      const prevWork = !!(prevRec && prevRec.data && ((prevRec.data.markups || []).length || prevRec.data.project));
+      const asRevision = prevWork ? await revisionPrompt(label, prevRec) : false;
+      if (asRevision) {
+        if (State.S.fingerprint !== prevFp) await Project.openFromStore(prevFp);
+        await Project.importRevision(bytes, f.name);
+      } else {
+        await Viewer.openPdf(bytes, f.name);
+      }
       st.map[f.id] = { etag: r.etag || f.etag, fp: State.S.fingerprint, name: f.name, when: Date.now() };
       saveJson(MAP_KEY, st.map);
       // a sheet with no markups yet never autosaves — store a project record
       // now so it reopens from the device instead of re-downloading
-      Store.saveProject(State.S.fingerprint, f.name, Project.serialize(false));
-      if (prevFp && prevFp !== State.S.fingerprint)
-        App.toast('New revision from SharePoint. Markups made on the earlier revision stay with it — reopen it from the team list or recents.', 'warn', 9000);
-      else
+      if (!asRevision) Store.saveProject(State.S.fingerprint, f.name, Project.serialize(false));
+      if (asRevision) {
+        App.toast(label + ' — new revision from SharePoint, markups carried across. Compare overlays the previous sheet.', 'good', 7000);
+      } else if (prevFp && prevFp !== State.S.fingerprint) {
+        if (!prevWork) Store.deleteProject(prevFp);   // nothing was on the old sheet — no stale twin on Home
+        App.toast(prevWork
+          ? 'New revision from SharePoint opened on its own. The earlier revision and its markups stay in the project list.'
+          : 'New revision from SharePoint — it replaces the earlier download.', 'good', 7000);
+      } else {
         App.toast(label + ' is stored on this device — it now opens offline.', 'good', 5000);
+      }
     } catch (e) {
       App.toast('Couldn’t load ' + label + ': ' + e.message, 'error', 9000);
     } finally {
@@ -160,6 +176,34 @@ const Drawings = (() => {
       st.busy = false;
       renderCards();
     }
+  }
+
+  /** Updated on SharePoint, and the sheet on this device carries work: import as a revision, or open on its own? */
+  function revisionPrompt(label, rec) {
+    return new Promise(resolve => {
+      const n = (rec.data.markups || []).length;
+      const pj = rec.data.project && rec.data.project.name ? ' for <b>' + esc(rec.data.project.name) + '</b>' : '';
+      let settled = false;
+      const pick = (close, v) => { if (settled) return; settled = true; close(); resolve(v); };
+      App.modal(`
+        <h3>Updated on SharePoint</h3>
+        <p class="muted"><b>${esc(label)}</b> has a newer revision. The one on this device carries <b>${n} markup${n === 1 ? '' : 's'}</b>${pj}.</p>
+        <div class="imp-opts">
+          <button type="button" class="imp-opt" id="sp-rev"><b>Import as a new revision</b><span>Markups, details, zones and the stock link move onto the new sheet; the old one is kept for Compare.</span></button>
+          <button type="button" class="imp-opt" id="sp-sep"><b>Open on its own</b><span>A separate, blank sheet — the earlier revision stays as it is.</span></button>
+        </div>`, (box, close) => {
+        box.querySelector('#sp-rev').onclick = () => pick(close, true);
+        box.querySelector('#sp-sep').onclick = () => pick(close, false);
+        document.getElementById('modalBackdrop').onclick = () => pick(close, false);
+      });
+    });
+  }
+
+  /** A revision imported by hand replaced the PDF: the register's link follows it. */
+  function rekey(oldFp, newFp) {
+    let changed = false;
+    for (const k of Object.keys(st.map)) if (st.map[k].fp === oldFp) { st.map[k].fp = newFp; changed = true; }
+    if (changed) saveJson(MAP_KEY, st.map);
   }
 
   /* ---------------- UI ---------------- */
@@ -292,5 +336,5 @@ const Drawings = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onCloudState, sync, openDialog, _state: st };
+  return { onCloudState, sync, openDialog, rekey, _state: st };
 })();

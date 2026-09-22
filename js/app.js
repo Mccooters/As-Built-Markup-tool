@@ -474,6 +474,10 @@ const App = (() => {
         <div class="muted" style="margin-top:4px">${holders.length
           ? 'The site container, ute or store for this job. Site stock opens on it, deliveries book into it, the pick list lands on it and used parts come out of it while this drawing is open.'
           : 'Open Site stock and sync once (⟳) to list your AroFlo holders here.'}</div></div>
+      <div class="form-row"><label>Drawing revisions</label>
+        <div class="muted">${(S.revisions || []).length
+          ? (S.revisions.length + ' earlier revision' + (S.revisions.length === 1 ? '' : 's') + ' kept for Compare')
+          : 'No earlier revisions yet'} · <button type="button" class="pj-link" id="pj-revs">Import / compare…</button></div></div>
       <p class="muted">Saved with the drawing — autosave, the .airmark file and the team cloud. Printed on daily reports, CSV schedules and delivery dockets; the project name is what Home, recents and the team list show.</p>
       <div class="modal-actions">
         <button class="mini-btn" id="pj-cancel">Cancel</button>
@@ -494,6 +498,7 @@ const App = (() => {
         toast('Project details saved with the drawing.', 'ok', 3000);
       };
       $('pj-cancel').onclick = close;
+      $('pj-revs').onclick = () => { close(); revisionsDialog(); };
       box.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') $('pj-ok').click(); }));
     });
   }
@@ -638,22 +643,95 @@ const App = (() => {
 
   /* ================= file opening ================= */
 
-  async function openPdfFile(file) {
+  // set by the Revisions dialog before it opens the file picker, so that pick
+  // goes straight in as a revision without the "how does this relate" prompt
+  let importMode = null;
+  const setImportMode = m => { importMode = m || null; };
+
+  /** A drawing is already open: how does the new PDF relate to it? 'rev' | 'add' | 'sep' | null */
+  function importPrompt(fileName) {
+    return new Promise(resolve => {
+      const v = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      let settled = false;
+      const pick = (close, val) => { if (settled) return; settled = true; close(); resolve(val); };
+      modal(`
+        <h3>Open ${v(String(fileName).replace(/\.pdf$/i, ''))}</h3>
+        <p class="muted">A drawing is already open. How does this one relate to <b>${v(Project.displayName())}</b>?</p>
+        <div class="imp-opts">
+          <button type="button" class="imp-opt" id="imp-rev"><b>New revision of this drawing</b><span>The updated sheet replaces the one underneath. Markups, details, zones and the stock link stay; the old sheet is kept for Compare.</span></button>
+          <button type="button" class="imp-opt" id="imp-add"><b>Another drawing for this project</b><span>Opens as its own sheet with the same project details, status and stock list.</span></button>
+          <button type="button" class="imp-opt" id="imp-sep"><b>Separate drawing</b><span>Nothing carried over.</span></button>
+        </div>
+        <div class="modal-actions"><button class="mini-btn" id="imp-cancel">Cancel</button></div>`, (box, close) => {
+        $('imp-rev').onclick = () => pick(close, 'rev');
+        $('imp-add').onclick = () => pick(close, 'add');
+        $('imp-sep').onclick = () => pick(close, 'sep');
+        $('imp-cancel').onclick = () => pick(close, null);
+        $('modalBackdrop').onclick = () => pick(close, null);
+      });
+    });
+  }
+
+  async function openPdfFile(file, mode) {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      if (State.S.pdf && !mode) mode = await importPrompt(file.name);
+      if (State.S.pdf && !mode) return;   // cancelled
+      if (mode === 'rev') { await Project.importRevision(bytes, file.name); return; }
+      const snap = mode === 'add' ? Project.detailsSnapshot() : null;
       await Viewer.openPdf(bytes, file.name);
+      if (snap) {
+        Project.adoptDetails(snap);
+        toast('Opened as another drawing for ' + Project.displayName() + ' — same details, status and stock list.', 'ok', 5000);
+      }
     } catch (err) {
       console.error(err);
       toast('Could not open that PDF: ' + (err.message || err), 'err', 7000);
     }
   }
 
-  function handleFiles(files) {
+  /** `mode` skips the relation prompt: 'rev' (new revision), 'add' (same project), 'sep' (separate). */
+  function handleFiles(files, mode) {
+    const m = mode || importMode;
+    importMode = null;
     for (const f of files) {
       if (/\.airmark$|\.json$/i.test(f.name)) { Project.openProjectFile(f); return; }
-      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') { openPdfFile(f); return; }
+      if (/\.pdf$/i.test(f.name) || f.type === 'application/pdf') { openPdfFile(f, m); return; }
     }
     toast('Drop a PDF drawing or an .airmark project file.', 'warn');
+  }
+
+  /* ================= revisions ================= */
+
+  function revisionsDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first.', 'warn'); return; }
+    const S = State.S;
+    const v = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const revs = (S.revisions || []).slice().reverse();
+    const when = iso => { const t = Date.parse(iso || ''); return Number.isFinite(t) ? new Date(t).toLocaleDateString() : ''; };
+    modal(`
+      <h3>Revisions — ${v(Project.displayName())}</h3>
+      <div class="rev-row cur"><div class="rev-main"><b>Current</b><span class="muted">${v(S.fileName)} · ${S.pageCount} page${S.pageCount === 1 ? '' : 's'}</span></div></div>
+      ${revs.length ? revs.map(r => `<div class="rev-row" data-fp="${v(r.fp)}">
+        <div class="rev-main"><b>${v(r.label)}</b><span class="muted">${v(r.fileName)} · replaced ${v(when(r.when))}</span></div>
+        <button class="mini-btn primary" data-act="overlay" data-fp="${v(r.fp)}" title="Overlay this revision under the current sheet">Compare</button>
+        <button class="mini-btn" data-act="remove" data-fp="${v(r.fp)}" title="Forget this revision">Remove</button></div>`).join('')
+        : '<p class="muted">No earlier revisions yet. Import the updated sheet and the current one is kept here, ready to overlay.</p>'}
+      <p class="muted" style="margin-top:10px">Importing a revision keeps every markup, the project details, zones, status and the stock link, and re-points the team cloud entry — the whole crew moves onto the new sheet.</p>
+      <div class="modal-actions">
+        <button class="mini-btn primary" id="rv-import">Import new revision…</button>
+        <span style="flex:1"></span>
+        <button class="mini-btn" id="rv-close">Close</button>
+      </div>`, (box, close) => {
+      $('rv-import').onclick = () => { close(); setImportMode('rev'); $('filePdf').click(); };
+      $('rv-close').onclick = close;
+      box.querySelectorAll('[data-act="overlay"]').forEach(b => b.onclick = () => {
+        close();
+        if (typeof Home !== 'undefined') Home.setMode('editor');
+        Compare.start(b.dataset.fp);
+      });
+      box.querySelectorAll('[data-act="remove"]').forEach(b => b.onclick = () => { Project.removeRevision(b.dataset.fp); close(); revisionsDialog(); });
+    });
   }
 
   function authorDialog() {
@@ -751,6 +829,7 @@ const App = (() => {
     });
 
     $('btnReport').onclick = () => reportDialog();
+    $('btnCompare').onclick = () => Compare.toggle();
 
     // tool rail
     document.querySelectorAll('#toolRail .tool-btn').forEach(btn => {
@@ -882,6 +961,7 @@ const App = (() => {
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
     csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog, projectDialog,
+    revisionsDialog, setImportMode,
     showTab: (...a) => Props.showTab(...a),
   };
 })();
