@@ -134,17 +134,22 @@ function slimRow(r) {
 // keeps working: statuses then stay on each device and the client is told.
 const STATUSES = ['active', 'dlp', 'done'];
 const normStatus = s => (STATUSES.includes(str(s)) ? str(s) : 'active');
-const colKnown = {};   // column → true/false, probed once per warm instance
+// column → {ok, at}: a present column is remembered for the life of the warm
+// instance; a missing one is re-checked every couple of minutes, so running
+// the migration takes effect without waiting for a redeploy
+const colKnown = {};
+const MISSING_RECHECK_MS = 2 * 60 * 1000;
 async function hasCol(col) {
-  if (colKnown[col] !== undefined) return colKnown[col];
+  const k = colKnown[col];
+  if (k && (k.ok || Date.now() - k.at < MISSING_RECHECK_MS)) return k.ok;
   try {
     await sb('GET', rowsPath('?select=' + col + '&limit=1'));
-    colKnown[col] = true;
+    colKnown[col] = { ok: true, at: Date.now() };
   } catch (e) {
     if (!new RegExp(col, 'i').test(str(e && e.message))) throw e;   // unrelated failure — no verdict cached
-    colKnown[col] = false;
+    colKnown[col] = { ok: false, at: Date.now() };
   }
-  return colKnown[col];
+  return colKnown[col].ok;
 }
 const hasStatusCol = () => hasCol('status');
 
