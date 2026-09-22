@@ -83,7 +83,7 @@ const Home = (() => {
     const cloud = cl && cl.token ? cl.projects || [] : [];
     const byFp = new Map();
     for (const r of localRows) {
-      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, pname: r.pname || '', fileName: r.fileName || '', status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, onDevice: true });
+      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, pname: r.pname || '', fileName: r.fileName || '', status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, markups: r.markups || 0, onDevice: true });
     }
     for (const p of cloud) {
       const fp = p.fingerprint || ('cloud:' + p.id);
@@ -105,6 +105,7 @@ const Home = (() => {
       row.open = true; row.onDevice = true;
       row.name = Project.displayName(); row.status = Project.status();
       row.pname = d.name || ''; row.fileName = State.S.fileName || '';
+      row.markups = State.S.markups.length;
       row.site = d.site || ''; row.client = d.client || '';
       row.aroNo = (State.S.aroSite && State.S.aroSite.project) || row.aroNo || '';
       byFp.set(State.S.fingerprint, row);
@@ -331,8 +332,10 @@ const Home = (() => {
     $('hsUserName').textContent = u.name;
     $('hsUserSub').textContent = u.sub;
     $('hsSignout').hidden = !u.signed;
-    // the Drawings item only exists on deployments with a SharePoint register
-    $('hsDrawingsNav').hidden = !(typeof Drawings !== 'undefined' && cl && cl.enabled === true && cl.sp);
+    // Drawings: the project's sheets — the SharePoint register on deployments
+    // that have one, and the drawings panel whenever a sheet is open
+    const spAvail = typeof Drawings !== 'undefined' && cl && cl.enabled === true && cl.sp;
+    $('hsDrawingsNav').hidden = !(spAvail || State.S.pdf);
     try {
       $('hsDate').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
     } catch (e) { $('hsDate').textContent = ''; }
@@ -383,6 +386,8 @@ const Home = (() => {
   }
 
   function openDrawings() {
+    // with a sheet open, Drawings is the side panel beside it
+    if (mode === 'editor' && State.S.pdf && typeof Drawings !== 'undefined' && Drawings.openPanel) { Drawings.openPanel(); return; }
     const cl = cloudState();
     const ready = typeof Drawings !== 'undefined' && cl && cl.enabled === true && cl.sp;
     if (ready && cl.token) { Drawings.openDialog(); return; }
@@ -473,5 +478,5 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, renderProjects, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
+  return { setMode, refresh, renderProjects, projectRows: mergedProjects, openProject, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();

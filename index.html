@@ -206,6 +206,9 @@
   <div class="tb-sep"></div>
 
   <div class="tb-group">
+    <button id="btnDrawPanel" class="tb-btn icon-only" title="Drawings — every sheet in this project, with revisions and what's on this device">
+      <svg viewBox="0 0 24 24"><path d="M4 5h11l3 3v11H4z"/><path d="M15 5v3h3M7 12h8M7 16h6"/><path d="M20 9v10a2 2 0 0 1-2 2H8"/></svg>
+    </button>
     <button id="btnThumbs" class="tb-btn icon-only" title="Toggle page thumbnails">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="7" rx="1"/><rect x="3" y="14" width="6" height="7" rx="1"/><path d="M12 6h9M12 9h6M12 16h9M12 19h6"/></svg>
     </button>
@@ -353,6 +356,17 @@
       <svg viewBox="0 0 24 24"><circle cx="7.5" cy="7.5" r="3.5"/><rect x="14.5" y="4" width="7" height="7" rx="1"/><path d="M7.5 14.5v7M4 18h7"/><path d="m15.5 15 5 5m0-5-5 5"/></svg>
     </button>
   </nav>
+
+  <!-- Drawings panel: every sheet in this project — drawings.js -->
+  <aside id="drawPanel" class="hidden">
+    <div class="dp-head">
+      <span class="panel-title">Drawings</span>
+      <button id="dpClose" class="tb-btn icon-only" title="Close the drawings panel">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div id="dpBody"></div>
+  </aside>
 
   <!-- Thumbnails -->
   <aside id="thumbPanel" class="hidden">

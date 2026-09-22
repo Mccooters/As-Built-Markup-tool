@@ -782,6 +782,7 @@ const App = (() => {
     $('btnFitPage').onclick = () => Viewer.fitPage();
     $('btnFitWidth').onclick = () => Viewer.fitWidth();
     $('btnThumbs').onclick = () => $('thumbPanel').classList.toggle('hidden');
+    $('btnDrawPanel').onclick = () => Drawings.togglePanel();
 
     $('btnPrevPage').onclick = () => Viewer.gotoPage(State.S.page - 1);
     $('btnNextPage').onclick = () => Viewer.gotoPage(State.S.page + 1);
@@ -911,7 +912,10 @@ const App = (() => {
 
     // mobile: right panel is a drawer behind the floating button
     $('panelFab').addEventListener('click', () => document.body.classList.toggle('panel-open'));
-    $('panelBackdrop').addEventListener('click', () => document.body.classList.remove('panel-open'));
+    $('panelBackdrop').addEventListener('click', () => {
+      document.body.classList.remove('panel-open');
+      if (typeof Drawings !== 'undefined') Drawings.closePanel();
+    });
     // phones: start with the markups list tucked away
     if (window.matchMedia('(max-width: 760px)').matches) $('listPanel').classList.add('collapsed');
 

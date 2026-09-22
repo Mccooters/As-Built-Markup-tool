@@ -15,11 +15,12 @@ const Store = (() => {
   function open() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB, 1);
+      const req = indexedDB.open(DB, 2);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'fingerprint' });
         if (!db.objectStoreNames.contains('pdfs')) db.createObjectStore('pdfs', { keyPath: 'fingerprint' });
+        if (!db.objectStoreNames.contains('thumbs')) db.createObjectStore('thumbs', { keyPath: 'fingerprint' });   // v2: sheet thumbnails for the drawings panel
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -70,6 +71,23 @@ const Store = (() => {
     } catch (e) { return null; }
   }
 
+  /* ---- sheet thumbnails (small JPEG data URLs, keyed like everything else by fingerprint) ---- */
+  async function saveThumb(fingerprint, dataUrl) {
+    try {
+      const db = await open();
+      await reqP(db.transaction('thumbs', 'readwrite').objectStore('thumbs').put({ fingerprint, dataUrl, at: Date.now() }));
+    } catch (e) { /* ignore */ }
+  }
+  async function allThumbs() {
+    try {
+      const db = await open();
+      const all = await reqP(db.transaction('thumbs').objectStore('thumbs').getAll());
+      const out = {};
+      for (const t of all) out[t.fingerprint] = t.dataUrl;
+      return out;
+    } catch (e) { return {}; }
+  }
+
   /** Drop a project record (a superseded revision) — its PDF stays for Compare. */
   async function deleteProject(fingerprint) {
     try {
@@ -116,5 +134,5 @@ const Store = (() => {
     }
   }
 
-  return { savePdf, saveProject, get, getPdf, record, deleteProject, list };
+  return { savePdf, saveProject, get, getPdf, record, deleteProject, list, saveThumb, allThumbs };
 })();

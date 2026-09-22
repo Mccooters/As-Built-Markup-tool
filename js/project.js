@@ -190,6 +190,19 @@ const Project = (() => {
     State.touch();
   }
 
+  /** An empty project record for a sheet stored on the device before it is ever opened (drawings-panel downloads). */
+  function blankData(fileName, fingerprint, snap) {
+    const d = {
+      app: 'AirMark', version: 1, savedAt: new Date().toISOString(),
+      fileName, fingerprint, markups: [], countGroups: [], pageScales: {}, defaultScale: null,
+      images: {}, idCounter: 1, revisions: [],
+    };
+    if (snap && snap.project) d.project = { ...snap.project };
+    if (snap && snap.aroSite) d.aroSite = { ...snap.aroSite };
+    if (snap && snap.jobRef) d.jobRef = snap.jobRef;
+    return d;
+  }
+
   /* ---------- another drawing for the same project: the details come along ---------- */
 
   const detailsSnapshot = () => ({
@@ -343,6 +356,6 @@ const Project = (() => {
   return {
     init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails,
     status, statusLabel, normStatus, setStatus,
-    importRevision, scaleMarkups, removeRevision, detailsSnapshot, adoptDetails,
+    importRevision, scaleMarkups, removeRevision, detailsSnapshot, adoptDetails, blankData,
   };
 })();
