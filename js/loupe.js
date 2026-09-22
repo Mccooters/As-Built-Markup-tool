@@ -52,6 +52,7 @@ const Loupe = (() => {
       '<div class="loupe-cross"></div><div class="loupe-ring"></div><div class="loupe-label" hidden></div>';
     document.body.appendChild(root);
     cv = root.querySelector('canvas');
+    cv.width = cv.height = Math.round(D * Math.min(window.devicePixelRatio || 1, 3));   // square from the start
     ctx = cv.getContext('2d');
     g = root.querySelector('g');
     label = root.querySelector('.loupe-label');
@@ -159,7 +160,11 @@ const Loupe = (() => {
 
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const W = Math.round(D * dpr);
-    if (cv.width !== W) { cv.width = W; cv.height = W; }
+    // check BOTH dimensions: a fresh canvas is already 300 wide by default, so
+    // on a 2× screen (W = 300) a width-only check left the height at 150 — the
+    // top half of the window stretched over the whole circle, i.e. the drawing
+    // shown 15 px too low and squashed, while the markup layer stayed right
+    if (cv.width !== W || cv.height !== W) { cv.width = W; cv.height = W; }
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, W, W);
     const halfWin = (R / K) / S.zoom;                              // half the window, page pt
