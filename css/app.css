@@ -920,6 +920,13 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
   background: rgba(232,177,60,.08); color: #e8b13c; font-size: 12.5px; line-height: 1.45;
 }
 .pj-note code { font-size: 12px; }
+.pj-sql {
+  margin: 8px 0 6px; padding: 8px 10px; background: var(--bg3); border: 1px solid var(--edge); border-radius: 6px;
+  color: var(--txt); font-size: 12px; white-space: pre-wrap; word-break: break-all;
+  user-select: text; -webkit-user-select: text;
+}
+.pj-note-actions { display: flex; gap: 8px; margin-top: 4px; }
+.pj-note-why { margin-top: 6px; font-size: 12px; opacity: .85; }
 #hsContStatus { color: #e8b13c; }
 #homeMain .recent-cap { font-size: 12.5px; letter-spacing: .7px; margin-bottom: 10px; }
 #homeShell.dragging #homeMain { outline: 2px dashed var(--accent); outline-offset: -10px; }

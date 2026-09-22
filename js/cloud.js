@@ -23,6 +23,8 @@ const Cloud = (() => {
     projects: [], listPhase: 'idle', error: '',
     listAt: 0,            // when the team list last loaded
     statusCol: null,      // server has the status column? false → statuses stay per device
+    fileNameCol: null,    // …and the file_name column? false → a project's sheets aren't grouped for the team
+    colError: '',         // Supabase's own words when a column is missing
     sync: { state: 'idle', at: 0, msg: '' }, // idle|saving|synced|offline|error|conflict
     conflictWith: null,   // registry row that beat us, while unresolved
   };
@@ -41,16 +43,17 @@ const Cloud = (() => {
     return mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' h ago' : Math.round(mins / 1440) + ' d ago';
   };
 
-  async function call(action, body) {
+  async function call(action, body, qs) {
     const headers = {};
     if (st.token) headers['X-AirMark-Auth'] = st.token;
+    const url = API + '?action=' + action + (qs ? '&' + qs : '');
     let resp;
     try {
       if (body !== undefined) {
         headers['Content-Type'] = 'application/json';
-        resp = await fetch(API + '?action=' + action, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+        resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
       } else {
-        resp = await fetch(API + '?action=' + action, { headers, signal: AbortSignal.timeout(30000) });
+        resp = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
       }
     } catch (e) { const err = new Error('No connection to the team cloud.'); err.offline = true; throw err; }
     let j;
@@ -105,15 +108,18 @@ const Cloud = (() => {
 
   /* ---------------- project list + open ---------------- */
 
-  async function refreshList() {
-    if (!st.token || st.enabled === false) return;
+  /** Reload the team list. `{recheck: true}` makes the server re-probe the optional columns now. Resolves true when the registry has every column. */
+  async function refreshList(opts) {
+    if (!st.token || st.enabled === false) return false;
     st.listPhase = 'loading'; st.error = '';
     renderCard();
     if (typeof Home !== 'undefined') Home.refresh();
     try {
-      const r = await call('list');
+      const r = await call('list', undefined, opts && opts.recheck ? 'recheck=1' : '');
       st.projects = r.projects || [];
       if (r.statusColumn === false || r.statusColumn === true) st.statusCol = r.statusColumn;
+      if (r.fileNameColumn === false || r.fileNameColumn === true) st.fileNameCol = r.fileNameColumn;
+      st.colError = r.columnError || '';
       st.listAt = Date.now();
       st.listPhase = 'ready';
       adoptListStatus();
@@ -123,6 +129,7 @@ const Cloud = (() => {
     }
     renderCard();
     if (typeof Home !== 'undefined') Home.refresh();
+    return st.statusCol !== false && st.fileNameCol !== false;
   }
 
   // Home asks for a fresh list when it comes back into view — at most once a minute.

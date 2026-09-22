@@ -187,8 +187,17 @@ const Home = (() => {
     for (const r of rows) groups[r.status].push(r);
     let h = '';
     if (signed && cl.error) h += `<div class="cloud-err">${esc(cl.error)}</div>`;
-    if (signed && cl.statusCol === false) {
-      h += '<div class="pj-note">Project statuses aren’t shared with the team yet — add the <code>status</code> column to <code>am_projects</code> (one line of SQL, top of <code>api/cloud.js</code>). Until then each device keeps its own.</div>';
+    // the registry is missing an optional column: show the exact SQL, not a pointer to the source
+    const missing = [];
+    if (signed && cl.statusCol === false) missing.push("alter table am_projects add column if not exists status text not null default 'active';");
+    if (signed && cl.fileNameCol === false) missing.push("alter table am_projects add column if not exists file_name text not null default '';");
+    if (missing.length) {
+      const why = cl.statusCol === false && cl.fileNameCol === false ? 'project statuses stay on each device and a project’s sheets aren’t grouped for the team'
+        : cl.statusCol === false ? 'project statuses stay on each device' : 'a project’s sheets aren’t grouped for the team';
+      h += `<div class="pj-note"><b>The team registry is missing ${missing.length === 1 ? 'a column' : 'two columns'}</b> — until it’s added, ${why}. Run this in Supabase → SQL editor, just these lines:
+        <pre class="pj-sql" id="hsSql">${esc(missing.join('\n'))}</pre>
+        <div class="pj-note-actions"><button type="button" class="mini-btn" id="hsSqlCopy">Copy SQL</button><button type="button" class="mini-btn primary" id="hsSqlCheck">Check again</button></div>
+        ${cl.colError ? `<div class="pj-note-why">Supabase said: ${esc(cl.colError)}</div>` : ''}</div>`;
     }
     if (!rows.length) {
       h += `<p class="pj-empty">${signed && cl.listPhase === 'loading' ? 'Loading the team list…' : 'No projects yet — open a drawing and it appears here.'}</p>`;
@@ -198,6 +207,26 @@ const Home = (() => {
       if (groups.done.length) h += sectionHtml('done', groups.done);
     }
     el.innerHTML = h;
+    const copyBtn = el.querySelector('#hsSqlCopy');
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+      const pre = el.querySelector('#hsSql');
+      try {
+        await navigator.clipboard.writeText(pre.textContent);
+        App.toast('SQL copied — paste it into Supabase → SQL editor and run it.', 'ok', 4000);
+      } catch (e) {
+        const r = document.createRange(); r.selectNodeContents(pre);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        App.toast('The SQL is selected — copy it.', 'info', 3000);
+      }
+    });
+    const chk = el.querySelector('#hsSqlCheck');
+    if (chk) chk.addEventListener('click', async () => {
+      chk.disabled = true; chk.textContent = 'Checking…';
+      const okAll = await Cloud.refreshList({ recheck: true });
+      App.toast(okAll
+        ? 'The registry has every column it needs ✔'
+        : 'Still missing. Make sure the SQL ran without an error, in the Supabase project this deployment uses (Vercel → SUPABASE_URL).', okAll ? 'good' : 'warn', 8000);
+    });
     el.querySelectorAll('.pj-sechead').forEach(b => b.addEventListener('click', () => {
       secOpen[b.dataset.sec] = !secOpen[b.dataset.sec];
       try { localStorage.setItem('abmt:pjsec', JSON.stringify(secOpen)); } catch (e) { /* ignore */ }

@@ -162,7 +162,14 @@ With a small free backend attached, AirMark stops being single-device: employees
 Setup (about 10 minutes, once):
 
 1. Create a free project at [supabase.com](https://supabase.com) (any name, nearest region).
-2. In the Supabase **SQL editor**, run the snippet from the top of [`api/cloud.js`](api/cloud.js) — it creates the `am_projects` registry table (locked down) and a **private** `airmark` storage bucket. **Existing installs** set up before project statuses existed: run the two `alter table am_projects add column …` lines from the same snippet (the `status` and `file_name` columns) — until then statuses stay on each device and Home says so.
+2. In the Supabase **SQL editor**, run the snippet from the top of [`api/cloud.js`](api/cloud.js) — it creates the `am_projects` registry table (locked down) and a **private** `airmark` storage bucket. **Existing installs** set up before project statuses existed need two more columns. Run exactly these lines in the SQL editor (without the `*` comment markers they carry in the source file):
+
+   ```sql
+   alter table am_projects add column if not exists status text not null default 'active';
+   alter table am_projects add column if not exists file_name text not null default '';
+   ```
+
+   Until they exist, statuses stay on each device and a project's sheets aren't grouped for the team; Home shows a note with these lines, a **Copy SQL** button and **Check again**, which re-checks the registry straight away.
 3. In Vercel → Project → Settings → Environment Variables, add:
    - `SUPABASE_URL` — the project URL (Supabase → Project Settings → API)
    - `SUPABASE_SERVICE_KEY` — the `service_role` key from the same page (server-side only; the browser never sees it)

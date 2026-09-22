@@ -139,18 +139,21 @@ const normStatus = s => (STATUSES.includes(str(s)) ? str(s) : 'active');
 // the migration takes effect without waiting for a redeploy
 const colKnown = {};
 const MISSING_RECHECK_MS = 2 * 60 * 1000;
-async function hasCol(col) {
+async function hasCol(col, force) {
   const k = colKnown[col];
-  if (k && (k.ok || Date.now() - k.at < MISSING_RECHECK_MS)) return k.ok;
+  if (!force && k && (k.ok || Date.now() - k.at < MISSING_RECHECK_MS)) return k.ok;
   try {
     await sb('GET', rowsPath('?select=' + col + '&limit=1'));
-    colKnown[col] = { ok: true, at: Date.now() };
+    colKnown[col] = { ok: true, at: Date.now(), err: '' };
   } catch (e) {
     if (!new RegExp(col, 'i').test(str(e && e.message))) throw e;   // unrelated failure — no verdict cached
-    colKnown[col] = { ok: false, at: Date.now() };
+    // keep Supabase's own words for the client's hint ("column … does not exist" vs a stale schema cache)
+    const err = str(e && e.message).replace(/^Storage service error \(HTTP \d+\) on GET [^:]+: /, '').slice(0, 200);
+    colKnown[col] = { ok: false, at: Date.now(), err };
   }
   return colKnown[col].ok;
 }
+const colError = col => (colKnown[col] && colKnown[col].err) || '';
 const hasStatusCol = () => hasCol('status');
 
 async function signedUpload(path) {
@@ -375,11 +378,16 @@ const ACTIONS = {
   },
 
   // The shared project list, newest first.
-  async list() {
+  // `recheck=1` re-probes the optional columns right now (Home's "Check again"
+  // after the migration has been run) instead of waiting out the cache.
+  async list(q) {
     const rows = await sb('GET', rowsPath('?select=*&order=updated_at.desc&limit=100'));
-    let statusColumn = null;
-    try { statusColumn = await hasStatusCol(); } catch (e) { /* unknown — say nothing */ }
-    return { ok: true, projects: (rows || []).map(slimRow), statusColumn };
+    const force = !!(q && q.recheck);
+    let statusColumn = null, fileNameColumn = null;
+    try { statusColumn = await hasCol('status', force); } catch (e) { /* unknown — say nothing */ }
+    try { fileNameColumn = await hasCol('file_name', force); } catch (e) { /* unknown */ }
+    const columnError = statusColumn === false ? colError('status') : fileNameColumn === false ? colError('file_name') : '';
+    return { ok: true, projects: (rows || []).map(slimRow), statusColumn, fileNameColumn, columnError };
   },
 
   // Start a save: find/create the registry row for this drawing, check the
