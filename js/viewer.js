@@ -358,9 +358,14 @@ const Viewer = (() => {
 
   /* ================= coordinate mapping ================= */
 
+  /** The page's box on screen, measured on the canvas: unlike the SVG layers
+   *  (overflow visible, markups and labels can spill past the sheet) a canvas
+   *  has nothing that could inflate the rect an engine reports for it. */
+  function pageRect() { return el.canvas.getBoundingClientRect(); }
+
   /** Client (mouse) coords → page units. */
   function toPage(e) {
-    const r = el.overlay.getBoundingClientRect();
+    const r = pageRect();
     return { x: (e.clientX - r.left) / State.S.zoom, y: (e.clientY - r.top) / State.S.zoom };
   }
 
@@ -389,7 +394,7 @@ const Viewer = (() => {
   return {
     init, openPdf, renderPage, layout, scheduleRender,
     setZoom, zoomAt, zoomIn, zoomOut, fitPage, fitWidth,
-    gotoPage, buildThumbs, syncThumbActive, toPage, flashMarkup, getPageDims, isSpacePan,
+    gotoPage, buildThumbs, syncThumbActive, toPage, pageRect, flashMarkup, getPageDims, isSpacePan,
     el,
   };
 })();

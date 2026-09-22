@@ -448,6 +448,25 @@ const App = (() => {
     });
   }
 
+  /** One line of geometry facts for a screenshot when something looks off on a device. */
+  function diagLine() {
+    try {
+      const S = State.S;
+      const bits = ['v' + (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '?'), 'dpr ' + (window.devicePixelRatio || 1),
+        (window.innerWidth + '×' + window.innerHeight + ' win')];
+      if (S.pdf) {
+        const c = Viewer.el.canvas, rc = c.getBoundingClientRect(), ro = Viewer.el.overlay.getBoundingClientRect();
+        const f = n => Math.round(n * 10) / 10;
+        bits.push('zoom ' + Math.round(S.zoom * 100) + '%', 'page ' + Math.round(S.pageW) + '×' + Math.round(S.pageH) + ' pt',
+          'canvas ' + c.width + '×' + c.height + ' px in ' + f(rc.width) + '×' + f(rc.height) + ' css @ ' + f(rc.left) + ',' + f(rc.top),
+          'overlay ' + f(ro.width) + '×' + f(ro.height) + ' @ ' + f(ro.left) + ',' + f(ro.top),
+          'scroll ' + Math.round(Viewer.el.viewport.scrollLeft) + ',' + Math.round(Viewer.el.viewport.scrollTop));
+      }
+      bits.push(navigator.userAgent.replace(/^Mozilla\/5\.0 \(/, '(').slice(0, 90));
+      return bits.join(' · ');
+    } catch (e) { return 'n/a'; }
+  }
+
   function helpDialog() {
     modal(`
       <h3>AirMark — quick reference <span class="muted" style="font-weight:400;font-size:12px;margin-left:6px">v${typeof APP_VERSION !== 'undefined' ? APP_VERSION : '?'}</span></h3>
@@ -475,6 +494,7 @@ const App = (() => {
         <dt><kbd>PgUp</kbd>/<kbd>PgDn</kbd></dt><dd>Previous / next page</dd>
       </dl>
       <p class="muted">Markups autosave in this browser per-drawing and are offered back when you reopen the same PDF. Use <b>Save</b> for a portable .airmark file (embeds the PDF), and <b>Export PDF</b> for a flattened copy anyone can open.</p>
+      <p class="muted" id="help-diag" style="font-size:10.5px;word-break:break-word;opacity:.8"><b>Diagnostics</b> (screenshot this if something looks off on a device): ${diagLine().replace(/</g, '&lt;')}</p>
       <div class="modal-actions"><button class="mini-btn primary" id="help-ok">Got it</button></div>`,
       (box, close) => { $('help-ok').onclick = close; });
   }

@@ -93,13 +93,16 @@ const Loupe = (() => {
 
   function draw() {
     if (!shown || !last || !State.S.pdf) return;
-    const r = Viewer.el.overlay.getBoundingClientRect();
+    // the page's box measured on the canvas itself — the same box the tools map
+    // pointer positions with, and one no overflowing SVG content can inflate
+    const r = Viewer.pageRect();
     if (!r.width || !r.height) return;
     const px = last.x - r.left, py = last.y - r.top;         // fingertip in page CSS px
 
     // PDF raster: sample a (D/K)² CSS-px window around the finger from the
-    // rendered page canvas (clipped by hand — partial source rects are not
-    // handled the same way in every engine)
+    // rendered page canvas, mapping each axis on its own from the canvas's
+    // pixel size to its on-screen box (clipped by hand — partial source rects
+    // are not handled the same way in every engine)
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     const W = Math.round(D * dpr);
     if (cv.width !== W) { cv.width = W; cv.height = W; }
@@ -107,17 +110,17 @@ const Loupe = (() => {
     ctx.fillRect(0, 0, W, W);
     const src = Viewer.el.canvas;
     if (src.width && src.height) {
-      const s = src.width / r.width;                          // canvas px per CSS px
-      const half = (R / K) * s;
-      const sx0 = px * s - half, sy0 = py * s - half;
-      const scale = W / (half * 2);                           // canvas px → loupe device px
+      const sx = src.width / r.width, sy = src.height / r.height;   // canvas px per CSS px, per axis
+      const halfX = (R / K) * sx, halfY = (R / K) * sy;
+      const sx0 = px * sx - halfX, sy0 = py * sy - halfY;
+      const scaleX = W / (halfX * 2), scaleY = W / (halfY * 2);     // canvas px → loupe device px
       const cx0 = Math.max(0, sx0), cy0 = Math.max(0, sy0);
-      const cx1 = Math.min(src.width, sx0 + half * 2), cy1 = Math.min(src.height, sy0 + half * 2);
+      const cx1 = Math.min(src.width, sx0 + halfX * 2), cy1 = Math.min(src.height, sy0 + halfY * 2);
       if (cx1 > cx0 && cy1 > cy0) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(src, cx0, cy0, cx1 - cx0, cy1 - cy0,
-          (cx0 - sx0) * scale, (cy0 - sy0) * scale, (cx1 - cx0) * scale, (cy1 - cy0) * scale);
+          (cx0 - sx0) * scaleX, (cy0 - sy0) * scaleY, (cx1 - cx0) * scaleX, (cy1 - cy0) * scaleY);
       }
     }
 
