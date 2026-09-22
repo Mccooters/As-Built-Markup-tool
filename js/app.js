@@ -450,7 +450,7 @@ const App = (() => {
 
   function helpDialog() {
     modal(`
-      <h3>AirMark — quick reference</h3>
+      <h3>AirMark — quick reference <span class="muted" style="font-weight:400;font-size:12px;margin-left:6px">v${typeof APP_VERSION !== 'undefined' ? APP_VERSION : '?'}</span></h3>
       <p class="muted">A Bluebeam-style markup + measurement tool for compressed-air pipe work. Everything stays in your browser — drawings are never uploaded.</p>
       <p class="muted"><b>Field workflow:</b> ① Open the drawing → ② set the <b>scale</b> — click the Scale button and type the sheet's stated ratio (1:100, 1/4"=1'-0"…), or calibrate from two points of a known distance → ③ draw <b>Pipe runs</b>, color-coded and drawn at their true OD width → ④ drop <b>Symbols</b> (valves, drops, FRL…) and <b>Counts</b> → ⑤ check the <b>Takeoff</b> tab → ⑥ <b>Export PDF</b> or CSV.</p>
       <dl class="help-grid">

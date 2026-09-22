@@ -56,12 +56,46 @@ const Home = (() => {
     return { name: 'Not signed in', sub: canSignIn ? 'Tap to sign in' : 'Tap to set your name', signed: false, known: false };
   }
 
+  /* ---------------- version + update check ---------------- */
+
+  const version = () => (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '');
+  let checkedAt = 0;
+
+  /** Fetch the live version.js past the shell cache; offer a reload when it is newer. */
+  async function checkForUpdate(force) {
+    const btn = $('hsUpdate');
+    if (!btn || !version()) return;
+    if (!force && (navigator.onLine === false || Date.now() - checkedAt < 60000)) return;
+    checkedAt = Date.now();
+    try {
+      const r = await fetch('js/version.js?live=1', { cache: 'no-store' });
+      if (!r.ok) return;
+      const m = /APP_VERSION\s*=\s*'([^']+)'/.exec(await r.text());
+      const live = m && m[1];
+      const newer = !!(live && live !== version());
+      btn.hidden = !newer;
+      if (newer) btn.textContent = 'v' + live + ' is out — tap to update';
+    } catch (e) { /* offline or blocked — nothing to say */ }
+  }
+
+  /** Reload with the shell cache emptied, so the new build arrives in one go. */
+  async function applyUpdate() {
+    const btn = $('hsUpdate');
+    if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+    try {
+      if (window.caches) { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); }
+    } catch (e) { /* the reload still fetches index.html network-first */ }
+    location.reload();
+  }
+
   /* ---------------- render ---------------- */
 
   function refresh() {
     if (!$('homeShell')) return;
     const cl = cloudState();
     const u = whoAmI();
+    $('hsVer').textContent = version() ? 'v' + version() : '';
+    if (mode === 'home') checkForUpdate();
     $('hsAvatar').textContent = u.known ? initials(u.name) : '?';
     $('hsUserName').textContent = u.name;
     $('hsUserSub').textContent = u.sub;
@@ -172,6 +206,8 @@ const Home = (() => {
       b.addEventListener('click', () => { closeMenu(); const fn = NAV[b.dataset.nav]; if (fn) fn(); }));
     $('hsUser').addEventListener('click', () => { closeMenu(); accountTap(); });
     $('hsContBtn').addEventListener('click', () => setMode('editor'));
+    $('hsUpdate').addEventListener('click', applyUpdate);
+    window.addEventListener('online', () => { if (mode === 'home') checkForUpdate(true); });
     // editor: ≡ opens the sidebar as a drawer, the logo jumps straight Home
     const menuBtn = $('btnMenu');
     if (menuBtn) menuBtn.addEventListener('click', toggleMenu);
@@ -191,5 +227,5 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, openMenu, closeMenu, toggleMenu, mode: () => mode };
+  return { setMode, refresh, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();

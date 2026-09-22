@@ -7,11 +7,13 @@
  */
 'use strict';
 
-const CACHE = 'abmt-shell-v6';
+importScripts('js/version.js');                // APP_VERSION — one release number for the app and its shell cache
+const CACHE = 'abmt-shell-' + APP_VERSION;
 const CORE = [
   './',
   'index.html',
   'css/app.css',
+  'js/version.js',
   'js/geometry.js', 'js/units.js', 'js/symbols.js', 'js/state.js',
   'js/store.js', 'js/viewer.js', 'js/render.js', 'js/loupe.js', 'js/tools.js',
   'js/props.js', 'js/markuplist.js', 'js/project.js', 'js/export.js', 'js/docket.js',
@@ -43,6 +45,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;       // CDN-free app; leave cross-origin alone
   if (url.pathname.includes('/api/')) return;       // AroFlo proxy: live data or nothing
+  if (url.searchParams.has('live')) return;         // Home's version probe must see the deployment, never this cache
 
   if (req.mode === 'navigate') {
     e.respondWith(

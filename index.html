@@ -88,6 +88,8 @@
       <div class="hm-head">
         <h1>Home</h1>
         <span class="hm-date" id="hsDate"></span>
+        <span class="hm-ver" id="hsVer" title="The AirMark version loaded on this device"></span>
+        <button class="hm-update" id="hsUpdate" hidden title="A newer version is deployed — tap to reload and get it"></button>
       </div>
 
       <section class="hm-card hm-continue" id="hsContinue" hidden>
@@ -454,6 +456,7 @@
 <input type="file" id="fileProject" accept=".airmark,.json" class="hidden">
 <input type="file" id="filePhoto" accept="image/*" class="hidden">
 
+<script src="js/version.js"></script>
 <script src="vendor/pdf.min.js"></script>
 <script src="vendor/pdf-lib.min.js"></script>
 <script src="js/geometry.js"></script>
