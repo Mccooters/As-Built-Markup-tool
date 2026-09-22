@@ -115,6 +115,9 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 #overlay, #previewLayer, #selLayer { position: absolute; inset: 0; overflow: visible; }
 #overlay { pointer-events: auto; touch-action: none; }
 #previewLayer, #selLayer { pointer-events: none; }
+/* touch-action only counts on the SVG root in Chromium — a handle drag would
+   otherwise turn into a scroll gesture (pointercancel) after 15 px */
+#selLayer { touch-action: none; }
 #selLayer .handle { pointer-events: auto; touch-action: none; }
 #editLayer { position: absolute; inset: 0; pointer-events: none; }
 #editLayer textarea {
@@ -141,7 +144,12 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
 #rightPanel {
   flex: 0 0 268px; background: var(--bg2); border-left: 1px solid var(--edge);
   display: flex; flex-direction: column; min-height: 0;
+  /* never wider than its basis: a wide property row would otherwise grow the
+     panel and re-centre the drawing under the user's finger on every selection */
+  min-width: 0; max-width: 268px; overflow: hidden;
 }
+/* a checkbox row takes the input column (the generic label rule would pin it to 78 px) */
+#rightPanel .prop-row label.chk { flex: 1 1 auto; min-width: 0; white-space: normal; line-height: 1.3; }
 .tabs { display: flex; border-bottom: 1px solid var(--edge); flex: 0 0 auto; }
 .tab {
   flex: 1; background: transparent; border: none; color: var(--txt-dim);
@@ -161,7 +169,7 @@ button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke
   border: 1px solid var(--edge); border-radius: 4px; padding: 4px 6px; font-size: 12.5px;
 }
 .prop-row textarea { resize: vertical; min-height: 40px; font-family: inherit; }
-.prop-row input[type=range] { flex: 1; }
+.prop-row input[type=range] { flex: 1 1 0; min-width: 0; }   /* the browser's default range width must not push the value off the panel */
 .prop-row .val { flex: 0 0 34px; text-align: right; font-size: 11.5px; color: var(--txt-dim); }
 .swatches { display: flex; flex-wrap: wrap; gap: 5px; }
 .swatch {

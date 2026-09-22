@@ -52,6 +52,7 @@ const Tools = (() => {
     return activeTouches.size;
   }
   let activeDragAbort = null;  // cancels the in-flight drag without committing
+  let activeDragFinish = null; // settles the in-flight drag with its last position (lost pointerup)
   let pendingTap = null;       // touch tap-in-progress for click-style tools
   let lastTap = null;          // for double-tap detection on the select tool
   let lastDownType = 'mouse';  // pointerType of the most recent pointerdown anywhere
@@ -151,22 +152,45 @@ const Tools = (() => {
     if (m.anchor) { m.anchor.x += dx; m.anchor.y += dy; }
   }
 
-  /** downEvent (optional): the pointerdown that started the drag — a touch gets the loupe. */
-  function windowDrag(onMove, onUp, onAbort, downEvent) {
+  /**
+   * A drag that lives until its pointer lifts. downEvent is the pointer event
+   * that started it: the pointer is captured on the overlay — a stable element
+   * that already has touch-action:none — because the element under the finger
+   * (a selection handle, the markup being moved) is re-rendered mid-drag, and
+   * WebKit then delivers the rest of the touch, release included, to the
+   * detached node; the drag's listeners never see the lift and it leaks into
+   * every later touch. (Capturing on the scrollable viewport instead makes
+   * engines read the moving touch as a scroll and pointercancel it.) Only that
+   * pointer feeds the drag — a pencil hovering nearby doesn't. withLoupe: a
+   * touch gets the magnifier.
+   */
+  function windowDrag(onMove, onUp, onAbort, downEvent, withLoupe) {
     dragging = true;
-    if (downEvent) Loupe.begin(downEvent);
+    const pid = downEvent && downEvent.pointerId != null ? downEvent.pointerId : null;
+    const vp = Viewer.el.overlay;
+    if (pid != null) { try { vp.setPointerCapture(pid); } catch (e) { /* not capturable — window listeners still cover it */ } }
+    if (withLoupe && downEvent) Loupe.begin(downEvent);
+    let lastEv = downEvent || null;
+    const mine = e => pid == null || e.pointerId === pid;
     const cleanup = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      if (pid != null) { try { if (vp.hasPointerCapture(pid)) vp.releasePointerCapture(pid); } catch (e) { /* already released */ } }
       dragging = false;
       activeDragAbort = null;
+      activeDragFinish = null;
       Loupe.end();
     };
-    const move = e => { onMove(e); Loupe.track(e); };
-    const up = e => { cleanup(); if (onUp) onUp(e); };
+    const move = e => { if (!mine(e)) return; lastEv = e; onMove(e); Loupe.track(e); };
+    const up = e => { if (!mine(e)) return; cleanup(); if (onUp) onUp(e); };
+    const cancel = e => { if (!mine(e)) return; cleanup(); if (onAbort) onAbort(); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
     activeDragAbort = () => { cleanup(); if (onAbort) onAbort(); };
+    // leak breaker: every finger is up but no pointerup reached us — settle where it was
+    activeDragFinish = () => { cleanup(); if (onUp) onUp(lastEv); };
   }
 
   /** One-finger pan of the scrollable view (touch fallback in tap-style tools / empty sheet). */
@@ -179,7 +203,7 @@ const Tools = (() => {
       vp.scrollLeft -= ev.clientX - last.x;
       vp.scrollTop -= ev.clientY - last.y;
       last = { x: ev.clientX, y: ev.clientY };
-    }, null, null);
+    }, null, null, e, false);
   }
 
   /* ================= creation: drag tools ================= */
@@ -252,7 +276,7 @@ const Tools = (() => {
       if (tool === 'callout') { State.select([created.id]); editText(created, true); }
       else State.select([created.id]);
       if (tool === 'zone' && typeof Aro !== 'undefined') Aro.zoneLinkDialog(created); // name it + link its jobs straight away
-    }, clearPreview /* abort: second finger arrived — discard, nothing committed */, e);
+    }, clearPreview /* abort: second finger arrived — discard, nothing committed */, e, true);
   }
 
   /* ================= creation: multi-click poly tools ================= */
@@ -588,14 +612,14 @@ const Tools = (() => {
       const additive = e.shiftKey;
       if (additive) { State.select([id], true); return; }
       if (!S().selection.has(id)) State.select([id]);
-      beginMoveDrag(p);
+      beginMoveDrag(e, p);
       return;
     }
     // empty space → marquee
     beginMarquee(e, p);
   }
 
-  function beginMoveDrag(p0) {
+  function beginMoveDrag(e, p0) {
     const ids = [...S().selection];
     if (!ids.length) return;
     // zones are position-locked unless explicitly unlocked — a stray drag
@@ -629,7 +653,7 @@ const Tools = (() => {
       }
     }, () => {
       if (started) State.undo();   // gesture abort: put the markups back
-    });
+    }, e, false);
   }
 
   function beginMarquee(e, p0) {
@@ -652,7 +676,7 @@ const Tools = (() => {
         .filter(m => Geo.rectsIntersect(box, Geo.markupBounds(m)))
         .map(m => m.id);
       State.select(hits, additive);
-    }, clearPreview);
+    }, clearPreview, e, false);
   }
 
   /* ---- handle drags (vertex move / resize / callout anchor) ---- */
@@ -692,7 +716,7 @@ const Tools = (() => {
     }, () => {
       clearPreview();
       if (started) State.undo();
-    }, e);
+    }, e, true);
   }
 
   function resizeRect(m, kind, p, uniform) {
@@ -994,7 +1018,13 @@ const Tools = (() => {
     window.addEventListener('pointerup', touchEnd, true);
     window.addEventListener('pointercancel', touchEnd, true);
     // ground truth from native touch events (always delivered): no fingers = no gesture
-    const touchSync = e => { if (e.touches && e.touches.length === 0) { activeTouches.clear(); Loupe.end(); } };
+    const touchSync = e => {
+      if (e.touches && e.touches.length === 0) {
+        activeTouches.clear();
+        Loupe.end();
+        if (activeDragFinish) activeDragFinish();   // every finger is up: a drag still "running" lost its pointerup
+      }
+    };
     window.addEventListener('touchend', touchSync, true);
     window.addEventListener('touchcancel', touchSync, true);
     // an engine-initiated cancel ends the tap without running it
