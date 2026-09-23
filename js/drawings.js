@@ -224,6 +224,13 @@ const Drawings = (() => {
     });
   }
 
+  /** A sheet removed from the device: the register shows it as not downloaded again. */
+  function forget(fp) {
+    let changed = false;
+    for (const k of Object.keys(st.map)) if (st.map[k].fp === fp) { delete st.map[k]; changed = true; }
+    if (changed) { saveJson(MAP_KEY, st.map); renderCards(); }
+  }
+
   /** A revision imported by hand replaced the PDF: the register's link follows it. */
   function rekey(oldFp, newFp) {
     let changed = false;
@@ -624,5 +631,5 @@ const Drawings = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onCloudState, sync, openDialog, openPanel, closePanel, togglePanel, rekey, parseName, downloadSection, _state: st };
+  return { onCloudState, sync, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection, _state: st };
 })();

@@ -95,6 +95,18 @@ const Store = (() => {
       await reqP(db.transaction('projects', 'readwrite').objectStore('projects').delete(fingerprint));
     } catch (e) { /* ignore */ }
   }
+  async function deletePdf(fingerprint) {
+    try {
+      const db = await open();
+      await reqP(db.transaction('pdfs', 'readwrite').objectStore('pdfs').delete(fingerprint));
+    } catch (e) { /* ignore */ }
+  }
+  async function deleteThumb(fingerprint) {
+    try {
+      const db = await open();
+      await reqP(db.transaction('thumbs', 'readwrite').objectStore('thumbs').delete(fingerprint));
+    } catch (e) { /* ignore */ }
+  }
 
   /** Every project on the device, newest first, with what the list shows about it. */
   async function list() {
@@ -134,5 +146,5 @@ const Store = (() => {
     }
   }
 
-  return { savePdf, saveProject, get, getPdf, record, deleteProject, list, saveThumb, allThumbs };
+  return { savePdf, saveProject, get, getPdf, record, deleteProject, deletePdf, deleteThumb, list, saveThumb, allThumbs };
 })();

@@ -114,6 +114,10 @@ const Project = (() => {
   async function importRevision(bytes, fileName) {
     const S = State.S;
     if (!S.pdf) { await Viewer.openPdf(bytes, fileName); return; }
+    // the current sheet's last change goes out first, so the cloud map is
+    // settled (right version) before the project is re-keyed
+    State.flushAutosave();
+    if (typeof Cloud !== 'undefined' && Cloud.settle) await Cloud.settle();
     const oldFp = S.fingerprint;
     const old = {
       fp: oldFp, fileName: S.fileName, label: 'Rev ' + ((S.revisions || []).length + 1),
@@ -188,6 +192,44 @@ const Project = (() => {
     State.S.revisions = (State.S.revisions || []).filter(r => r.fp !== fp);
     State.emit('project');
     State.touch();
+  }
+
+  /* ---------- closing and removing ---------- */
+
+  /** Close the open drawing: nothing stays on screen, Home takes over. */
+  function closeDoc() {
+    const S = State.S;
+    if (!S.pdf) return;
+    Viewer.closeDoc();
+    State.resetDoc();
+    S.pdf = null; S.pdfBytes = null; S.fileName = ''; S.fingerprint = ''; S.pageCount = 0; S.page = 1;
+    S.pageW = 0; S.pageH = 0; S.jobRef = ''; S.exportPrefs = null;
+    try { history.replaceState(null, '', location.pathname); } catch (e) { /* file:// etc. */ }
+    State.emit('doc');
+    if (typeof Home !== 'undefined') Home.setMode('home');
+  }
+
+  /** Remove a project from this device: record, PDF, thumbnails, earlier revisions, autosave and view prefs. */
+  async function removeFromDevice(fp) {
+    if (!fp) return;
+    const wasOpen = !!State.S.pdf && State.S.fingerprint === fp;
+    const rec = await Store.record(fp);
+    const revFps = new Set((rec && rec.data && Array.isArray(rec.data.revisions) ? rec.data.revisions : []).map(r => r && r.fp).filter(Boolean));
+    if (wasOpen) {
+      for (const r of State.S.revisions || []) if (r.fp) revFps.add(r.fp);
+      // nothing pending is worth keeping, and no push must run for a project being removed
+      State.discardAutosave();
+      if (typeof Cloud !== 'undefined' && Cloud.forget) Cloud.forget(fp);
+      closeDoc();
+    }
+    await Store.deleteProject(fp);
+    await Store.deletePdf(fp);
+    await Store.deleteThumb(fp);
+    for (const rf of revFps) { await Store.deletePdf(rf); await Store.deleteThumb(rf); }
+    try { localStorage.removeItem('abmt:doc:' + fp); localStorage.removeItem('abmt:view:' + fp); } catch (e) { /* ignore */ }
+    if (typeof Cloud !== 'undefined' && Cloud.forget) Cloud.forget(fp);
+    if (typeof Drawings !== 'undefined' && Drawings.forget) Drawings.forget(fp);
+    if (typeof Home !== 'undefined') Home.refresh();
   }
 
   /** An empty project record for a sheet stored on the device before it is ever opened (drawings-panel downloads). */
@@ -357,5 +399,6 @@ const Project = (() => {
     init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails,
     status, statusLabel, normStatus, setStatus,
     importRevision, scaleMarkups, removeRevision, detailsSnapshot, adoptDetails, blankData,
+    closeDoc, removeFromDevice,
   };
 })();

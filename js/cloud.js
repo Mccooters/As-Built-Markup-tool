@@ -14,6 +14,7 @@ const Cloud = (() => {
 
   const KEY = 'abmt:cloud';        // {token, name}
   const MAP_KEY = 'abmt:cloudmap'; // fingerprint → {id, version} known to this device
+  const GONE_KEY = 'abmt:cloudgone'; // fingerprints deleted from the team cloud while this device held a copy
   const API = '/api/cloud';
 
   const st = {
@@ -29,6 +30,7 @@ const Cloud = (() => {
     conflictWith: null,   // registry row that beat us, while unresolved
   };
   let map = {};
+  let gone = new Set();
   let chipEl = null;
   let debTimer = 0;
   let pushing = false, pendingPush = false;
@@ -162,6 +164,25 @@ const Cloud = (() => {
     if (typeof Home !== 'undefined') Home.refresh();
   }
 
+  // Delete a project for the whole team (registry row + files). The caller
+  // clears the device copy; other devices learn on their next save.
+  async function deleteProject(id) {
+    const r = await call('delete', { id });
+    st.projects = st.projects.filter(p => p.id !== id);
+    for (const fp of Object.keys(map)) if (map[fp].id === id) delete map[fp];
+    saveJson(MAP_KEY, map);
+    if (typeof Home !== 'undefined') Home.refresh();
+    return r;
+  }
+
+  // A project removed from this device: nothing here refers to it any more.
+  function forget(fp) {
+    if (!fp) return;
+    delete map[fp]; saveJson(MAP_KEY, map);
+    if (gone.delete(fp)) saveGone();
+    if (State.S.fingerprint === fp) chipSet('idle');
+  }
+
   // Move a team project between In progress / DLP / Completed from the list.
   async function setStatus(id, status) {
     const r = await call('setstatus', { id, status });
@@ -268,10 +289,44 @@ const Cloud = (() => {
     return bytes;
   }
 
-  async function push(opts = {}) {
+  // The team deleted this drawing while the device still held it: it stays
+  // here, device-only, until someone chooses to share it again.
+  const saveGone = () => saveJson(GONE_KEY, [...gone]);
+  function goneNow(fp) {
+    gone.add(fp); saveGone();
+    delete map[fp]; saveJson(MAP_KEY, map);
+    st.projects = st.projects.filter(p => p.fingerprint !== fp);
+    chipSet('gone');
+    App.toast('This drawing was deleted from the team cloud by someone on the team. It stays on this device only.', 'warn', 0, [
+      { label: 'Share it again', run: () => shareAgain(fp) },
+      { label: 'OK', run: () => {} },
+    ]);
+    if (typeof Home !== 'undefined') Home.refresh();
+  }
+  function shareAgain(fp) {
+    gone.delete(fp); saveGone();
+    if (State.S.fingerprint === fp) push({ force: true });
+  }
+
+  // Everything a push sends is captured before the first await: another
+  // drawing can open while the upload is in flight, and the old row must
+  // never receive the new sheet's data.
+  let inflight = Promise.resolve();
+  function push(opts = {}) {
+    const p = doPush(opts);
+    inflight = p.catch(() => {});
+    return p;
+  }
+  /** Wait for the push in flight (a revision import needs the map settled before it re-keys). */
+  async function settle() {
+    for (let i = 0; i < 5 && (pushing || pendingPush); i++) await inflight;
+  }
+
+  async function doPush(opts = {}) {
     if (!st.token || !State.S.pdf || !State.S.fingerprint || st.enabled === false) return;
     if (pushing) { pendingPush = true; return; }
     if (st.conflictWith && !opts.force) { chipSet('conflict'); return; }
+    if (gone.has(State.S.fingerprint) && !opts.force) { chipSet('gone'); return; }
     pushing = true;
     chipSet('saving');
     try {
@@ -287,6 +342,8 @@ const Cloud = (() => {
       const sentRevs = (known && known.revs) || [];
       const revFps = (State.S.revisions || []).map(r => r.fp).filter(f => f && !sentRevs.includes(f));
       const fileName = String(State.S.fileName || '').slice(0, 200);
+      const body = JSON.stringify(Project.serialize(false));
+      const pdfBytes = State.S.pdfBytes;
       const prep = await call('prepare', {
         fingerprint: fp, name, aroNo, fileName,
         version: known ? known.version : 0,
@@ -296,16 +353,16 @@ const Cloud = (() => {
         prevFingerprint: known && known.prevFp ? known.prevFp : undefined,
         revFingerprints: revFps.length ? revFps : undefined,
       });
+      if (prep.gone) { goneNow(fp); return; }
       if (prep.conflict) { conflictPrompt(prep.project, !!prep.superseded); chipSet('conflict'); return; }
 
-      const body = JSON.stringify(Project.serialize(false));
       let up = await fetch(prep.uploadData, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(120000) });
       if (!up.ok) throw new Error('markup upload failed (HTTP ' + up.status + ')');
 
       let pdfUploaded = false, pdfSize = 0;
-      if (prep.needPdf && prep.uploadPdf && State.S.pdfBytes) {
-        up = await fetch(prep.uploadPdf, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: State.S.pdfBytes, signal: AbortSignal.timeout(600000) });
-        if (up.ok) { pdfUploaded = true; pdfSize = State.S.pdfBytes.length; }
+      if (prep.needPdf && prep.uploadPdf && pdfBytes) {
+        up = await fetch(prep.uploadPdf, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: pdfBytes, signal: AbortSignal.timeout(600000) });
+        if (up.ok) { pdfUploaded = true; pdfSize = pdfBytes.length; }
       }
 
       const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, fileName, pdfUploaded, pdfSize, pdfPath: prep.pdfPath || '', status: sendStatus ? status : undefined });
@@ -372,6 +429,7 @@ const Cloud = (() => {
     offline: '☁ offline — will sync',
     error: '☁ sync failed — tap',
     conflict: '☁ newer version exists — tap',
+    gone: '☁ deleted from team — device only',
   };
 
   function chipSet(state, msg) {
@@ -388,6 +446,13 @@ const Cloud = (() => {
   function chipTap() {
     const s = st.sync;
     if (s.state === 'conflict') { conflictPrompt(null); return; }
+    if (s.state === 'gone') {
+      App.toast('Deleted from the team cloud — this copy lives on this device only.', 'info', 0, [
+        { label: 'Share it again', run: () => shareAgain(State.S.fingerprint) },
+        { label: 'OK', run: () => {} },
+      ]);
+      return;
+    }
     if (s.state === 'error') { App.toast('Cloud sync failed: ' + (s.msg || 'unknown error') + ' — retrying on the next change.', 'warn', 7000); push(); return; }
     if (s.state === 'offline') { App.toast('No signal — markups are safe on this device and sync when you’re back online.', 'info', 6000); push(); return; }
     if (s.state === 'synced') App.toast('This drawing is synced to the team cloud (as ' + st.name + ').', 'ok', 4000);
@@ -399,6 +464,7 @@ const Cloud = (() => {
     const saved = loadJson(KEY, {});
     st.token = saved.token || ''; st.name = saved.name || '';
     map = loadJson(MAP_KEY, {});
+    gone = new Set(loadJson(GONE_KEY, []));
 
     chipEl = document.createElement('button');
     chipEl.id = 'cloudChip';
@@ -408,6 +474,8 @@ const Cloud = (() => {
     document.body.appendChild(chipEl);
 
     State.on('autosave', schedulePush);
+    // a flushed autosave (the drawing is about to change) goes up now, not after the debounce
+    State.on('flush', () => { clearTimeout(debTimer); push(); });
     State.on('doc', () => {
       st.conflictWith = null;
       chipSet('idle');
@@ -437,5 +505,5 @@ const Cloud = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { signIn, signOut, openCloud, push, refreshList, refreshListIfStale, setStatus, rekey, fetchRevision, setTeamScope, _state: st };
+  return { signIn, signOut, openCloud, push, settle, refreshList, refreshListIfStale, setStatus, rekey, fetchRevision, deleteProject, forget, setTeamScope, _state: st };
 })();

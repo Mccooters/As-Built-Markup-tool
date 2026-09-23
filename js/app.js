@@ -480,9 +480,12 @@ const App = (() => {
           : 'No earlier revisions yet'} · <button type="button" class="pj-link" id="pj-revs">Import / compare…</button></div></div>
       <p class="muted">Saved with the drawing — autosave, the .airmark file and the team cloud. Printed on daily reports, CSV schedules and delivery dockets; the project name is what Home, recents and the team list show.</p>
       <div class="modal-actions">
+        <button class="mini-btn danger" id="pj-remove" title="Remove this project from the device, or delete it from the team cloud">Remove…</button>
+        <span style="flex:1"></span>
         <button class="mini-btn" id="pj-cancel">Cancel</button>
         <button class="mini-btn primary" id="pj-ok">Save</button>
       </div>`, (box, close) => {
+      $('pj-remove').onclick = () => { close(); Home.projectMenu(S.fingerprint); };
       $('pj-name').focus();
       $('pj-ok').onclick = () => {
         const g = id => $(id).value.trim();

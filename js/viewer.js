@@ -200,6 +200,18 @@ const Viewer = (() => {
     buildThumbs();
   }
 
+  /** Take the document down: the sheet, its layers and thumbnails go, the drop hint comes back. */
+  function closeDoc() {
+    if (renderTask) { try { renderTask.cancel(); } catch (_) { /* ignore */ } renderTask = null; }
+    clearTimeout(renderTimer);
+    const S = State.S;
+    if (S.pdf) { try { S.pdf.destroy(); } catch (_) { /* ignore */ } }
+    el.overlay.innerHTML = ''; el.preview.innerHTML = ''; el.sel.innerHTML = ''; el.edit.innerHTML = ''; el.thumbList.innerHTML = '';
+    el.wrap.classList.add('hidden');
+    el.dropHint.classList.remove('hidden');
+    Object.keys(pageDims).forEach(k => delete pageDims[k]);
+  }
+
   async function getPageDims(n) {
     if (pageDims[n]) return pageDims[n];
     const page = await State.S.pdf.getPage(n);
@@ -397,7 +409,7 @@ const Viewer = (() => {
   const isSpacePan = () => spaceDown;
 
   return {
-    init, openPdf, renderPage, layout, scheduleRender,
+    init, openPdf, closeDoc, renderPage, layout, scheduleRender,
     setZoom, zoomAt, zoomIn, zoomOut, fitPage, fitWidth,
     gotoPage, buildThumbs, syncThumbActive, toPage, pageRect, flashMarkup, getPageDims, isSpacePan,
     el,

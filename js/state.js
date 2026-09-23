@@ -127,8 +127,17 @@ const State = (() => {
   function touch() {
     S.dirty = true;
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => emit('autosave'), 800);
+    saveTimer = setTimeout(() => { saveTimer = null; emit('autosave'); }, 800);
   }
+  /** A change is still waiting for its autosave tick: save it now — before the document changes underneath it. */
+  function flushAutosave() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer); saveTimer = null;
+    emit('autosave');
+    emit('flush');   // the cloud pushes straight away rather than after its debounce
+  }
+  /** Drop a pending autosave (the project is being removed — nothing to keep). */
+  function discardAutosave() { clearTimeout(saveTimer); saveTimer = null; }
 
   const newId = () => 'm' + (S.idCounter++);
 
@@ -398,6 +407,7 @@ const State = (() => {
 
   /* ---- document lifecycle ---- */
   function resetDoc() {
+    flushAutosave();   // the outgoing drawing's last change must not die with its timer
     S.markups = []; S.countGroups = []; S.pageScales = {}; S.defaultScale = null;
     S.images = {};
     S.aroSite = null;
@@ -423,6 +433,6 @@ const State = (() => {
     setGroupHidden, setGroupCollapsed, showAllGroups, CATEGORY_ORDER, CATEGORY_NAME,
     scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
-    resetDoc, newId, touch, addImage,
+    resetDoc, newId, touch, flushAutosave, discardAutosave, addImage,
   };
 })();

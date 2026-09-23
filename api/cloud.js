@@ -410,7 +410,10 @@ const ACTIONS = {
     if (!row && UUID.test(knownId)) {
       // the device knows a row, but the drawing's fingerprint has changed
       const byId = (await sb('GET', rowsPath('?id=eq.' + knownId + '&limit=1')))[0];
-      if (byId) {
+      if (!byId) {
+        // deleted from the team cloud since this device last synced — never bring it back quietly
+        if (!force) return { ok: true, gone: true };
+      } else {
         if (prevFingerprint && str(byId.fingerprint) === prevFingerprint) {
           // a new revision of the drawing: the project keeps its row, the row follows the new PDF
           const patched = await sb('PATCH', rowsPath('?id=eq.' + knownId), { fingerprint, pdf_path: '', pdf_size: 0 }, { Prefer: 'return=representation' });
@@ -492,6 +495,23 @@ const ACTIONS = {
     return { ok: true, project: slimRow(rows[0]) };
   },
 
+  // Delete a project for the whole team: the registry row and every object
+  // under projects/<id>/ (markup versions, the drawing, earlier revisions).
+  async delete(q, body) {
+    const id = str(body && body.id).trim();
+    if (!UUID.test(id)) return { ok: false, httpStatus: 400, statusmessage: 'Bad project id' };
+    const row = (await sb('GET', rowsPath('?id=eq.' + id + '&limit=1')))[0];
+    if (!row) return { ok: false, httpStatus: 404, statusmessage: 'Project not found — already deleted?' };
+    let removed = 0;
+    try {
+      const objs = await sb('POST', `/storage/v1/object/list/${BUCKET}`, { prefix: `projects/${id}`, limit: 1000, offset: 0 });
+      const names = (Array.isArray(objs) ? objs : []).map(o => `projects/${id}/${str(o.name)}`).filter(n => !n.endsWith('/'));
+      if (names.length) { await sb('DELETE', `/storage/v1/object/${BUCKET}`, { prefixes: names }); removed = names.length; }
+    } catch (e) { /* the row goes regardless — an orphaned object is harmless */ }
+    await sb('DELETE', rowsPath('?id=eq.' + id), undefined, { Prefer: 'return=minimal' });
+    return { ok: true, removed, project: slimRow(row) };
+  },
+
   // A signed download for one earlier revision of a project's drawing.
   async revurl(q, body) {
     const id = str(body && body.id).trim();
@@ -554,8 +574,8 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
-const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, open: 1, teamscope: 1, spfile: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
+const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamscope: 1, spfile: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
 

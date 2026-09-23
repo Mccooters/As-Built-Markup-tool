@@ -156,7 +156,71 @@ const Home = (() => {
         <span class="pj-meta">${meta.join(' · ')}</span>
       </button>
       <select class="pj-sel ${r.status}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="Project status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${opts}</select>
+      <button type="button" class="pj-more" data-fp="${esc(r.fp)}" title="Open · remove from this device · delete from the team" aria-label="More for ${esc(r.name)}">⋯</button>
     </div>`;
+  }
+
+  /** Per-project actions: open, remove from this device, delete from the team cloud. */
+  function projectMenu(fp) {
+    const row = mergedProjects().find(r => r.fp === fp);
+    if (!row) return;
+    const cl = cloudState();
+    const signed = !!(cl && cl.token);
+    const onDevice = !!row.onDevice;
+    const inCloud = !!row.inCloud && !!row.id;
+    const where = [
+      onDevice ? (row.markups ? row.markups + ' markup' + (row.markups === 1 ? '' : 's') + ' on this device' : 'on this device') : 'not on this device',
+      row.inCloud ? 'in the team cloud' + (row.updatedBy ? ' (' + esc(row.updatedBy) + ' · ' + esc(ageOf(row.updatedAt)) + ')' : '') : 'this device only',
+    ].join(' · ');
+    // destructive actions: the first tap arms the button, a second within 6 s does it
+    const arm = (btn, run) => {
+      const b = btn.querySelector('b'), orig = b.textContent;
+      let armed = false, t = 0;
+      btn.addEventListener('click', async () => {
+        if (!armed) {
+          armed = true; btn.classList.add('armed'); b.textContent = 'Tap again to confirm';
+          t = setTimeout(() => { armed = false; btn.classList.remove('armed'); b.textContent = orig; }, 6000);
+          return;
+        }
+        clearTimeout(t); btn.disabled = true; b.textContent = 'Working…';
+        await run();
+      });
+    };
+    App.modal(`
+      <h3>${esc(row.name)}</h3>
+      <p class="muted">${where}</p>
+      <div class="imp-opts">
+        <button type="button" class="imp-opt" id="pm-open"><b>${row.open ? 'Back to the drawing' : 'Open'}</b><span>${onDevice ? 'From this device — works offline.' : 'Downloads the drawing and markups from the team cloud.'}</span></button>
+        ${onDevice ? `<button type="button" class="imp-opt${row.inCloud ? '' : ' danger'}" id="pm-device"><b>Remove from this device</b><span>${row.inCloud
+          ? 'Frees the space here. The team cloud copy stays and it can be opened again from this list.'
+          : 'This is the only copy — the drawing and its markups are gone for good.'}</span></button>` : ''}
+        ${inCloud && signed ? `<button type="button" class="imp-opt danger" id="pm-cloud"><b>Delete from the team cloud</b><span>Gone for everyone — drawing, markups and earlier revisions — and removed from this device. Another device that already downloaded it keeps that copy, as a device-only project.</span></button>` : ''}
+      </div>
+      <div class="modal-actions"><button class="mini-btn" id="pm-cancel">Cancel</button></div>`, (box, close) => {
+      box.querySelector('#pm-cancel').onclick = close;
+      box.querySelector('#pm-open').onclick = () => { close(); openProject(row.fp, row.id); };
+      const dev = box.querySelector('#pm-device');
+      if (dev) {
+        const run = async () => {
+          close();
+          await Project.removeFromDevice(row.fp);
+          App.toast(`${row.name} removed from this device${row.inCloud ? ' — still in the team cloud' : ''}.`, 'ok', 5000);
+        };
+        if (row.inCloud) dev.onclick = run; else arm(dev, run);
+      }
+      const cld = box.querySelector('#pm-cloud');
+      if (cld) arm(cld, async () => {
+        try {
+          await Cloud.deleteProject(row.id);
+          await Project.removeFromDevice(row.fp);
+          close();
+          App.toast(`${row.name} deleted from the team cloud and this device.`, 'ok', 6000);
+        } catch (e) {
+          close();
+          App.toast('Couldn’t delete it from the team cloud: ' + e.message, 'error', 8000);
+        }
+      });
+    });
   }
 
   function sectionHtml(key, list) {
@@ -234,6 +298,7 @@ const Home = (() => {
       paintProjects();
     }));
     el.querySelectorAll('.pj-main').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openProject(b.dataset.fp, b.dataset.id); }));
+    el.querySelectorAll('.pj-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); projectMenu(b.dataset.fp); }));
     el.querySelectorAll('.pj-sel').forEach(s => {
       s.addEventListener('click', e => e.stopPropagation());
       s.addEventListener('change', e => { e.stopPropagation(); changeStatus(s.dataset.fp, s.dataset.id, s.value); });
@@ -478,5 +543,5 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, renderProjects, projectRows: mergedProjects, openProject, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
+  return { setMode, refresh, renderProjects, projectRows: mergedProjects, openProject, projectMenu, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();

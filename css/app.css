@@ -970,6 +970,16 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
   border-radius: 999px; padding: 4px 8px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
 }
 .pj-empty { margin: 6px 0 4px; color: var(--txt-dim); font-size: 13px; }
+.pj-more {
+  flex: 0 0 auto; width: 30px; height: 28px; padding: 0; background: var(--bg3); border: 1px solid var(--edge);
+  border-radius: 999px; color: var(--txt-dim); cursor: pointer; font: inherit; font-size: 15px; line-height: 1;
+}
+.pj-more:hover { border-color: var(--accent); color: var(--txt); }
+/* destructive choices in the project menu */
+.imp-opt.danger { border-color: rgba(224,85,85,.45); }
+.imp-opt.danger b { color: #e05555; }
+.imp-opt.armed { border-color: #e05555; background: rgba(224,85,85,.12); }
+.imp-opt:disabled { opacity: .6; cursor: default; }
 /* several sheets on one project: a heading, then the drawings indented under it */
 .pj-projhead { display: flex; align-items: center; gap: 8px; padding: 9px 4px 3px; font-size: 12.5px; font-weight: 600; border-top: 1px solid var(--edge); }
 .pj-projhead .pj-count { margin-left: 0; }
