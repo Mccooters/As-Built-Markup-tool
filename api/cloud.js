@@ -348,7 +348,9 @@ async function spResolveByPath(p) {
     ? await graph(`/drives/${encodeURIComponent(best.id)}/root:/${rel.split('/').map(encodeURIComponent).join('/')}`)
     : await graph(`/drives/${encodeURIComponent(best.id)}/root`);
   if (!it || !it.id) throw new Error('SharePoint returned no item for ' + p.folderPath);
-  return { driveId: str(it.parentReference && it.parentReference.driveId) || best.id, id: str(it.id), name: str(it.name) || best.name, folder: !!it.folder, via: 'site path', raw: it };
+  // the library itself as the root: SharePoint calls that item "root" — show the library's name
+  const isRoot = !rel || it.root !== undefined;
+  return { driveId: str(it.parentReference && it.parentReference.driveId) || best.id, id: str(it.id), name: isRoot ? (best.name || str(it.name)) : (str(it.name) || best.name), folder: !!it.folder || isRoot, via: 'site path', raw: it };
 }
 
 // Resolve a folder address to a drive item: the site-path route first, then
@@ -370,7 +372,9 @@ async function spResolveUrl(p) {
     }
     const driveId = str(it && it.parentReference && it.parentReference.driveId);
     if (!it || !it.id || !driveId) throw new Error('SharePoint resolved the folder URL but returned no drive item — is it a folder inside a document library?');
-    got = { driveId, id: str(it.id), name: str(it.name), folder: !!it.folder, via: 'sharing link', raw: it };
+    const isRoot = it.root !== undefined;
+    const last = (p.folderPath || '').split('/').filter(Boolean).pop() || '';
+    got = { driveId, id: str(it.id), name: isRoot ? (last || str(it.name)) : str(it.name), folder: !!it.folder || isRoot, via: 'sharing link', raw: it };
   }
   return got;
 }
@@ -432,7 +436,8 @@ async function spWalk(from) {
       for (const it of (j && j.value || [])) {
         seen++;
         if (it.folder) {
-          if (cur.depth < 3) queue.push({ id: str(it.id), path: cur.path ? cur.path + ' / ' + str(it.name) : str(it.name), depth: cur.depth + 1 });
+          // four levels down reaches Library / Status / Project / Engineering / Drawings; the item cap bounds the rest
+          if (cur.depth < 4) queue.push({ id: str(it.id), path: cur.path ? cur.path + ' / ' + str(it.name) : str(it.name), depth: cur.depth + 1 });
         } else if (/\.pdf$/i.test(str(it.name))) {
           (sections[cur.path] = sections[cur.path] || []).push({
             id: str(it.id),

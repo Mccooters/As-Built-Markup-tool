@@ -156,6 +156,15 @@ const Drawings = (() => {
       st.regs[key] = { when: Date.now(), root: r.root || '', path: (r.folder && r.folder.path) || '', folder: r.folder || null, sections: r.sections || [] };
       saveRegs();
       st.status[key] = { phase: 'idle', error: '', errorKind: '' };
+      // the folder was moved or renamed on SharePoint (a job going from In-Progress
+      // to DLP, say): the link is by SharePoint's id, so it still works — the open
+      // drawing's copy of the name and path just catches up
+      if (key !== 'root' && r.folder && State.S.pdf) {
+        const own = Project.spFolder();
+        if (own && own.id === key && (own.path !== (r.folder.path || '') || own.name !== (r.folder.name || ''))) {
+          Project.setDetails({ spFolder: { id: key, name: r.folder.name || '', path: r.folder.path || '' } });
+        }
+      }
     } catch (e) {
       st.status[key] = {
         phase: 'idle',
