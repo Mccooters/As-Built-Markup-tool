@@ -269,6 +269,9 @@ const Drawings = (() => {
     if (!ctx || !ctx.key || ctx.key === 'root') return;
     const reg = regOf(ctx.key);
     const folder = (reg && reg.folder) || null;
+    // a project set up on Home ahead of its drawings: this sheet is its first
+    const stub = typeof Home !== 'undefined' && Home.stubFor ? Home.stubFor(ctx.key) : null;
+    if (stub) { Project.adoptDetails(stub); Home.removeStub(stub.stubId); return; }
     let fromRow = null;
     if (typeof Home !== 'undefined' && Home.projectRows) {
       fromRow = Home.projectRows().find(r => r.onDevice && r.spFolder && r.spFolder.id === ctx.key && r.fp !== State.S.fingerprint) || null;
@@ -546,7 +549,7 @@ const Drawings = (() => {
     const g = Home.projectOf(cur);
     const rows = g ? g.rows : Home.projectRows().filter(r => r.fp === cur);
     return rows
-      .filter(r => !spFps.has(r.fp))
+      .filter(r => !spFps.has(r.fp) && !r.stub)
       .map(r => ({ key: 'pj:' + r.fp, fp: r.fp, id: r.id, name: r.name, fileName: r.fileName, state: r.onDevice ? 'have' : 'cloud', markups: r.markups || 0, isCur: r.fp === cur }));
   }
 
@@ -882,6 +885,16 @@ const Drawings = (() => {
     maybeAutoSync(cardKey());
   }
 
+  // Home repaints its project list often; the card only needs redrawing when
+  // the set of projects with folders (its picker) actually changed
+  let linkedSig = '';
+  function projectsChanged() {
+    const sig = linkedProjects().map(p => p.key + '|' + p.title).join(',');
+    if (sig === linkedSig) return;
+    linkedSig = sig;
+    renderCards();
+  }
+
   function init() {
     st.regs = loadJson(REGS_KEY, {});
     const root = loadJson(REG_KEY, null);
@@ -916,5 +929,5 @@ const Drawings = (() => {
   document.addEventListener('DOMContentLoaded', init);
 
   return { onCloudState, sync, checkSetup, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection,
-    available, summary, linkedProjects, guessName, pickFolder, selectKey, _state: st };
+    available, summary, linkedProjects, guessName, pickFolder, selectKey, projectsChanged, _state: st };
 })();

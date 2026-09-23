@@ -427,61 +427,141 @@ const App = (() => {
 
   /* ================= project details ================= */
 
-  function projectDialog() {
-    if (!State.S.pdf) { toast('Open a drawing first — project details are saved with it.', 'warn'); return; }
-    const S = State.S, d = Project.details();
+  /**
+   * The project-details fields — name, status, site, client, contractor,
+   * contact, phone, AroFlo project #, job ref, stock list, SharePoint folder —
+   * shared by Project details (an open drawing) and New project (no drawing yet).
+   * d = the details, x = { aroNo, jobRef, holder, spf, namePlaceholder }.
+   */
+  function projectFormHtml(d, x) {
     const v = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    // the contractor is usually us — remembered per device as the default for the next project
-    let contractorDefault = '';
-    try { contractorDefault = localStorage.getItem('abmt:contractor') || ''; } catch (e) { /* ignore */ }
-    const contractor = d.contractor != null && d.contractor !== '' ? d.contractor : (S.project ? '' : contractorDefault);
-    const aroNo = (S.aroSite && S.aroSite.project) || '';
     // the project's stock list: one AroFlo holder (site container, ute, store)
-    const linked = (S.aroSite && S.aroSite.holder) || '';
-    const holders = typeof Aro !== 'undefined' ? Aro.holderList() : [];
-    if (linked && !holders.some(h => h.name === linked)) holders.unshift({ name: linked, type: '', kind: '' });
+    const holders = typeof Aro !== 'undefined' ? Aro.holderList().slice() : [];
+    if (x.holder && !holders.some(h => h.name === x.holder)) holders.unshift({ name: x.holder, type: '', kind: '' });
     const holderOpts = '<option value="">— Not linked (all locations) —</option>'
-      + holders.map(h => `<option value="${v(h.name)}"${h.name === linked ? ' selected' : ''}>${v(h.name)}${h.kind ? ' — ' + v(h.kind) : ''}</option>`).join('');
-    const stNow = Project.status();
+      + holders.map(h => `<option value="${v(h.name)}"${h.name === x.holder ? ' selected' : ''}>${v(h.name)}${h.kind ? ' — ' + v(h.kind) : ''}</option>`).join('');
+    const st = Project.normStatus(d.status);
     // the project's SharePoint drawings folder (deployments with a register)
     const spOn = typeof Drawings !== 'undefined' && Drawings.available && Drawings.available();
-    let spf = Project.spFolder(), spfChanged = false;
-    modal(`
-      <h3>Project details</h3>
+    const spf = x.spf;
+    return `
       <div class="form-row two">
         <div style="flex:2 1 0"><label>Project name</label>
-          <input type="text" id="pj-name" value="${v(d.name)}" placeholder="${v(String(S.fileName || '').replace(/\.pdf$/i, ''))}"></div>
+          <input type="text" id="pj-name" value="${v(d.name)}" placeholder="${v(x.namePlaceholder || 'e.g. Woolworths DC')}"></div>
         <div><label>Status</label>
           <select id="pj-status">
-            <option value="active"${stNow === 'active' ? ' selected' : ''}>In progress</option>
-            <option value="dlp"${stNow === 'dlp' ? ' selected' : ''}>DLP — defects liability</option>
-            <option value="done"${stNow === 'done' ? ' selected' : ''}>Completed / archived</option>
+            <option value="active"${st === 'active' ? ' selected' : ''}>In progress</option>
+            <option value="dlp"${st === 'dlp' ? ' selected' : ''}>DLP — defects liability</option>
+            <option value="done"${st === 'done' ? ' selected' : ''}>Completed / archived</option>
           </select></div>
       </div>
       <div class="form-row"><label>Site / location</label>
         <input type="text" id="pj-site" value="${v(d.site)}" placeholder="Site name or address"></div>
       <div class="form-row two">
         <div><label>Builder / client</label><input type="text" id="pj-client" value="${v(d.client)}" placeholder="Who the work is for"></div>
-        <div><label>Contractor</label><input type="text" id="pj-contractor" value="${v(contractor)}" placeholder="Installing contractor"></div>
+        <div><label>Contractor</label><input type="text" id="pj-contractor" value="${v(d.contractor)}" placeholder="Installing contractor"></div>
       </div>
       <div class="form-row two">
         <div><label>On-site contact</label><input type="text" id="pj-contact" value="${v(d.contact)}" placeholder="Name"></div>
         <div><label>Contact phone</label><input type="tel" id="pj-phone" value="${v(d.phone)}" placeholder="04…"></div>
       </div>
       <div class="form-row two">
-        <div><label>AroFlo project #</label><input type="text" id="pj-aro" value="${v(aroNo)}" placeholder="e.g. 10" inputmode="numeric"></div>
-        <div><label>AroFlo job / task ref</label><input type="text" id="pj-ref" value="${v(S.jobRef)}" placeholder="e.g. Task #48213"></div>
+        <div><label>AroFlo project #</label><input type="text" id="pj-aro" value="${v(x.aroNo)}" placeholder="e.g. 10" inputmode="numeric"></div>
+        <div><label>AroFlo job / task ref</label><input type="text" id="pj-ref" value="${v(x.jobRef)}" placeholder="e.g. Task #48213"></div>
       </div>
       <div class="form-row"><label>Stock list — AroFlo holder this job draws from</label>
         <select id="pj-holder">${holderOpts}</select>
         <div class="muted" style="margin-top:4px">${holders.length
-          ? 'The site container, ute or store for this job. Site stock opens on it, deliveries book into it, the pick list lands on it and used parts come out of it while this drawing is open.'
+          ? 'The site container, ute or store for this job. Site stock opens on it, deliveries book into it, the pick list lands on it and used parts come out of it while a drawing of the project is open.'
           : 'Open Site stock and sync once (⟳) to list your AroFlo holders here.'}</div></div>
       ${spOn ? `<div class="form-row"><label>SharePoint drawings folder</label>
         <div class="pj-spf"><span id="pj-spf-name" class="${spf ? '' : 'muted'}">${spf ? v(spf.path || spf.name) : 'Not linked — the register shows the whole drawings root'}</span>
           <button type="button" class="pj-link" id="pj-spf-pick">${spf ? 'Change…' : 'Choose folder…'}</button>
           <button type="button" class="pj-link" id="pj-spf-clear"${spf ? '' : ' hidden'}>Unlink</button></div>
-        <div class="muted" style="margin-top:4px">The project’s own drawings folder on SharePoint. The Drawings panel lists it, Home shows it under the project, and sheets opened from it join this project.</div></div>` : ''}
+        <div class="muted" style="margin-top:4px">The project’s own drawings folder on SharePoint. The Drawings panel lists it, Home shows it under the project, and sheets opened from it join this project.</div></div>` : ''}`;
+  }
+
+  /** Wires the form's folder picker; returns a reader for what was typed. */
+  function wireProjectForm(box, x) {
+    const q = id => box.querySelector('#' + id);
+    const g = id => (q(id) ? q(id).value.trim() : '');
+    let spf = x.spf || null, spfChanged = false;
+    const paintSpf = () => {
+      const n = q('pj-spf-name');
+      if (!n) return;
+      n.textContent = spf ? (spf.path || spf.name) : 'Not linked — the register shows the whole drawings root';
+      n.classList.toggle('muted', !spf);
+      q('pj-spf-pick').textContent = spf ? 'Change…' : 'Choose folder…';
+      q('pj-spf-clear').hidden = !spf;
+    };
+    if (q('pj-spf-pick')) {
+      // the picker is its own overlay, so the form stays as typed underneath it
+      q('pj-spf-pick').onclick = () => Drawings.pickFolder({ current: spf, hints: [g('pj-aro'), g('pj-name'), g('pj-site')] }, f => {
+        spf = f; spfChanged = true; paintSpf();
+        // no project name yet: read one off the folder's path (the job's folder, not "03_Engineering") — editable before Save
+        if (!g('pj-name')) { const guess = Drawings.guessName(f); if (guess) q('pj-name').value = guess; }
+      });
+      q('pj-spf-clear').onclick = () => { spf = null; spfChanged = true; paintSpf(); };
+    }
+    return () => ({
+      details: { name: g('pj-name'), site: g('pj-site'), client: g('pj-client'), contractor: g('pj-contractor'), contact: g('pj-contact'), phone: g('pj-phone'), status: g('pj-status') },
+      aroNo: g('pj-aro'), jobRef: g('pj-ref'), holder: g('pj-holder'), spf, spfChanged,
+    });
+  }
+
+  const contractorDefault = () => { try { return localStorage.getItem('abmt:contractor') || ''; } catch (e) { return ''; } };
+  const rememberContractor = c => { try { if (c) localStorage.setItem('abmt:contractor', c); } catch (e) { /* ignore */ } };
+
+  /** A project set up before its first drawing: it goes on Home, and every sheet added to it takes these details. */
+  function newProjectDialog() {
+    modal(`
+      <h3>New project</h3>
+      ${projectFormHtml({ contractor: contractorDefault(), status: 'active' }, { aroNo: '', jobRef: '', holder: '', spf: null, namePlaceholder: 'e.g. Woolworths DC' })}
+      <p class="muted">The project goes on Home straight away. Add its drawings from its SharePoint folder or with Open PDF… — every sheet takes these details, the status and the stock list.</p>
+      <div class="modal-actions">
+        <button class="mini-btn" id="np-cancel">Cancel</button>
+        <button class="mini-btn primary" id="np-ok">Create project</button>
+      </div>`, (box, close) => {
+      $('pj-name').focus();
+      const read = wireProjectForm(box, { spf: null });
+      $('np-cancel').onclick = close;
+      $('np-ok').onclick = () => {
+        const r = read();
+        if (!r.details.name && !r.aroNo && !r.spf) {
+          toast('Give the project a name — or an AroFlo project number or SharePoint folder to know it by.', 'warn', 5000);
+          $('pj-name').focus();
+          return;
+        }
+        const project = { ...r.details };
+        if (r.spf) project.spFolder = { id: r.spf.id, name: r.spf.name || '', path: r.spf.path || '' };
+        const snap = { project, aroSite: (r.aroNo || r.holder) ? { project: r.aroNo, holder: r.holder } : null, jobRef: r.jobRef };
+        rememberContractor(r.details.contractor);
+        close();
+        const made = Home.createProject(snap);
+        if (made.existingFp) {
+          // the same job is already on the list (name, folder or AroFlo number): the drawing goes to it
+          toast(`${made.name} is already on the list — add the drawing to it.`, 'info', 5000);
+          Home.addDrawingDialog(made.existingFp);
+          return;
+        }
+        toast(`${project.name || 'The project'} is on Home — now add its first drawing.`, 'ok', 4000);
+        Home.addDrawingDialog('stub:' + made.id);
+      };
+      box.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') $('np-ok').click(); }));
+    });
+  }
+
+  function projectDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first — project details are saved with it.', 'warn'); return; }
+    const S = State.S, d = Project.details();
+    // the contractor is usually us — remembered per device as the default for the next project
+    const contractor = d.contractor != null && d.contractor !== '' ? d.contractor : (S.project ? '' : contractorDefault());
+    modal(`
+      <h3>Project details</h3>
+      ${projectFormHtml({ ...d, contractor, status: Project.status() }, {
+        aroNo: (S.aroSite && S.aroSite.project) || '', jobRef: S.jobRef || '', holder: (S.aroSite && S.aroSite.holder) || '',
+        spf: Project.spFolder(), namePlaceholder: String(S.fileName || '').replace(/\.pdf$/i, ''),
+      })}
       <div class="form-row"><label>Drawing revisions</label>
         <div class="muted">${(S.revisions || []).length
           ? (S.revisions.length + ' earlier revision' + (S.revisions.length === 1 ? '' : 's') + ' kept for Compare')
@@ -495,32 +575,15 @@ const App = (() => {
       </div>`, (box, close) => {
       $('pj-remove').onclick = () => { close(); Home.projectMenu(S.fingerprint); };
       $('pj-name').focus();
-      const g = id => $(id).value.trim();
-      const paintSpf = () => {
-        const n = $('pj-spf-name');
-        if (!n) return;
-        n.textContent = spf ? (spf.path || spf.name) : 'Not linked — the register shows the whole drawings root';
-        n.classList.toggle('muted', !spf);
-        $('pj-spf-pick').textContent = spf ? 'Change…' : 'Choose folder…';
-        $('pj-spf-clear').hidden = !spf;
-      };
-      if ($('pj-spf-pick')) {
-        // the picker is its own overlay, so the details stay as typed underneath it
-        $('pj-spf-pick').onclick = () => Drawings.pickFolder({ current: spf, hints: [g('pj-aro'), g('pj-name'), g('pj-site')] }, f => {
-          spf = f; spfChanged = true; paintSpf();
-          // no project name yet: read one off the folder's path (the job's folder, not "03_Engineering") — editable before Save
-          if (!g('pj-name')) { const guess = Drawings.guessName(f); if (guess) $('pj-name').value = guess; }
-        });
-        $('pj-spf-clear').onclick = () => { spf = null; spfChanged = true; paintSpf(); };
-      }
+      const read = wireProjectForm(box, { spf: Project.spFolder() });
       $('pj-ok').onclick = () => {
-        Project.setDetails({ name: g('pj-name'), site: g('pj-site'), client: g('pj-client'), contractor: g('pj-contractor'), contact: g('pj-contact'), phone: g('pj-phone'), status: g('pj-status') });
-        if (spfChanged) Project.setDetails({ spFolder: spf });
-        S.jobRef = g('pj-ref');
-        const aro = g('pj-aro');
-        if (aro || (S.aroSite && S.aroSite.project)) S.aroSite = Object.assign({}, S.aroSite || {}, { project: aro });
-        if (typeof Aro !== 'undefined') Aro.linkHolder($('pj-holder').value);
-        try { if (g('pj-contractor')) localStorage.setItem('abmt:contractor', g('pj-contractor')); } catch (e) { /* ignore */ }
+        const r = read();
+        Project.setDetails(r.details);
+        if (r.spfChanged) Project.setDetails({ spFolder: r.spf });
+        S.jobRef = r.jobRef;
+        if (r.aroNo || (S.aroSite && S.aroSite.project)) S.aroSite = Object.assign({}, S.aroSite || {}, { project: r.aroNo });
+        if (typeof Aro !== 'undefined') Aro.linkHolder(r.holder);
+        rememberContractor(r.details.contractor);
         State.touch();
         State.emit('project');
         close();
@@ -704,7 +767,8 @@ const App = (() => {
   async function openPdfFile(file, mode) {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      if (State.S.pdf && !mode) mode = await importPrompt(file.name);
+      // a drawing being added to a project from Home opens as its own sheet and takes that project's details as it opens
+      if (State.S.pdf && !mode) mode = Project.pendingAdoption() ? 'sep' : await importPrompt(file.name);
       if (State.S.pdf && !mode) return;   // cancelled
       if (mode === 'rev') { await Project.importRevision(bytes, file.name); return; }
       const snap = mode === 'add' ? Project.detailsSnapshot() : null;
@@ -993,8 +1057,8 @@ const App = (() => {
 
   return {
     toast, modal, progress, calibrateDialog, scaleDialog, countGroupDialog, helpDialog,
-    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog, projectDialog,
-    revisionsDialog, setImportMode,
+    csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog, projectDialog, newProjectDialog,
+    revisionsDialog, setImportMode, pickPdf: () => $('filePdf').click(),
     showTab: (...a) => Props.showTab(...a),
   };
 })();

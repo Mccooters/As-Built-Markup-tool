@@ -336,10 +336,35 @@ const Project = (() => {
   }
 
   /** Called after any PDF opens: attach pending project or offer autosave restore. */
+  /* ---------- a drawing being added to a project from Home: it takes the details as it opens ---------- */
+
+  let pendingAdopt = null;   // { project, aroSite, jobRef, stubId? } waiting for the next drawing to open
+  function adoptOnNextOpen(snap) { pendingAdopt = snap || null; }
+  const pendingAdoption = () => pendingAdopt;
+  function cancelPendingAdoption() { pendingAdopt = null; }
+
+  function afterAdopt(adopt) {
+    if (!adopt) return;
+    const S = State.S;
+    const name = (adopt.project && adopt.project.name) || '';
+    if (S.project && Object.values(S.project).some(Boolean)) {
+      App.toast(`This drawing already belongs to ${displayName()} — move it in Project details if it should be part of ${name || 'the project'}.`, 'warn', 8000);
+    } else {
+      adoptDetails(adopt);
+      App.toast(`Added to ${name || displayName()} — same details, status and stock list.`, 'ok', 5000);
+    }
+    if (typeof Home !== 'undefined') {
+      if (adopt.stubId && Home.removeStub) Home.removeStub(adopt.stubId);
+      else Home.renderProjects();
+    }
+  }
+
   function onDocOpened() {
     const S = State.S;
     // stash the PDF on the device so a home-screen icon can reopen it offline
     if (S.fingerprint && S.pdfBytes) Store.savePdf(S.fingerprint, S.pdfBytes);
+    const adopt = revisionImport ? null : pendingAdopt;
+    pendingAdopt = null;
     if (pendingData) {
       const d = pendingData;
       pendingData = null;
@@ -347,8 +372,10 @@ const Project = (() => {
         App.toast('Heads up — this PDF differs from the one the project was made on. Markups loaded anyway; check alignment.', 'warn', 9000);
       }
       applyData(d);
+      afterAdopt(adopt);
       return;
     }
+    afterAdopt(adopt);
     // autosave restore
     const raw = key() && localStorage.getItem(key());
     if (!raw) return;
@@ -410,5 +437,6 @@ const Project = (() => {
     status, statusLabel, normStatus, setStatus,
     importRevision, scaleMarkups, removeRevision, detailsSnapshot, adoptDetails, blankData,
     closeDoc, removeFromDevice,
+    adoptOnNextOpen, pendingAdoption, cancelPendingAdoption,
   };
 })();

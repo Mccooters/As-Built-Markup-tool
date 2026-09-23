@@ -112,6 +112,8 @@ const Home = (() => {
       row.spFolder = Project.spFolder() || row.spFolder || null;
       byFp.set(State.S.fingerprint, row);
     }
+    // projects set up on this device that have no drawing yet
+    for (const s of stubs) byFp.set('stub:' + s.id, stubRow(s));
     const rows = [...byFp.values()];
     for (const r of rows) {
       r.status = Project.normStatus(r.status);
@@ -178,17 +180,37 @@ const Home = (() => {
     let h = '';
     for (const r of list) {
       const g = groupOf.get(r.fp);
-      if (g.rows.length > 1 || g.folder) {
+      // a heading whenever there is a project to name: several sheets, a folder, or a project set up ahead of its drawings
+      if (g.rows.length > 1 || g.folder || g.rows.some(x => x.stub)) {
         if (done.has(g)) continue;
         done.add(g);
-        h += `<div class="pj-projhead"><span class="pj-projname${g.named ? '' : ' unnamed'}" title="${g.named ? '' : 'No project name yet — set one in Project details'}">${esc(g.name)}</span>${g.rows.length > 1 ? `<span class="pj-count">${g.rows.length} drawings</span>` : ''}${g.folder ? drawBtn(g.folder, g.name) : ''}</div>`;
+        h += `<div class="pj-projhead"><span class="pj-projname${g.named ? '' : ' unnamed'}" title="${g.named ? '' : 'No project name yet — set one in Project details'}">${esc(g.name)}</span>${g.rows.length > 1 ? `<span class="pj-count">${g.rows.length} drawings</span>` : ''}
+          <span class="pj-headacts">${g.folder ? drawBtn(g.folder, g.name) : ''}<button type="button" class="pj-add" data-fp="${esc(g.rows[0].fp)}" title="Add a drawing to ${esc(g.name)}" aria-label="Add a drawing to ${esc(g.name)}">＋</button></span></div>`;
         h += g.rows.map(x => rowHtml(x, true)).join('');
       } else h += rowHtml(r, false);
     }
     return h;
   }
 
+  // a project set up ahead of its drawings: the row is the way to add the first one
+  function stubRowHtml(r) {
+    const meta = [];
+    if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
+    if (r.aroNo) meta.push('#' + esc(r.aroNo));
+    meta.push('<span class="pj-where new" title="Set up on this device — nothing drawn yet">no drawings yet</span>');
+    const opts = ['active', 'dlp', 'done'].map(s => `<option value="${s}"${r.status === s ? ' selected' : ''}>${STATUS_SHORT[s]}</option>`).join('');
+    return `<div class="pj-row sub stub" data-fp="${esc(r.fp)}">
+      <button type="button" class="pj-main pj-addfirst" data-fp="${esc(r.fp)}" title="Add the project’s first drawing — from its SharePoint register or a PDF on this device">
+        <span class="pj-name">＋ Add the first drawing</span>
+        <span class="pj-meta">${meta.join(' · ')}</span>
+      </button>
+      <select class="pj-sel ${r.status}" data-fp="${esc(r.fp)}" data-id="" title="Project status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${opts}</select>
+      <button type="button" class="pj-more" data-fp="${esc(r.fp)}" title="Add a drawing · remove this project" aria-label="More for ${esc(r.name)}">⋯</button>
+    </div>`;
+  }
+
   function rowHtml(r, inProject) {
+    if (r.stub) return stubRowHtml(r);
     const shown = inProject ? (String(r.fileName || '').replace(/\.pdf$/i, '') || r.name) : r.name;
     const meta = [];
     if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
@@ -213,6 +235,21 @@ const Home = (() => {
   function projectMenu(fp) {
     const row = mergedProjects().find(r => r.fp === fp);
     if (!row) return;
+    if (row.stub) {
+      App.modal(`
+        <h3>${esc(row.name)}</h3>
+        <p class="muted">Set up on this device — no drawings yet.</p>
+        <div class="imp-opts">
+          <button type="button" class="imp-opt" id="pm-add"><b>Add a drawing</b><span>From its SharePoint register or a PDF on this device — it takes the project’s details, status and stock list.</span></button>
+          <button type="button" class="imp-opt danger" id="pm-stubrm"><b>Remove this project</b><span>Nothing has been drawn yet — it just comes off the list.</span></button>
+        </div>
+        <div class="modal-actions"><button class="mini-btn" id="pm-cancel">Cancel</button></div>`, (box, close) => {
+        box.querySelector('#pm-cancel').onclick = close;
+        box.querySelector('#pm-add').onclick = () => { close(); addDrawingDialog(fp); };
+        box.querySelector('#pm-stubrm').onclick = () => { close(); removeStub(row.stubId); App.toast(`${row.name} removed.`, 'ok', 3000); };
+      });
+      return;
+    }
     const cl = cloudState();
     const signed = !!(cl && cl.token);
     const onDevice = !!row.onDevice;
@@ -240,6 +277,7 @@ const Home = (() => {
       <p class="muted">${where}</p>
       <div class="imp-opts">
         <button type="button" class="imp-opt" id="pm-open"><b>${row.open ? 'Back to the drawing' : 'Open'}</b><span>${onDevice ? 'From this device — works offline.' : 'Downloads the drawing and markups from the team cloud.'}</span></button>
+        <button type="button" class="imp-opt" id="pm-add"><b>Add a drawing to this project</b><span>From its SharePoint register or a PDF on this device — it takes the same details, status and stock list.</span></button>
         ${onDevice ? `<button type="button" class="imp-opt${row.inCloud ? '' : ' danger'}" id="pm-device"><b>Remove from this device</b><span>${row.inCloud
           ? 'Frees the space here. The team cloud copy stays and it can be opened again from this list.'
           : 'This is the only copy — the drawing and its markups are gone for good.'}</span></button>` : ''}
@@ -248,6 +286,7 @@ const Home = (() => {
       <div class="modal-actions"><button class="mini-btn" id="pm-cancel">Cancel</button></div>`, (box, close) => {
       box.querySelector('#pm-cancel').onclick = close;
       box.querySelector('#pm-open').onclick = () => { close(); openProject(row.fp, row.id); };
+      box.querySelector('#pm-add').onclick = () => { close(); addDrawingDialog(row.fp); };
       const dev = box.querySelector('#pm-device');
       if (dev) {
         const run = async () => {
@@ -269,6 +308,91 @@ const Home = (() => {
           App.toast('Couldn’t delete it from the team cloud: ' + e.message, 'error', 8000);
         }
       });
+    });
+  }
+
+  /* ---------------- projects set up before their first drawing ---------------- */
+  // Kept on this device until a sheet matches the project (it then carries
+  // the details everywhere a sheet goes — autosave, .airmark, team cloud).
+
+  const STUBS_KEY = 'abmt:projstubs';
+  let stubs = (() => { try { return JSON.parse(localStorage.getItem(STUBS_KEY) || '[]') || []; } catch (e) { return []; } })();
+  const saveStubs = () => { try { localStorage.setItem(STUBS_KEY, JSON.stringify(stubs)); } catch (e) { /* full */ } };
+  const stubSnapshot = s => ({ project: Object.assign({}, s.project || {}), aroSite: s.aroSite ? Object.assign({}, s.aroSite) : null, jobRef: s.jobRef || '', stubId: s.id });
+
+  const stubRow = s => {
+    const p = s.project || {}, a = s.aroSite || {};
+    return {
+      fp: 'stub:' + s.id, stub: true, stubId: s.id, name: p.name || 'New project', pname: p.name || '', fileName: '',
+      status: p.status || 'active', site: p.site || '', client: p.client || '', aroNo: a.project || '',
+      savedAt: s.createdAt, markups: 0, onDevice: false, inCloud: false, spFolder: p.spFolder && p.spFolder.id ? p.spFolder : null,
+    };
+  };
+
+  /**
+   * New project (no drawing yet): its details wait on Home for the first
+   * sheet. Returns { id } — or { existingFp, name } when a project with the
+   * same name, folder or AroFlo number is already on the list: the "new"
+   * project is that one, and the drawing should go to it.
+   */
+  function createProject(snap) {
+    const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const stub = { id, createdAt: Date.now(), project: (snap && snap.project) || {}, aroSite: (snap && snap.aroSite) || null, jobRef: (snap && snap.jobRef) || '' };
+    const g = projectGroups(mergedProjects().concat([stubRow(stub)])).find(x => x.rows.some(r => r.fp === 'stub:' + id));
+    const existing = g && g.rows.find(r => !r.stub);
+    if (existing) return { id: '', existingFp: existing.fp, name: g.name };
+    stubs.push(stub);
+    saveStubs();
+    renderProjects();
+    return { id, existingFp: '', name: stub.project.name || '' };
+  }
+  function removeStub(id) {
+    const n = stubs.length;
+    stubs = stubs.filter(s => s.id !== id);
+    if (stubs.length !== n) { saveStubs(); renderProjects(); }
+  }
+  /** The set-up details for a project whose SharePoint folder is this one — a sheet opened from that register takes them. */
+  function stubFor(folderId) {
+    const s = stubs.find(x => x.project && x.project.spFolder && x.project.spFolder.id === folderId);
+    return s ? stubSnapshot(s) : null;
+  }
+
+  /** What a sheet added to this project should take: the set-up details, the open drawing's, a stored sheet's, or what the list knows. */
+  async function snapshotOf(g) {
+    const stub = g.rows.find(r => r.stub);
+    if (stub) { const s = stubs.find(x => x.id === stub.stubId); if (s) return stubSnapshot(s); }
+    if (State.S.pdf && g.rows.some(r => r.fp === State.S.fingerprint)) return Project.detailsSnapshot();
+    for (const r of g.rows) {
+      if (!r.onDevice || typeof Store === 'undefined') continue;
+      const rec = await Store.record(r.fp);
+      const d = rec && rec.data;
+      if (d && (d.project || d.aroSite || d.jobRef)) return { project: d.project ? Object.assign({}, d.project) : null, aroSite: d.aroSite ? Object.assign({}, d.aroSite) : null, jobRef: d.jobRef || '' };
+    }
+    const r0 = g.rows[0] || {};
+    const project = { name: g.named ? g.name : '', status: r0.status || 'active' };
+    if (g.folder) project.spFolder = g.folder;
+    return { project, aroSite: g.aroNo ? { project: g.aroNo } : null, jobRef: '' };
+  }
+
+  /** ＋ on a project: the next drawing — from its SharePoint register or a PDF — joins it as it opens. */
+  async function addDrawingDialog(fp) {
+    const g = projectOf(fp);
+    if (!g) return;
+    const snap = await snapshotOf(g);
+    const cl = cloudState();
+    const spOn = !!(g.folder && typeof Drawings !== 'undefined' && Drawings.available && Drawings.available() && cl && cl.token);
+    App.modal(`
+      <h3>Add a drawing to ${esc(g.name)}</h3>
+      <p class="muted">The sheet takes the project’s details, status and stock list${g.folder ? ' — and its folder' : ''} as it opens.</p>
+      <div class="imp-opts">
+        ${spOn ? `<button type="button" class="imp-opt" id="ad-sp"><b>Pick from the SharePoint register</b><span>${esc(g.folder.path || g.folder.name)}</span></button>` : ''}
+        <button type="button" class="imp-opt" id="ad-pdf"><b>Open a PDF from this device</b><span>Files, Photos or another app — the drawing joins the project as it opens.</span></button>
+      </div>
+      <div class="modal-actions"><button class="mini-btn" id="ad-cancel">Cancel</button></div>`, (box, close) => {
+      box.querySelector('#ad-cancel').onclick = close;
+      const sp = box.querySelector('#ad-sp');
+      if (sp) sp.onclick = () => { close(); Project.adoptOnNextOpen(snap); Drawings.openDialog({ key: g.folder.id, title: g.name }); renderProjects(); };
+      box.querySelector('#ad-pdf').onclick = () => { close(); Project.adoptOnNextOpen(snap); renderProjects(); App.pickPdf(); };
     });
   }
 
@@ -296,10 +420,22 @@ const Home = (() => {
       const out = who.querySelector('#cl-out'); if (out) out.addEventListener('click', () => Cloud.signOut());
       const si = who.querySelector('#hsProjSignin'); if (si) si.addEventListener('click', goSignIn);
     }
-    const rows = mergedProjects();
+    let rows = mergedProjects();
+    // a project set up ahead of its drawings is done with once a sheet matches it (name, folder or AroFlo number)
+    const drop = new Set();
+    for (const g of projectGroups(rows)) if (g.rows.some(r => !r.stub)) for (const r of g.rows) if (r.stub) drop.add(r.stubId);
+    if (drop.size) { stubs = stubs.filter(s => !drop.has(s.id)); saveStubs(); rows = rows.filter(r => !(r.stub && drop.has(r.stubId))); }
     const groups = { active: [], dlp: [], done: [] };
     for (const r of rows) groups[r.status].push(r);
     let h = '';
+    // a drawing is on its way into a project (＋ on Home): say so until it opens or the user thinks again
+    const pend = typeof Project !== 'undefined' && Project.pendingAdoption ? Project.pendingAdoption() : null;
+    if (pend) {
+      const pf = pend.project && pend.project.spFolder && pend.project.spFolder.id ? pend.project.spFolder : null;
+      const pname = (pend.project && pend.project.name) || 'the project';
+      h += `<div class="pj-note pj-pending"><b>Adding a drawing to ${esc(pname)}</b> — tap <b>Open PDF…</b> above${pf && signed ? ', or pick one from its SharePoint register' : ''}; it joins the project as it opens.
+        <div class="pj-note-actions">${pf && signed ? `<button type="button" class="mini-btn primary" id="hsPendSp" data-key="${esc(pf.id)}" data-title="${esc(pname)}">Pick from SharePoint</button>` : ''}<button type="button" class="mini-btn" id="hsPendCancel">Cancel</button></div></div>`;
+    }
     if (signed && cl.error) h += `<div class="cloud-err">${esc(cl.error)}</div>`;
     // the registry is missing an optional column: show the exact SQL, not a pointer to the source
     const missing = [], whys = [];
@@ -314,7 +450,7 @@ const Home = (() => {
         ${cl.colError ? `<div class="pj-note-why">Supabase said: ${esc(cl.colError)}</div>` : ''}</div>`;
     }
     if (!rows.length) {
-      h += `<p class="pj-empty">${signed && cl.listPhase === 'loading' ? 'Loading the team list…' : 'No projects yet — open a drawing and it appears here.'}</p>`;
+      h += `<p class="pj-empty">${signed && cl.listPhase === 'loading' ? 'Loading the team list…' : 'No projects yet — tap New project, or open a drawing and it appears here.'}</p>`;
     } else {
       h += sectionHtml('active', groups.active);
       if (groups.dlp.length) h += sectionHtml('dlp', groups.dlp);
@@ -349,6 +485,15 @@ const Home = (() => {
     el.querySelectorAll('.pj-draw').forEach(b => b.addEventListener('click', () => {
       if (typeof Drawings !== 'undefined') Drawings.openDialog({ key: b.dataset.key, title: b.dataset.title });
     }));
+    el.querySelectorAll('.pj-add, .pj-addfirst').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); addDrawingDialog(b.dataset.fp); }));
+    const pendSp = el.querySelector('#hsPendSp');
+    if (pendSp) pendSp.addEventListener('click', () => Drawings.openDialog({ key: pendSp.dataset.key, title: pendSp.dataset.title }));
+    const pendCancel = el.querySelector('#hsPendCancel');
+    if (pendCancel) pendCancel.addEventListener('click', () => { Project.cancelPendingAdoption(); renderProjects(); });
+    const nb = $('hsNewProj');
+    if (nb) nb.onclick = () => App.newProjectDialog();
+    // the Site drawings card's project picker follows the projects (a project set up with a folder is in it at once)
+    if (typeof Drawings !== 'undefined' && Drawings.projectsChanged) Drawings.projectsChanged();
     el.querySelectorAll('.pj-main').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openProject(b.dataset.fp, b.dataset.id); }));
     el.querySelectorAll('.pj-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); projectMenu(b.dataset.fp); }));
     el.querySelectorAll('.pj-sel').forEach(s => {
@@ -370,6 +515,11 @@ const Home = (() => {
   // a team project is updated in the registry without touching its drawing.
   async function changeStatus(fp, id, status) {
     status = Project.normStatus(status);
+    if (String(fp).startsWith('stub:')) {
+      const s = stubs.find(x => 'stub:' + x.id === fp);
+      if (s) { s.project = Object.assign({}, s.project || {}, { status }); saveStubs(); App.toast(`${s.project.name || 'Project'} → ${STATUS_SHORT[status]}`, 'ok', 2500); renderProjects(); }
+      return;
+    }
     const row = mergedProjects().find(r => r.fp === fp) || {};
     const cl = cloudState();
     try {
@@ -595,5 +745,6 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, renderProjects, projectRows: mergedProjects, projectGroups: () => projectGroups(mergedProjects()), projectOf, openProject, projectMenu, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
+  return { setMode, refresh, renderProjects, projectRows: mergedProjects, projectGroups: () => projectGroups(mergedProjects()), projectOf, openProject, projectMenu,
+    createProject, addDrawingDialog, removeStub, stubFor, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();

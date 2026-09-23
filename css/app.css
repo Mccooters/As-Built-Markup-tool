@@ -994,8 +994,17 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
 .pj-projhead { display: flex; align-items: center; gap: 8px; padding: 9px 4px 3px; font-size: 12.5px; font-weight: 600; border-top: 1px solid var(--edge); flex-wrap: wrap; }
 .pj-projhead .pj-count { margin-left: 0; }
 .pj-projname.unnamed { color: var(--txt-dim); font-style: italic; }
+.pj-headacts { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.pj-add { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--edge); background: var(--bg3); color: var(--accent);
+  font: inherit; font-size: 15px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.pj-add:hover { border-color: var(--accent); }
+/* a project set up before its first drawing */
+.pj-row.stub .pj-addfirst .pj-name { color: var(--accent); font-weight: 600; }
+.pj-where.new { color: var(--txt-dim); }
+.hm-newproj { margin-left: 4px; }
+.pj-pending { border-color: var(--accent-dim); }
 /* a project's SharePoint drawings: the way into its register from its Home heading */
-.pj-draw { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; background: var(--bg3); border: 1px solid var(--edge);
+.pj-draw { display: inline-flex; align-items: center; gap: 5px; background: var(--bg3); border: 1px solid var(--edge);
   border-radius: 999px; padding: 3px 10px 3px 8px; color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .pj-draw svg { width: 14px; height: 14px; }
 .pj-draw:hover { border-color: var(--accent); }
