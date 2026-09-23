@@ -176,8 +176,22 @@ const msLoginBase = () => env('MS_LOGIN_BASE') || 'https://login.microsoftonline
 const graphBase = () => env('MS_GRAPH_BASE') || 'https://graph.microsoft.com/v1.0';
 
 const SP_ITEM_ID = /^[A-Za-z0-9!_-]{3,160}$/;
-let graphTok = { token: '', exp: 0 };   // client-credentials token, cached per warm instance
-let spRootCache = null;                 // resolved {driveId, id, name}
+let graphTok = { token: '', exp: 0, roles: null };   // client-credentials token, cached per warm instance
+let spRootCache = null;                              // resolved {driveId, id, name, via}
+
+// The permissions the token actually carries (its "roles" claim) — read for
+// diagnostics only, never trusted for anything. null when the token is not a
+// readable JWT; [] when Microsoft issued a token with no application
+// permission in it (the classic "consent never granted" state).
+function tokenRoles(tok) {
+  const parts = str(tok).split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const c = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return Array.isArray(c.roles) ? c.roles.map(str) : [];
+  } catch (e) { return null; }
+}
+const SP_READ_ROLE = /^(Sites\.(Read|ReadWrite|Manage|FullControl)\.All|Files\.(Read|ReadWrite)\.All)$/;
 
 async function graphToken() {
   if (graphTok.token && Date.now() < graphTok.exp - 60000) return graphTok.token;
@@ -201,8 +215,32 @@ async function graphToken() {
       throw new Error('Microsoft sign-in does not recognise MS_TENANT_ID — copy the Directory (tenant) ID from the app registration overview.');
     throw new Error('Microsoft sign-in failed: ' + str(j && j.error_description || code).split(/[\r\n]/)[0].slice(0, 200));
   }
-  graphTok = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3599) * 1000 };
+  graphTok = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3599) * 1000, roles: tokenRoles(j.access_token) };
   return graphTok.token;
+}
+
+// What a refusal from SharePoint means, judged by the permissions the app's
+// own token carries. Microsoft's wording for every one of these cases is the
+// same unhelpful "HTTP 401 General exception while processing".
+function permissionHint(status, code, msg) {
+  const roles = graphTok.roles;
+  const said = ` (Graph said: HTTP ${status}${code ? ' ' + code : ''}${msg ? ' — ' + msg : ''})`;
+  let host = '';
+  try { host = new URL(env('SP_DRAWINGS_URL')).host; } catch (e) { /* not a URL */ }
+  if (!roles) {
+    return 'Microsoft 365 refused access — the app registration needs the Microsoft Graph APPLICATION permission Sites.Read.All with admin consent granted, and SP_DRAWINGS_URL must be a folder on this organisation’s own SharePoint.' + said;
+  }
+  if (!roles.length) {
+    return 'SharePoint refused the app: Microsoft 365 issued it a sign-in token that carries no permissions. In Entra (entra.microsoft.com) → App registrations → the AirMark app → API permissions, the Microsoft Graph permission must be an Application permission (Sites.Read.All), not a Delegated one, and an admin must click “Grant admin consent” so its Status shows a green tick. Then tap Sync again.' + said;
+  }
+  const read = roles.find(r => SP_READ_ROLE.test(r));
+  if (!read && roles.includes('Sites.Selected')) {
+    return 'SharePoint refused the app: it only has the Sites.Selected permission, which works once an admin also grants the app access to the drawings site itself (Graph: POST /sites/{site-id}/permissions with the app’s id and the “read” role). Adding the Application permission Sites.Read.All with admin consent is the simple fix.' + said;
+  }
+  if (!read) {
+    return `SharePoint refused the app: its permissions (${roles.join(', ')}) include nothing that reads SharePoint. Add the Microsoft Graph Application permission Sites.Read.All in Entra → App registrations → API permissions and click “Grant admin consent”.` + said;
+  }
+  return `SharePoint refused the app even though its ${read} permission is granted — the folder is probably on a SharePoint that the app’s Microsoft 365 tenant cannot see (a builder’s or client’s site${host ? ': ' + host : ''}), or SP_DRAWINGS_URL is not a folder inside a document library. Point it at a drawings folder on this organisation’s own SharePoint.` + said;
 }
 
 async function graph(pathOrUrl) {
@@ -215,24 +253,110 @@ async function graph(pathOrUrl) {
   const j = await resp.json().catch(() => null);
   if (!resp.ok) {
     const code = str(j && j.error && j.error.code);
-    if (resp.status === 403 || /accessDenied/i.test(code))
-      throw new Error('Microsoft 365 refused access — the app registration probably has not been granted admin consent for Sites.Read.All (Entra portal → App registrations → API permissions → Grant admin consent).');
-    if (resp.status === 404 || /itemNotFound/i.test(code))
-      throw new Error('SharePoint cannot find the drawings folder — check SP_DRAWINGS_URL is the folder address exactly as the browser shows it, and that the app has access to that site.');
-    throw new Error('SharePoint error (HTTP ' + resp.status + '): ' + str(j && j.error && j.error.message || 'unknown').slice(0, 200));
+    const msg = str(j && j.error && j.error.message || '').split(/[\r\n]/)[0].slice(0, 160);
+    if (resp.status === 401 || resp.status === 403 || /accessDenied|generalException|unauthenticated|InvalidAuthenticationToken/i.test(code)) {
+      // Drop the cached token: consent granted a minute ago only shows up in a
+      // fresh one, so the next Sync must not keep re-using the refused token.
+      const err = new Error(permissionHint(resp.status, code, msg));
+      err.authFail = true;
+      graphTok = { token: '', exp: 0, roles: null };
+      throw err;
+    }
+    if (resp.status === 404 || /itemNotFound/i.test(code)) {
+      const err = new Error('SharePoint cannot find the drawings folder — SP_DRAWINGS_URL should be the folder’s address as the browser shows it (a …/Forms/AllItems.aspx?id=… address or a “Copy link” sharing link works too), on a site the app has access to.' + ` (Graph said: HTTP ${resp.status}${code ? ' ' + code : ''})`);
+      err.notFound = true;
+      throw err;
+    }
+    throw new Error('SharePoint error (HTTP ' + resp.status + (code ? ' ' + code : '') + '): ' + (msg || 'unknown'));
   }
   return j;
 }
 
-// Resolve the pasted folder URL to a drive item once per warm instance —
-// Graph's shares API takes any SharePoint URL as a base64url "share token".
+// The pasted folder address, in whichever form the browser gave it:
+//   https://x.sharepoint.com/sites/Site/Shared Documents/Drawings          (plain folder path)
+//   https://x.sharepoint.com/sites/Site/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FSite%2F…&viewid=…
+//   https://x.sharepoint.com/:f:/r/sites/Site/Shared%20Documents/Drawings?csf=1&web=1   ("Copy link", path style)
+//   https://x.sharepoint.com/:f:/s/Site/Eabc123…?e=xyz                               ("Copy link", token style)
+// → { host, sitePath, folderPath (server-relative, decoded), canonical, shareOnly }
+function parseSpUrl(raw) {
+  let u;
+  try { u = new URL(str(raw).trim()); } catch (e) { return null; }
+  if (!/^https?:$/.test(u.protocol) || !u.host) return null;
+  const dec = s => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+  let folderPath = '';
+  let shareOnly = false;
+  const share = u.pathname.match(/^\/:[a-z]:\/([a-z])\/(.*)$/i);
+  if (share) {
+    if (share[1].toLowerCase() === 'r') folderPath = '/' + dec(share[2]);   // path-style link carries the real path
+    else shareOnly = true;                                                  // token-style link: only the shares API can resolve it
+  } else if (/\.aspx$/i.test(u.pathname) && u.searchParams.get('id')) {
+    folderPath = dec(u.searchParams.get('id'));                             // library view page: the folder is the id parameter
+  } else {
+    folderPath = dec(u.pathname);
+  }
+  folderPath = folderPath.replace(/\/+$/, '').replace(/\/{2,}/g, '/')
+    .replace(/\/Forms\/[^/]*\.aspx$/i, '');   // a library's own view page → the library itself
+  if (!shareOnly && !folderPath.startsWith('/')) folderPath = '/' + folderPath;
+  const site = folderPath.match(/^\/(sites|teams|personal)\/[^/]+/i);
+  return {
+    host: u.host,
+    sitePath: site ? site[0] : '',
+    folderPath,
+    canonical: shareOnly ? u.origin + u.pathname : u.origin + encodeURI(folderPath),
+    shareOnly,
+  };
+}
+
+// Resolve the folder through the site → document library → path route. It
+// is the route that works with the tighter Sites.Selected permission, and it
+// copes with the library view-page address the browser usually shows.
+async function spResolveByPath(p) {
+  const site = await graph(`/sites/${encodeURIComponent(p.host)}${p.sitePath ? ':' + p.sitePath.split('/').map(encodeURIComponent).join('/') : ''}?$select=id,webUrl`);
+  if (!site || !site.id) throw new Error('SharePoint returned no site for ' + p.host + p.sitePath);
+  const drives = await graph(`/sites/${encodeURIComponent(str(site.id))}/drives?$select=id,name,webUrl`);
+  const want = p.folderPath.toLowerCase();
+  let best = null;
+  for (const d of (drives && drives.value || [])) {
+    let dp = '';
+    try { dp = decodeURIComponent(new URL(str(d.webUrl)).pathname).replace(/\/+$/, '').toLowerCase(); } catch (e) { continue; }
+    if (dp && (want === dp || want.startsWith(dp + '/')) && (!best || dp.length > best.path.length)) best = { id: str(d.id), name: str(d.name), path: dp };
+  }
+  if (!best) throw new Error('No document library on ' + p.host + p.sitePath + ' holds ' + p.folderPath);
+  const rel = p.folderPath.slice(best.path.length).replace(/^\//, '');
+  const it = rel
+    ? await graph(`/drives/${encodeURIComponent(best.id)}/root:/${rel.split('/').map(encodeURIComponent).join('/')}`)
+    : await graph(`/drives/${encodeURIComponent(best.id)}/root`);
+  if (!it || !it.id) throw new Error('SharePoint returned no item for ' + p.folderPath);
+  return { driveId: str(it.parentReference && it.parentReference.driveId) || best.id, id: str(it.id), name: str(it.name) || best.name, folder: !!it.folder, via: 'site path' };
+}
+
+// Resolve the pasted folder URL to a drive item once per warm instance: the
+// site-path route first, then Graph's shares API (which takes any SharePoint
+// URL as a base64url "share token") for sharing links and anything the path
+// route could not place.
 async function spRoot() {
   if (spRootCache) return spRootCache;
-  const shareTok = 'u!' + Buffer.from(env('SP_DRAWINGS_URL'), 'utf8').toString('base64url');
-  const it = await graph(`/shares/${shareTok}/driveItem?$select=id,name,parentReference`);
-  const driveId = str(it && it.parentReference && it.parentReference.driveId);
-  if (!it || !it.id || !driveId) throw new Error('SharePoint resolved the folder URL but returned no drive item — is SP_DRAWINGS_URL a folder inside a document library?');
-  spRootCache = { driveId, id: str(it.id), name: str(it.name) };
+  const p = parseSpUrl(env('SP_DRAWINGS_URL'));
+  if (!p) throw new Error('SP_DRAWINGS_URL is not a web address — paste the drawings folder’s address from the browser.');
+  let got = null, pathErr = null;
+  if (!p.shareOnly) {
+    try { got = await spResolveByPath(p); }
+    catch (e) { if (e.authFail) throw e; pathErr = e; }
+  }
+  if (!got) {
+    const shareTok = 'u!' + Buffer.from(p.canonical, 'utf8').toString('base64url');
+    let it;
+    try { it = await graph(`/shares/${shareTok}/driveItem?$select=id,name,folder,parentReference`); }
+    catch (e) {
+      if (pathErr && pathErr.notFound && !e.authFail) throw pathErr;   // the path route's explanation names what was not found
+      throw e;
+    }
+    const driveId = str(it && it.parentReference && it.parentReference.driveId);
+    if (!it || !it.id || !driveId) throw new Error('SharePoint resolved the folder URL but returned no drive item — is SP_DRAWINGS_URL a folder inside a document library?');
+    got = { driveId, id: str(it.id), name: str(it.name), folder: !!it.folder, via: 'sharing link' };
+  }
+  if (!got.folder) throw new Error('SP_DRAWINGS_URL points at a file, not a folder — paste the address of the folder that holds the drawings.');
+  spRootCache = got;
   return spRootCache;
 }
 
@@ -543,6 +667,50 @@ const ACTIONS = {
     return { ok: true, root: w.root, sections: w.sections, fetchedAt: new Date().toISOString() };
   },
 
+  // Step-by-step check of the SharePoint setup, for the "Check setup" button
+  // under a register error: which step fails and what to do about it, judged
+  // from a FRESH token so consent granted a minute ago counts. Reports names,
+  // hosts and paths only — never a credential.
+  async spcheck() {
+    const steps = [];
+    const step = (name, ok, detail) => { steps.push({ name, ok: !!ok, detail: str(detail).slice(0, 600) }); return !!ok; };
+    const done = () => ({ ok: true, steps, passed: steps.every(s => s.ok) });
+    const missing = ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'SP_DRAWINGS_URL'].filter(n => !env(n));
+    if (!step('Deployment settings', !missing.length, missing.length
+      ? 'Not set on this deployment: ' + missing.join(', ') + ' (Vercel → Settings → Environment Variables, then redeploy).'
+      : 'MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET and SP_DRAWINGS_URL are all set.')) return done();
+    const p = parseSpUrl(env('SP_DRAWINGS_URL'));
+    if (!step('Drawings folder address', !!p, p
+      ? (p.shareOnly ? 'A sharing link on ' + p.host : p.host + ' · ' + p.folderPath)
+      : 'SP_DRAWINGS_URL is not a web address — paste the folder’s address from the browser.')) return done();
+    graphTok = { token: '', exp: 0, roles: null };
+    try { await graphToken(); } catch (e) { step('Microsoft sign-in', false, e.message); return done(); }
+    const roles = graphTok.roles;
+    const read = roles && roles.find(r => SP_READ_ROLE.test(r));
+    if (!step('Microsoft sign-in', !roles || roles.length, !roles
+      ? 'Signed in as the app (its token’s permissions could not be read).'
+      : !roles.length
+        ? 'Signed in, but the token carries NO permissions: the Microsoft Graph permission on the app registration must be an Application permission (Sites.Read.All), not Delegated, and admin consent must be granted (green tick in the Status column).'
+        : 'Signed in as the app with: ' + roles.join(', ') + (read ? '' : roles.includes('Sites.Selected')
+          ? ' — Sites.Selected also needs the app granted access to the drawings site itself.'
+          : ' — none of these reads SharePoint; add the Application permission Sites.Read.All.'))) {
+      graphTok = { token: '', exp: 0, roles: null };   // never keep a token known to be useless: the next Sync signs in afresh
+      return done();
+    }
+    spRootCache = null;
+    let root;
+    try { root = await spRoot(); } catch (e) { step('Drawings folder', false, e.message); return done(); }
+    step('Drawings folder', true, `“${root.name}” found (via ${root.via}).`);
+    try {
+      const w = await spWalk();
+      const n = w.sections.reduce((a, s) => a + s.files.length, 0);
+      step('Drawing PDFs', n > 0, n
+        ? `${n} PDF${n === 1 ? '' : 's'} in ${w.sections.length} section${w.sections.length === 1 ? '' : 's'}.`
+        : 'The folder and its sub-folders (three levels down) hold no PDFs yet.');
+    } catch (e) { step('Drawing PDFs', false, e.message); }
+    return done();
+  },
+
   // A fresh pre-authenticated download URL for one drawing (they expire, so
   // one is minted per download, never stored).
   async spfile(q, body) {
@@ -574,7 +742,7 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spfile: 1, spproxy: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spcheck: 1, spfile: 1, spproxy: 1 };
 const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamscope: 1, spfile: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
@@ -657,7 +825,10 @@ module.exports = async function handler(req, res) {
     send(res, 200, out);
   } catch (err) {
     const timeout = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
-    send(res, 502, { ok: false, statusmessage: timeout ? 'The storage service did not respond in time' : ('Cloud error: ' + (err && err.message || err)) });
+    const sp = /^(drawings|sp)/.test(actionName);   // SharePoint messages already say who refused what
+    send(res, 502, { ok: false, statusmessage: timeout
+      ? (sp ? 'SharePoint did not respond in time' : 'The storage service did not respond in time')
+      : ((sp ? '' : 'Cloud error: ') + (err && err.message || err)) });
   }
 };
 

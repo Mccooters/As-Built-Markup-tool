@@ -190,9 +190,11 @@ Setup (one-time, needs a Microsoft 365 admin):
 2. On the app's **Overview**, copy the **Application (client) ID** and **Directory (tenant) ID**.
 3. **Certificates & secrets → New client secret** — copy the secret **Value** (not its ID) right away.
 4. **API permissions → Add a permission → Microsoft Graph → Application permissions → `Sites.Read.All`** → then click **Grant admin consent**. (Read-only. The tighter `Sites.Selected` — access to just the one site — also works if an admin grants it to the site.)
-5. Vercel env vars: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, and `SP_DRAWINGS_URL` = the drawings folder's address pasted straight from the browser. Redeploy.
+5. Vercel env vars: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, and `SP_DRAWINGS_URL` = the drawings folder's address pasted straight from the browser — the plain folder path, the `…/Forms/AllItems.aspx?id=…` address the library shows once you have clicked into a folder, or a **Copy link** sharing link all work. Redeploy.
 
 The credential lives only in server env vars; drawing bytes go browser ← SharePoint via a short-lived pre-authenticated link Graph mints per download (with a streamed proxy fallback), so big sheets never squeeze through the function. Point `SP_DRAWINGS_URL` at the current job's drawings folder; when the next project starts, change that one variable.
+
+**If the card shows an error**, tap **Check setup** under it: the deployment signs in to Microsoft afresh and tests each step in turn — settings present, the folder address, the sign-in and the permissions the app's token actually carries, the folder, the PDFs — and the first ✗ says what to fix. The one everybody hits is Microsoft's `HTTP 401 General exception while processing`: the app signed in fine but SharePoint would not accept its token, which means the Graph permission was added as *Delegated* instead of *Application*, or **Grant admin consent** was never clicked (the Status column must show a green tick), or `Sites.Selected` was chosen without granting the app the site, or the folder lives on another organisation's SharePoint. The error text names which of those it is. A permission granted a moment ago counts straight away — the deployment throws its cached sign-in away after a refusal.
 
 ## Markups list — groups, collapse and hide
 

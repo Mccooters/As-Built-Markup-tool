@@ -23,7 +23,7 @@ const Drawings = (() => {
 
   const st = {
     reg: null, map: {}, fold: {},
-    phase: 'idle', error: '', filter: '', busy: false,
+    phase: 'idle', error: '', errorKind: '', filter: '', busy: false,
     pfilter: '', pfold: {},       // drawings panel search + folds
   };
   let dlg = null; // { el, close } while the register dialog is open
@@ -94,9 +94,42 @@ const Drawings = (() => {
       st.error = e.offline
         ? (st.reg ? 'Offline — showing the last saved register.' : 'Offline — the register loads when there’s signal.')
         : e.message;
+      st.errorKind = e.offline ? 'offline' : 'setup';
     }
     st.phase = 'idle';
     renderCards();
+  }
+
+  /** The register's error, with a Check setup button when it is the deployment rather than the signal. */
+  const errHtml = () => !st.error ? '' :
+    `<div class="cloud-err">${esc(st.error)}</div>${st.errorKind === 'setup'
+      ? '<div class="sp-fix"><button type="button" class="mini-btn" data-act="check" title="Test each step of the SharePoint setup and say which one needs fixing">Check setup</button></div>' : ''}`;
+
+  /** Step-by-step test of the SharePoint setup (server-side, from a fresh Microsoft sign-in). */
+  async function checkSetup() {
+    let body = null;
+    const close = App.modal(`<h3>SharePoint setup check</h3>
+      <div id="spChk" class="spchk"><div class="cloud-note">Checking the deployment settings, the Microsoft sign-in, the drawings folder and its PDFs…</div></div>
+      <div class="modal-actions"><button type="button" class="mini-btn" id="spChkClose">Close</button><button type="button" class="mini-btn primary" id="spChkSync">Sync</button></div>`,
+      (box, cl) => {
+        body = box.querySelector('#spChk');
+        box.querySelector('#spChkClose').addEventListener('click', cl);
+        box.querySelector('#spChkSync').addEventListener('click', () => { cl(); sync(); });
+      });
+    let r;
+    try { r = await call('spcheck'); }
+    catch (e) {
+      if (body && body.isConnected) body.innerHTML = `<div class="cloud-err">${esc(e.offline ? 'No connection — the check needs signal.' : e.message)}</div>`;
+      return;
+    }
+    if (!body || !body.isConnected) return;
+    const steps = Array.isArray(r.steps) ? r.steps : [];
+    body.innerHTML = steps.map(s => `<div class="spchk-row ${s.ok ? 'ok' : 'bad'}"><span class="spchk-mark">${s.ok ? '✓' : '✗'}</span>
+      <span class="spchk-main"><b>${esc(s.name)}</b><span class="spchk-detail">${esc(s.detail)}</span></span></div>`).join('')
+      + (r.passed
+        ? '<div class="cloud-note">Everything checks out — tap Sync to load the register.</div>'
+        : '<div class="cloud-note">Fix the first ✗ step, then run the check again — it signs in afresh each time, so a permission granted a moment ago counts straight away.</div>');
+    void close;
   }
 
   function maybeAutoSync() {
@@ -418,7 +451,7 @@ const Drawings = (() => {
         h += `<div class="dp-sync"><div class="dp-syncmain"><b>${st.phase === 'loading' ? 'Checking SharePoint…' : 'Check for updates'}</b>
             <small class="muted">Updated ${esc(ageOf(st.reg && st.reg.when))}${files.length ? ` · ${have} of ${files.length} on device` : ''}</small></div>
           <button type="button" class="mini-btn primary" data-act="sync"${st.phase === 'loading' ? ' disabled' : ''}>Sync</button></div>`;
-        if (st.error) h += `<div class="cloud-err">${esc(st.error)}</div>`;
+        h += errHtml();
         const secs = ((st.reg && st.reg.sections) || []).map(sec => panelSectionHtml(sec, q)).join('');
         h += secs || (st.reg ? `<div class="cloud-note">${q ? 'Nothing matches “' + esc(st.pfilter) + '”.' : 'No PDFs in the drawings folder yet.'}</div>` : '');
       }
@@ -438,6 +471,8 @@ const Drawings = (() => {
     qEl.addEventListener('input', () => { st.pfilter = qEl.value; const pos = qEl.selectionStart; renderPanel(); const n = body.querySelector('#dp-q'); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* ignore */ } });
     const syncBtn = body.querySelector('[data-act="sync"]');
     if (syncBtn) syncBtn.addEventListener('click', () => { syncBtn.disabled = true; syncBtn.textContent = '…'; sync(); });
+    const chkBtn = body.querySelector('[data-act="check"]');
+    if (chkBtn) chkBtn.addEventListener('click', checkSetup);
     body.querySelectorAll('.dp-secbtn[data-path]').forEach(b => b.addEventListener('click', () => {
       st.pfold[b.dataset.path] = !st.pfold[b.dataset.path];
       saveJson(PFOLD_KEY, st.pfold);
@@ -487,6 +522,7 @@ const Drawings = (() => {
     const reg = st.reg;
     if (!reg || !reg.sections.length) {
       if (st.phase === 'loading') return '<div class="cloud-note">Checking SharePoint…</div>';
+      if (!reg && st.error) return '';   // the error says what happened; "no PDFs" would be a second, wrong story
       return '<div class="cloud-note">No PDFs found in the drawings folder yet.</div>';
     }
     const q = st.filter.trim().toLowerCase();
@@ -544,12 +580,14 @@ const Drawings = (() => {
           <span>SharePoint · checked ${esc(ageOf(st.reg && st.reg.when))}${files.length ? ` · <b>${have} of ${files.length}</b> on device` : ''}</span>
           <button class="mini-btn" data-act="sync" title="Check SharePoint for new and updated drawings"${st.phase === 'loading' ? ' disabled' : ''}>${st.phase === 'loading' ? '…' : '⟳ Sync'}</button>
         </div>
-        ${st.error ? `<div class="cloud-err">${esc(st.error)}</div>` : ''}
+        ${errHtml()}
         ${files.length > 6 ? `<div class="sp-search"><input type="search" data-act="filter" placeholder="Search drawings…" value="${esc(st.filter)}"></div>` : ''}
         <div class="sp-list">${sectionsHtml()}</div>
       </div>`;
 
     el.querySelector('[data-act="sync"]').addEventListener('click', e => { e.stopPropagation(); sync(); });
+    const chk = el.querySelector('[data-act="check"]');
+    if (chk) chk.addEventListener('click', e => { e.stopPropagation(); checkSetup(); });
     const search = el.querySelector('[data-act="filter"]');
     if (search) {
       search.addEventListener('input', () => {
@@ -631,5 +669,5 @@ const Drawings = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onCloudState, sync, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection, _state: st };
+  return { onCloudState, sync, checkSetup, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection, _state: st };
 })();

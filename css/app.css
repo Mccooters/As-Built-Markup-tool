@@ -701,6 +701,16 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 .cloud-row input#cl-pin { flex: 0 0 84px; }
 .cloud-err { color: #e05555; font-size: 12px; margin-top: 6px; min-height: 14px; }
 .cloud-note { color: var(--txt-dim); font-size: 12.5px; margin-top: 6px; }
+.sp-fix { margin-top: 6px; }
+/* SharePoint setup check: one row per step, the first ✗ is the one to fix */
+.spchk { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; max-height: 60vh; overflow: auto; }
+.spchk-row { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.35; }
+.spchk-mark { flex: 0 0 18px; width: 18px; text-align: center; font-weight: 700; }
+.spchk-row.ok .spchk-mark { color: #3ec27a; }
+.spchk-row.bad .spchk-mark { color: #e05555; }
+.spchk-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.spchk-detail { color: var(--txt-dim); font-size: 12.5px; word-break: break-word; }
+.spchk-row.bad .spchk-detail { color: var(--txt); }
 .cloud-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .cloud-chip { position: fixed; right: 12px; bottom: calc(46px + env(safe-area-inset-bottom));
   z-index: 60; border: 1px solid var(--edge); border-radius: 999px; padding: 5px 12px;
