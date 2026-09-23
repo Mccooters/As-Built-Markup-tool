@@ -131,21 +131,58 @@ const Home = (() => {
     const label = sum ? `${sum.total} site drawing${sum.total === 1 ? '' : 's'}${sum.have ? ` · ${sum.have} on device` : ''}` : 'Site drawings';
     return `<button type="button" class="pj-draw" data-key="${esc(f.id)}" data-title="${esc(title)}" title="${esc(f.path || f.name)} on SharePoint — the project’s drawing register">${ICON_FOLDER}<span>${label}</span></button>`;
   }
+
+  // What makes two sheets the same project: a shared project name, a shared
+  // SharePoint drawings folder, or a shared AroFlo project number — any one
+  // of them. So a sheet opened for a job joins it even before anyone has
+  // typed a project name, and naming one sheet later never splits the job.
+  function projectGroups(rows) {
+    const parent = rows.map((_, i) => i);
+    const find = i => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b] = a; };
+    const seen = new Map();
+    rows.forEach((r, i) => {
+      const keys = [];
+      const n = String(r.pname || '').trim().toLowerCase(); if (n) keys.push('n:' + n);
+      if (r.spFolder && r.spFolder.id) keys.push('f:' + r.spFolder.id);
+      const a = String(r.aroNo || '').trim().toLowerCase(); if (a) keys.push('a:' + a);
+      for (const k of keys) { if (seen.has(k)) union(seen.get(k), i); else seen.set(k, i); }
+    });
+    const groups = new Map();
+    rows.forEach((r, i) => { const root = find(i); if (!groups.has(root)) groups.set(root, []); groups.get(root).push(r); });
+    return [...groups.values()].map(g => {
+      const folder = folderOf(g);
+      const aroNo = String((g.find(x => x.aroNo) || {}).aroNo || '').trim();
+      // the name: the one typed most often; else read off the folder's path; else the AroFlo number; else the sheet's own name
+      const votes = new Map();
+      for (const x of g) { const n = String(x.pname || '').trim(); if (n) votes.set(n, (votes.get(n) || 0) + 1); }
+      let name = [...votes.entries()].sort((p, q) => q[1] - p[1])[0];
+      name = name ? name[0] : '';
+      const guessed = !name && folder && typeof Drawings !== 'undefined' && Drawings.guessName ? Drawings.guessName(folder) : '';
+      if (!name) name = guessed || (aroNo ? 'AroFlo project #' + aroNo : '') || (g[0].name || '');
+      return { rows: g, name, folder, aroNo, named: votes.size > 0, guessed: !votes.size && !!guessed };
+    });
+  }
+
+  /** The project a sheet belongs to, across everything on this device and in the team cloud. */
+  function projectOf(fp) {
+    if (!fp) return null;
+    return projectGroups(mergedProjects()).find(g => g.rows.some(r => r.fp === fp)) || null;
+  }
+
   function rowsHtml(list) {
-    const key = r => (r.pname || '').trim().toLowerCase();
-    const byP = new Map();
-    for (const r of list) { const k = key(r); if (!byP.has(k)) byP.set(k, []); byP.get(k).push(r); }
+    const groups = projectGroups(list);
+    const groupOf = new Map();
+    for (const g of groups) for (const r of g.rows) groupOf.set(r.fp, g);
     const done = new Set();
     let h = '';
     for (const r of list) {
-      const k = key(r);
-      const grp = byP.get(k);
-      const f = k ? folderOf(grp) : null;
-      if (k && (grp.length > 1 || f)) {
-        if (done.has(k)) continue;
-        done.add(k);
-        h += `<div class="pj-projhead"><span class="pj-projname">${esc(r.pname)}</span>${grp.length > 1 ? `<span class="pj-count">${grp.length} drawings</span>` : ''}${f ? drawBtn(f, r.pname) : ''}</div>`;
-        h += grp.map(x => rowHtml(x, true)).join('');
+      const g = groupOf.get(r.fp);
+      if (g.rows.length > 1 || g.folder) {
+        if (done.has(g)) continue;
+        done.add(g);
+        h += `<div class="pj-projhead"><span class="pj-projname${g.named ? '' : ' unnamed'}" title="${g.named ? '' : 'No project name yet — set one in Project details'}">${esc(g.name)}</span>${g.rows.length > 1 ? `<span class="pj-count">${g.rows.length} drawings</span>` : ''}${g.folder ? drawBtn(g.folder, g.name) : ''}</div>`;
+        h += g.rows.map(x => rowHtml(x, true)).join('');
       } else h += rowHtml(r, false);
     }
     return h;
@@ -558,5 +595,5 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, renderProjects, projectRows: mergedProjects, openProject, projectMenu, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
+  return { setMode, refresh, renderProjects, projectRows: mergedProjects, projectGroups: () => projectGroups(mergedProjects()), projectOf, openProject, projectMenu, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();

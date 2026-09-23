@@ -107,12 +107,26 @@ const Drawings = (() => {
 
   /* ---------------- which folder is whose ---------------- */
 
-  /** Every project with a linked SharePoint folder: the open drawing's and Home's rows. */
+  // Folder names that say what a folder holds, not which job it is for
+  const GENERIC_FOLDER = /^(\d+[\s_.-]*)?(drawings?|dwgs?|engineering|eng|layouts?|designs?|plans?|pdfs?|as[\s_-]?builts?|markups?|current|latest|issued|superseded|for[\s_-]?construction|ifc|documents?|docs?|files?|sheets?|revisions?|revs?|[A-Z&]{1,4})$/i;
+  const STATUS_FOLDER = /^(in[\s_-]?progress|dlp|archived?|submitted|draft|rejected|templates?|completed?|done|tenders?|projects?|jobs?|sites?)$/i;
+  /** A project name read off a linked folder's path — the deepest folder that is named for the job, not for what it holds. */
+  function guessName(folder) {
+    const segs = String((folder && folder.path) || '').split('/').map(s => s.trim()).filter(Boolean);
+    for (let i = segs.length - 1; i >= 0; i--) if (!GENERIC_FOLDER.test(segs[i]) && !STATUS_FOLDER.test(segs[i])) return segs[i];
+    return '';
+  }
+
+  /** Every project with a linked SharePoint folder, as Home groups them (by name, folder or AroFlo number). */
   function linkedProjects() {
     const out = new Map();
-    const add = (pname, f) => { if (f && f.id && !out.has(f.id)) out.set(f.id, { key: f.id, title: String(pname || '').trim() || f.name, folder: f }); };
-    if (State.S.pdf && typeof Project !== 'undefined') add(Project.details().name, Project.spFolder());
-    if (typeof Home !== 'undefined' && Home.projectRows) for (const r of Home.projectRows()) add(r.pname, r.spFolder);
+    if (typeof Home !== 'undefined' && Home.projectGroups) {
+      for (const g of Home.projectGroups()) if (g.folder && g.folder.id && !out.has(g.folder.id)) out.set(g.folder.id, { key: g.folder.id, title: g.name || g.folder.name, folder: g.folder });
+    }
+    if (State.S.pdf && typeof Project !== 'undefined') {
+      const f = Project.spFolder();
+      if (f && f.id && !out.has(f.id)) out.set(f.id, { key: f.id, title: String(Project.details().name || '').trim() || guessName(f) || f.name, folder: f });
+    }
     return [...out.values()];
   }
 
@@ -121,10 +135,8 @@ const Drawings = (() => {
     if (!State.S.pdf) return null;
     const own = Project.spFolder();
     if (own) return own;
-    const pname = (Project.details().name || '').trim().toLowerCase();
-    if (!pname || typeof Home === 'undefined' || !Home.projectRows) return null;
-    for (const r of Home.projectRows()) if (r.spFolder && (r.pname || '').trim().toLowerCase() === pname) return r.spFolder;
-    return null;
+    const g = typeof Home !== 'undefined' && Home.projectOf ? Home.projectOf(State.S.fingerprint) : null;
+    return (g && g.folder) || null;
   }
   const panelKey = () => { const f = panelFolder(); return f ? f.id : 'root'; };
 
@@ -253,7 +265,7 @@ const Drawings = (() => {
   // or at least its name and folder so it lands under the project on Home.
   async function joinProject(snap, ctx) {
     if (State.S.project) return;
-    if (snap && snap.project) { Project.adoptDetails(snap); return; }
+    if (snap && (snap.project || snap.aroSite || snap.jobRef)) { Project.adoptDetails(snap); return; }
     if (!ctx || !ctx.key || ctx.key === 'root') return;
     const reg = regOf(ctx.key);
     const folder = (reg && reg.folder) || null;
@@ -528,12 +540,13 @@ const Drawings = (() => {
 
   // drawings of the open project that aren't in the register: device + team cloud
   function projectRows() {
-    if (typeof Home === 'undefined' || !Home.projectRows) return [];
+    if (typeof Home === 'undefined' || !Home.projectOf) return [];
     const spFps = new Set(Object.values(st.map).map(m => m.fp).filter(Boolean));
     const cur = State.S.fingerprint;
-    const pname = ((State.S.project && State.S.project.name) || '').trim().toLowerCase();
-    return Home.projectRows()
-      .filter(r => !spFps.has(r.fp) && (r.fp === cur || (pname && (r.pname || '').trim().toLowerCase() === pname)))
+    const g = Home.projectOf(cur);
+    const rows = g ? g.rows : Home.projectRows().filter(r => r.fp === cur);
+    return rows
+      .filter(r => !spFps.has(r.fp))
       .map(r => ({ key: 'pj:' + r.fp, fp: r.fp, id: r.id, name: r.name, fileName: r.fileName, state: r.onDevice ? 'have' : 'cloud', markups: r.markups || 0, isCur: r.fp === cur }));
   }
 
@@ -566,7 +579,8 @@ const Drawings = (() => {
     }
     const others = projectRows().filter(r => !q || (r.fileName + ' ' + r.name).toLowerCase().includes(q));
     if (others.length) {
-      const label = (State.S.project && State.S.project.name) ? esc(State.S.project.name) : 'This project';
+      const g = typeof Home !== 'undefined' && Home.projectOf ? Home.projectOf(State.S.fingerprint) : null;
+      const label = esc((g && g.name) || (State.S.project && State.S.project.name) || 'This project');
       h += `<div class="dp-sec"><div class="dp-sechead"><span class="dp-secbtn static"><span class="dp-chev"></span>
         <span class="dp-secmain"><span class="dp-secname">${label}</span><span class="dp-secn">${others.length} drawing${others.length === 1 ? '' : 's'} on this device / team cloud</span></span></span></div>
         ${others.map(panelRowHtml).join('')}</div>`;
@@ -902,5 +916,5 @@ const Drawings = (() => {
   document.addEventListener('DOMContentLoaded', init);
 
   return { onCloudState, sync, checkSetup, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection,
-    available, summary, linkedProjects, pickFolder, selectKey, _state: st };
+    available, summary, linkedProjects, guessName, pickFolder, selectKey, _state: st };
 })();

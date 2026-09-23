@@ -506,7 +506,11 @@ const App = (() => {
       };
       if ($('pj-spf-pick')) {
         // the picker is its own overlay, so the details stay as typed underneath it
-        $('pj-spf-pick').onclick = () => Drawings.pickFolder({ current: spf, hints: [g('pj-aro'), g('pj-name'), g('pj-site')] }, f => { spf = f; spfChanged = true; paintSpf(); });
+        $('pj-spf-pick').onclick = () => Drawings.pickFolder({ current: spf, hints: [g('pj-aro'), g('pj-name'), g('pj-site')] }, f => {
+          spf = f; spfChanged = true; paintSpf();
+          // no project name yet: read one off the folder's path (the job's folder, not "03_Engineering") — editable before Save
+          if (!g('pj-name')) { const guess = Drawings.guessName(f); if (guess) $('pj-name').value = guess; }
+        });
         $('pj-spf-clear').onclick = () => { spf = null; spfChanged = true; paintSpf(); };
       }
       $('pj-ok').onclick = () => {
