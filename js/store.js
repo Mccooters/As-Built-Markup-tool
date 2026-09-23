@@ -122,6 +122,7 @@ const Store = (() => {
             aroNo: aro.project || '', jobRef: d.jobRef || '',
             pname: pj.name || '', fileName: d.fileName || '',
             markups: Array.isArray(d.markups) ? d.markups.length : 0,
+            spFolder: pj.spFolder && typeof pj.spFolder === 'object' && pj.spFolder.id ? pj.spFolder : null,
           };
         })
         .sort((a, b) => b.savedAt - a.savedAt);

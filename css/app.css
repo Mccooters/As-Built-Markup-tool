@@ -991,8 +991,44 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
 .imp-opt.armed { border-color: #e05555; background: rgba(224,85,85,.12); }
 .imp-opt:disabled { opacity: .6; cursor: default; }
 /* several sheets on one project: a heading, then the drawings indented under it */
-.pj-projhead { display: flex; align-items: center; gap: 8px; padding: 9px 4px 3px; font-size: 12.5px; font-weight: 600; border-top: 1px solid var(--edge); }
+.pj-projhead { display: flex; align-items: center; gap: 8px; padding: 9px 4px 3px; font-size: 12.5px; font-weight: 600; border-top: 1px solid var(--edge); flex-wrap: wrap; }
 .pj-projhead .pj-count { margin-left: 0; }
+/* a project's SharePoint drawings: the way into its register from its Home heading */
+.pj-draw { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; background: var(--bg3); border: 1px solid var(--edge);
+  border-radius: 999px; padding: 3px 10px 3px 8px; color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.pj-draw svg { width: 14px; height: 14px; }
+.pj-draw:hover { border-color: var(--accent); }
+/* Project details: the linked folder */
+.pj-spf { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.pj-spf span { min-width: 0; overflow-wrap: anywhere; }
+/* Home card: which project's register */
+.sp-projsel { margin-left: 8px; background: var(--bg3); color: var(--txt); border: 1px solid var(--edge); border-radius: 6px;
+  padding: 3px 6px; font: inherit; font-size: 12.5px; max-width: 60%; text-transform: none; letter-spacing: 0; font-weight: 600; }
+/* drawings panel: the open project has no folder yet */
+.dp-linkhint { font-size: 12.5px; color: var(--txt-dim); padding: 0 10px 8px; }
+/* the folder picker: its own overlay above whichever dialog opened it */
+.sp-pick { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; }
+.sp-pick-back { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+.sp-pick-box { position: relative; background: var(--bg2); border: 1px solid var(--edge); border-radius: 10px; width: min(560px, calc(100vw - 32px));
+  max-height: 84vh; overflow-y: auto; box-shadow: 0 12px 40px rgba(0,0,0,.55); padding: 18px 20px; }
+.sp-pick-box h3 { margin: 0 0 10px; font-size: 15px; }
+.sp-pick-box .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.spb-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 12.5px; margin-bottom: 8px; }
+.spb-crumb { background: none; border: 0; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.spb-crumb.cur { color: var(--txt); font-weight: 600; cursor: default; }
+.spb-crumb:not(.cur):hover { background: var(--bg3); }
+.spb-sep { color: var(--txt-dim); }
+.spb-list { display: flex; flex-direction: column; gap: 4px; max-height: 44vh; overflow-y: auto; }
+.spb-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--bg3); border: 1px solid var(--edge);
+  border-radius: 8px; padding: 9px 10px; color: var(--txt); font: inherit; font-size: 13.5px; cursor: pointer; }
+.spb-row svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--txt-dim); }
+.spb-row:hover { border-color: var(--accent); }
+.spb-row.sug { border-color: var(--accent-dim); }
+.spb-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spb-tag { font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 999px; padding: 1px 6px; }
+.spb-n { color: var(--txt-dim); font-size: 12px; flex: 0 0 auto; }
+.spb-paste { display: flex; gap: 6px; margin-top: 10px; }
+.spb-paste input { flex: 1 1 auto; min-width: 0; background: var(--bg3); color: var(--txt); border: 1px solid var(--edge); border-radius: 6px; padding: 7px 9px; font-size: 13px; }
 .pj-row.sub { border-top-color: rgba(255,255,255,.04); }
 .pj-row.sub .pj-main { padding-left: 18px; }
 .pj-note {

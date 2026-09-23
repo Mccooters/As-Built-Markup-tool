@@ -19,8 +19,12 @@
  *   MS_TENANT_ID          Entra "Directory (tenant) ID" of the app registration
  *   MS_CLIENT_ID          its "Application (client) ID"
  *   MS_CLIENT_SECRET      a client secret VALUE (not the secret's ID)
- *   SP_DRAWINGS_URL       the SharePoint folder that holds the project drawings,
- *                         pasted straight from the browser address bar
+ *   SP_DRAWINGS_URL       the drawings ROOT on SharePoint — the folder above
+ *                         the project folders (or the document library
+ *                         itself), pasted straight from the browser address
+ *                         bar. Each project then links to its own drawings
+ *                         folder inside it (Project details → Choose
+ *                         folder); the API only ever reads inside the root.
  *   The registration needs the Microsoft Graph APPLICATION permission
  *   Sites.Read.All (or Sites.Selected granted on the one site) with admin
  *   consent. Drawing bytes go browser ← SharePoint via the pre-authenticated
@@ -39,11 +43,13 @@
  *     updated_by text not null default '',
  *     updated_at timestamptz not null default now(),
  *     status text not null default 'active',  -- active | dlp | done — groups the project list
- *     file_name text not null default ''      -- the drawing's file name (projects with several sheets)
+ *     file_name text not null default '',     -- the drawing's file name (projects with several sheets)
+ *     sp_folder text not null default ''      -- the project's SharePoint drawings folder {id,name,path}
  *   );
- *   -- existing installs (table created before statuses / file names existed) — two lines:
+ *   -- existing installs (table created before these columns existed) — three lines:
  *   alter table am_projects add column if not exists status text not null default 'active';
  *   alter table am_projects add column if not exists file_name text not null default '';
+ *   alter table am_projects add column if not exists sp_folder text not null default '';
  *   alter table am_projects enable row level security;  -- no policies: only the service key reads it
  *   insert into storage.buckets (id, name, public) values ('airmark', 'airmark', false);
  */
@@ -125,7 +131,23 @@ function slimRow(r) {
     pdfSize: Number(r.pdf_size) || 0, hasPdf: !!str(r.pdf_path),
     status: normStatus(r.status),
     fileName: str(r.file_name),
+    spFolder: folderRef(r.sp_folder),
   };
+}
+
+// A project's SharePoint drawings folder — {id, name, path} from an object
+// or its JSON, null when absent or malformed. Stored as JSON in sp_folder.
+const SP_ITEM_ID = /^[A-Za-z0-9!_-]{3,160}$/;
+function folderRef(v) {
+  let o = v;
+  if (typeof v === 'string') {
+    if (!v.trim()) return null;
+    try { o = JSON.parse(v); } catch (e) { return null; }
+  }
+  if (!o || typeof o !== 'object') return null;
+  const id = str(o.id).trim();
+  if (!SP_ITEM_ID.test(id)) return null;
+  return { id, name: str(o.name).slice(0, 200), path: str(o.path).slice(0, 600) };
 }
 
 // Project status — In progress (active) / DLP (defects liability period) /
@@ -175,9 +197,8 @@ const spConfigured = () =>
 const msLoginBase = () => env('MS_LOGIN_BASE') || 'https://login.microsoftonline.com';
 const graphBase = () => env('MS_GRAPH_BASE') || 'https://graph.microsoft.com/v1.0';
 
-const SP_ITEM_ID = /^[A-Za-z0-9!_-]{3,160}$/;
 let graphTok = { token: '', exp: 0, roles: null };   // client-credentials token, cached per warm instance
-let spRootCache = null;                              // resolved {driveId, id, name, via}
+let spRootCache = null;                              // resolved {driveId, id, name, via, path}
 
 // The permissions the token actually carries (its "roles" claim) — read for
 // diagnostics only, never trusted for anything. null when the token is not a
@@ -327,17 +348,13 @@ async function spResolveByPath(p) {
     ? await graph(`/drives/${encodeURIComponent(best.id)}/root:/${rel.split('/').map(encodeURIComponent).join('/')}`)
     : await graph(`/drives/${encodeURIComponent(best.id)}/root`);
   if (!it || !it.id) throw new Error('SharePoint returned no item for ' + p.folderPath);
-  return { driveId: str(it.parentReference && it.parentReference.driveId) || best.id, id: str(it.id), name: str(it.name) || best.name, folder: !!it.folder, via: 'site path' };
+  return { driveId: str(it.parentReference && it.parentReference.driveId) || best.id, id: str(it.id), name: str(it.name) || best.name, folder: !!it.folder, via: 'site path', raw: it };
 }
 
-// Resolve the pasted folder URL to a drive item once per warm instance: the
-// site-path route first, then Graph's shares API (which takes any SharePoint
-// URL as a base64url "share token") for sharing links and anything the path
-// route could not place.
-async function spRoot() {
-  if (spRootCache) return spRootCache;
-  const p = parseSpUrl(env('SP_DRAWINGS_URL'));
-  if (!p) throw new Error('SP_DRAWINGS_URL is not a web address — paste the drawings folder’s address from the browser.');
+// Resolve a folder address to a drive item: the site-path route first, then
+// Graph's shares API (which takes any SharePoint URL as a base64url "share
+// token") for sharing links and anything the path route could not place.
+async function spResolveUrl(p) {
   let got = null, pathErr = null;
   if (!p.shareOnly) {
     try { got = await spResolveByPath(p); }
@@ -346,25 +363,64 @@ async function spRoot() {
   if (!got) {
     const shareTok = 'u!' + Buffer.from(p.canonical, 'utf8').toString('base64url');
     let it;
-    try { it = await graph(`/shares/${shareTok}/driveItem?$select=id,name,folder,parentReference`); }
+    try { it = await graph(`/shares/${shareTok}/driveItem?$select=id,name,folder,root,parentReference`); }
     catch (e) {
       if (pathErr && pathErr.notFound && !e.authFail) throw pathErr;   // the path route's explanation names what was not found
       throw e;
     }
     const driveId = str(it && it.parentReference && it.parentReference.driveId);
-    if (!it || !it.id || !driveId) throw new Error('SharePoint resolved the folder URL but returned no drive item — is SP_DRAWINGS_URL a folder inside a document library?');
-    got = { driveId, id: str(it.id), name: str(it.name), folder: !!it.folder, via: 'sharing link' };
+    if (!it || !it.id || !driveId) throw new Error('SharePoint resolved the folder URL but returned no drive item — is it a folder inside a document library?');
+    got = { driveId, id: str(it.id), name: str(it.name), folder: !!it.folder, via: 'sharing link', raw: it };
   }
+  return got;
+}
+
+// An item's own path inside its drive ("/drives/<id>/root:/Projects/Job"),
+// as SharePoint reports it — compared decoded and case-folded, since Graph
+// is not consistent about encoding. The drive root is "/drives/<id>/root:".
+const safeDecode = s => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+function absPath(it) {
+  const pr = (it && it.parentReference) || {};
+  if (!it || it.root !== undefined || !str(pr.path)) return `/drives/${str(pr.driveId)}/root:`;
+  return str(pr.path) + '/' + str(it.name);
+}
+const pathKey = p => safeDecode(str(p)).replace(/\/+$/, '').toLowerCase();
+const insideRoot = (itemPath, root) => pathKey(itemPath).startsWith(pathKey(root.path) + '/');
+const relToRoot = (itemPath, root) => safeDecode(str(itemPath)).slice(safeDecode(root.path).length + 1);
+
+// The drawings root (SP_DRAWINGS_URL), resolved once per warm instance.
+async function spRoot() {
+  if (spRootCache) return spRootCache;
+  const p = parseSpUrl(env('SP_DRAWINGS_URL'));
+  if (!p) throw new Error('SP_DRAWINGS_URL is not a web address — paste the drawings folder’s address from the browser.');
+  const got = await spResolveUrl(p);
   if (!got.folder) throw new Error('SP_DRAWINGS_URL points at a file, not a folder — paste the address of the folder that holds the drawings.');
-  spRootCache = got;
+  spRootCache = { driveId: got.driveId, id: got.id, name: got.name, via: got.via, path: absPath(got.raw) };
   return spRootCache;
 }
 
-// Walk the folder tree (a few levels is plenty for a drawings register) and
+// A folder inside the root, by its item id — the only folders the register
+// will ever read. Anything outside the root is refused, so a linked folder
+// can never widen what the deployment's credential exposes.
+async function spItem(id) {
+  const root = await spRoot();
+  if (id === root.id) return { driveId: root.driveId, id: root.id, name: root.name, folder: true, rel: '', isRoot: true };
+  const it = await graph(`/drives/${encodeURIComponent(root.driveId)}/items/${encodeURIComponent(id)}?$select=id,name,folder,file,root,parentReference`);
+  if (!it || !it.id) throw new Error('SharePoint returned no item for that folder.');
+  const ap = absPath(it);
+  if (!insideRoot(ap, root)) {
+    const e = new Error('That folder is outside the drawings root this deployment is pointed at (SP_DRAWINGS_URL) — only folders inside it can be linked.');
+    e.outside = true;
+    throw e;
+  }
+  return { driveId: root.driveId, id: str(it.id), name: str(it.name), folder: !!it.folder, rel: relToRoot(ap, root), isRoot: false };
+}
+
+// Walk a folder tree (a few levels is plenty for a drawings register) and
 // group the PDFs by their sub-folder path — those become the register's
 // sections, exactly how the drawings are already organised on SharePoint.
-async function spWalk() {
-  const root = await spRoot();
+async function spWalk(from) {
+  const root = from || await spRoot();
   const sections = {};
   const queue = [{ id: root.id, path: '', depth: 0 }];
   let seen = 0;
@@ -507,11 +563,12 @@ const ACTIONS = {
   async list(q) {
     const rows = await sb('GET', rowsPath('?select=*&order=updated_at.desc&limit=100'));
     const force = !!(q && q.recheck);
-    let statusColumn = null, fileNameColumn = null;
+    let statusColumn = null, fileNameColumn = null, spFolderColumn = null;
     try { statusColumn = await hasCol('status', force); } catch (e) { /* unknown — say nothing */ }
     try { fileNameColumn = await hasCol('file_name', force); } catch (e) { /* unknown */ }
-    const columnError = statusColumn === false ? colError('status') : fileNameColumn === false ? colError('file_name') : '';
-    return { ok: true, projects: (rows || []).map(slimRow), statusColumn, fileNameColumn, columnError };
+    try { spFolderColumn = await hasCol('sp_folder', force); } catch (e) { /* unknown */ }
+    const columnError = statusColumn === false ? colError('status') : fileNameColumn === false ? colError('file_name') : spFolderColumn === false ? colError('sp_folder') : '';
+    return { ok: true, projects: (rows || []).map(slimRow), statusColumn, fileNameColumn, spFolderColumn, columnError };
   },
 
   // Start a save: find/create the registry row for this drawing, check the
@@ -553,6 +610,7 @@ const ACTIONS = {
       const fields = { name, aro_no: aroNo, fingerprint, updated_by: auth };
       if (status && await hasStatusCol()) fields.status = status;
       if (fileName && await hasCol('file_name')) fields.file_name = fileName;
+      if (body && body.spFolder !== undefined && await hasCol('sp_folder')) { const f = folderRef(body.spFolder); fields.sp_folder = f ? JSON.stringify(f) : ''; }
       const ins = await sb('POST', rowsPath(''), fields, { Prefer: 'return=representation' });
       row = Array.isArray(ins) ? ins[0] : ins;
     }
@@ -605,6 +663,8 @@ const ACTIONS = {
     if (body && body.status != null && await hasStatusCol()) patch.status = normStatus(body.status);
     const fileName = str(body && body.fileName).trim().slice(0, 200);
     if (fileName && await hasCol('file_name')) patch.file_name = fileName;
+    // the project's SharePoint drawings folder rides with every save (it is part of the details)
+    if (body && body.spFolder !== undefined && await hasCol('sp_folder')) { const f = folderRef(body.spFolder); patch.sp_folder = f ? JSON.stringify(f) : ''; }
     if (body && body.pdfUploaded) {
       const pp = str(body.pdfPath);
       patch.pdf_path = new RegExp('^projects/' + id + '/drawing(-[A-Za-z0-9_-]{4,80})?\\.pdf$').test(pp) ? pp : `projects/${id}/drawing.pdf`;
@@ -659,12 +719,65 @@ const ACTIONS = {
     return { ok: true, project: slimRow(rows[0]) };
   },
 
-  // The SharePoint drawings register: sections mirror the folder tree.
-  async drawings() {
+  // The SharePoint drawings register: sections mirror the folder tree. With
+  // `folder=<item id>` it is one project's linked folder (inside the root);
+  // without, the whole root.
+  async drawings(q) {
     if (!spConfigured())
       return { ok: false, spNotConfigured: true, statusmessage: 'SharePoint drawings are not configured on this deployment (set MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET and SP_DRAWINGS_URL).' };
-    const w = await spWalk();
-    return { ok: true, root: w.root, sections: w.sections, fetchedAt: new Date().toISOString() };
+    const folderId = str(q && q.folder).trim();
+    let from = null, folder = null;
+    if (folderId) {
+      if (!SP_ITEM_ID.test(folderId)) return { ok: false, httpStatus: 400, statusmessage: 'Bad folder id' };
+      const it = await spItem(folderId);
+      if (!it.folder) return { ok: false, httpStatus: 400, statusmessage: 'The project’s link points at a file, not a folder — choose the folder again in Project details.' };
+      from = it;
+      folder = { id: it.id, name: it.name, path: it.rel };
+    }
+    const w = await spWalk(from);
+    return { ok: true, root: w.root, folder, sections: w.sections, fetchedAt: new Date().toISOString() };
+  },
+
+  // One level of the folder tree under the root, for choosing a project's
+  // drawings folder: sub-folders (with their item counts) and how many PDFs
+  // sit directly in the folder.
+  async spbrowse(q) {
+    if (!spConfigured())
+      return { ok: false, spNotConfigured: true, statusmessage: 'SharePoint drawings are not configured on this deployment.' };
+    const root = await spRoot();
+    const folderId = str(q && q.folder).trim();
+    if (folderId && !SP_ITEM_ID.test(folderId)) return { ok: false, httpStatus: 400, statusmessage: 'Bad folder id' };
+    const at = await spItem(folderId || root.id);
+    if (!at.folder) return { ok: false, httpStatus: 400, statusmessage: 'That is a file, not a folder.' };
+    const folders = [];
+    let pdfs = 0, seen = 0;
+    let next = `/drives/${encodeURIComponent(root.driveId)}/items/${encodeURIComponent(at.id)}/children?$top=200&$select=id,name,folder,file`;
+    while (next && seen < 600) {
+      const j = await graph(next);
+      for (const it of (j && j.value || [])) {
+        seen++;
+        if (it.folder) folders.push({ id: str(it.id), name: str(it.name), items: Number(it.folder.childCount) || 0 });
+        else if (/\.pdf$/i.test(str(it.name))) pdfs++;
+      }
+      next = j && j['@odata.nextLink'] || null;
+    }
+    folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    return { ok: true, folder: { id: at.id, name: at.name, path: at.rel, isRoot: at.isRoot }, rootName: root.name, folders, pdfs };
+  },
+
+  // A pasted folder address → the folder inside the root it names.
+  async spresolve(q, body) {
+    if (!spConfigured())
+      return { ok: false, spNotConfigured: true, statusmessage: 'SharePoint drawings are not configured on this deployment.' };
+    const p = parseSpUrl(str(body && body.url));
+    if (!p) return { ok: false, statusmessage: 'That is not a web address — paste the folder’s address from SharePoint (or use Copy link on the folder).' };
+    const root = await spRoot();
+    const got = await spResolveUrl(p);
+    if (!got.folder) return { ok: false, statusmessage: 'That address is a file, not a folder — paste the address of the folder that holds the project’s drawings.' };
+    const ap = absPath(got.raw);
+    if (got.id !== root.id && (got.driveId !== root.driveId || !insideRoot(ap, root)))
+      return { ok: false, statusmessage: `That folder is outside the drawings root this deployment is pointed at (“${root.name}”) — only folders inside it can be linked. Point SP_DRAWINGS_URL higher up if the projects live elsewhere.` };
+    return { ok: true, folder: { id: got.id, name: got.name, path: got.id === root.id ? '' : relToRoot(ap, root), isRoot: got.id === root.id } };
   },
 
   // Step-by-step check of the SharePoint setup, for the "Check setup" button
@@ -742,8 +855,8 @@ const ACTIONS = {
   },
 };
 
-const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spcheck: 1, spfile: 1, spproxy: 1 };
-const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamscope: 1, spfile: 1 };
+const AUTH_ACTIONS = { who: 1, list: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamcfg: 1, teamscope: 1, drawings: 1, spbrowse: 1, spresolve: 1, spcheck: 1, spfile: 1, spproxy: 1 };
+const POST_ACTIONS = { login: 1, prepare: 1, commit: 1, setstatus: 1, revurl: 1, delete: 1, open: 1, teamscope: 1, spresolve: 1, spfile: 1 };
 
 /* ---------------- HTTP plumbing ---------------- */
 

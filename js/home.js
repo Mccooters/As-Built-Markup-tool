@@ -83,7 +83,7 @@ const Home = (() => {
     const cloud = cl && cl.token ? cl.projects || [] : [];
     const byFp = new Map();
     for (const r of localRows) {
-      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, pname: r.pname || '', fileName: r.fileName || '', status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, markups: r.markups || 0, onDevice: true });
+      byFp.set(r.fingerprint, { fp: r.fingerprint, name: r.name, pname: r.pname || '', fileName: r.fileName || '', status: r.status, site: r.site, client: r.client, aroNo: r.aroNo, savedAt: r.savedAt, markups: r.markups || 0, onDevice: true, spFolder: r.spFolder || null });
     }
     for (const p of cloud) {
       const fp = p.fingerprint || ('cloud:' + p.id);
@@ -95,6 +95,7 @@ const Home = (() => {
       if (!row.pname && !fromFile) row.pname = p.name || '';
       if (!row.fileName) row.fileName = p.fileName || '';
       if (!row.aroNo) row.aroNo = p.aroNo;
+      if (!row.spFolder && p.spFolder && p.spFolder.id) row.spFolder = p.spFolder;
       row.updatedBy = p.updatedBy; row.updatedAt = p.updatedAt;
       if (p.status) row.status = p.status;
       byFp.set(fp, row);
@@ -108,6 +109,7 @@ const Home = (() => {
       row.markups = State.S.markups.length;
       row.site = d.site || ''; row.client = d.client || '';
       row.aroNo = (State.S.aroSite && State.S.aroSite.project) || row.aroNo || '';
+      row.spFolder = Project.spFolder() || row.spFolder || null;
       byFp.set(State.S.fingerprint, row);
     }
     const rows = [...byFp.values()];
@@ -119,7 +121,16 @@ const Home = (() => {
     return rows;
   }
 
-  // drawings that share a project name sit together under one heading
+  // drawings that share a project name sit together under one heading — and
+  // so does a project with a SharePoint drawings folder of its own, whose
+  // heading carries the way into that folder's register
+  const ICON_FOLDER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const folderOf = grp => { for (const x of grp) if (x.spFolder && x.spFolder.id) return x.spFolder; return null; };
+  function drawBtn(f, title) {
+    const sum = typeof Drawings !== 'undefined' && Drawings.summary ? Drawings.summary(f.id) : null;
+    const label = sum ? `${sum.total} site drawing${sum.total === 1 ? '' : 's'}${sum.have ? ` · ${sum.have} on device` : ''}` : 'Site drawings';
+    return `<button type="button" class="pj-draw" data-key="${esc(f.id)}" data-title="${esc(title)}" title="${esc(f.path || f.name)} on SharePoint — the project’s drawing register">${ICON_FOLDER}<span>${label}</span></button>`;
+  }
   function rowsHtml(list) {
     const key = r => (r.pname || '').trim().toLowerCase();
     const byP = new Map();
@@ -129,10 +140,11 @@ const Home = (() => {
     for (const r of list) {
       const k = key(r);
       const grp = byP.get(k);
-      if (k && grp.length > 1) {
+      const f = k ? folderOf(grp) : null;
+      if (k && (grp.length > 1 || f)) {
         if (done.has(k)) continue;
         done.add(k);
-        h += `<div class="pj-projhead"><span class="pj-projname">${esc(r.pname)}</span><span class="pj-count">${grp.length} drawings</span></div>`;
+        h += `<div class="pj-projhead"><span class="pj-projname">${esc(r.pname)}</span>${grp.length > 1 ? `<span class="pj-count">${grp.length} drawings</span>` : ''}${f ? drawBtn(f, r.pname) : ''}</div>`;
         h += grp.map(x => rowHtml(x, true)).join('');
       } else h += rowHtml(r, false);
     }
@@ -253,13 +265,13 @@ const Home = (() => {
     let h = '';
     if (signed && cl.error) h += `<div class="cloud-err">${esc(cl.error)}</div>`;
     // the registry is missing an optional column: show the exact SQL, not a pointer to the source
-    const missing = [];
-    if (signed && cl.statusCol === false) missing.push("alter table am_projects add column if not exists status text not null default 'active';");
-    if (signed && cl.fileNameCol === false) missing.push("alter table am_projects add column if not exists file_name text not null default '';");
+    const missing = [], whys = [];
+    if (signed && cl.statusCol === false) { missing.push("alter table am_projects add column if not exists status text not null default 'active';"); whys.push('project statuses stay on each device'); }
+    if (signed && cl.fileNameCol === false) { missing.push("alter table am_projects add column if not exists file_name text not null default '';"); whys.push('a project’s sheets aren’t grouped for the team'); }
+    if (signed && cl.spFolderCol === false) { missing.push("alter table am_projects add column if not exists sp_folder text not null default '';"); whys.push('a project’s SharePoint drawings folder isn’t shared with the team'); }
     if (missing.length) {
-      const why = cl.statusCol === false && cl.fileNameCol === false ? 'project statuses stay on each device and a project’s sheets aren’t grouped for the team'
-        : cl.statusCol === false ? 'project statuses stay on each device' : 'a project’s sheets aren’t grouped for the team';
-      h += `<div class="pj-note"><b>The team registry is missing ${missing.length === 1 ? 'a column' : 'two columns'}</b> — until it’s added, ${why}. Run this in Supabase → SQL editor, just these lines:
+      const why = whys.length === 1 ? whys[0] : whys.slice(0, -1).join(', ') + ' and ' + whys[whys.length - 1];
+      h += `<div class="pj-note"><b>The team registry is missing ${missing.length === 1 ? 'a column' : missing.length === 2 ? 'two columns' : 'three columns'}</b> — until ${missing.length === 1 ? 'it’s' : 'they’re'} added, ${why}. Run this in Supabase → SQL editor, just these lines:
         <pre class="pj-sql" id="hsSql">${esc(missing.join('\n'))}</pre>
         <div class="pj-note-actions"><button type="button" class="mini-btn" id="hsSqlCopy">Copy SQL</button><button type="button" class="mini-btn primary" id="hsSqlCheck">Check again</button></div>
         ${cl.colError ? `<div class="pj-note-why">Supabase said: ${esc(cl.colError)}</div>` : ''}</div>`;
@@ -296,6 +308,9 @@ const Home = (() => {
       secOpen[b.dataset.sec] = !secOpen[b.dataset.sec];
       try { localStorage.setItem('abmt:pjsec', JSON.stringify(secOpen)); } catch (e) { /* ignore */ }
       paintProjects();
+    }));
+    el.querySelectorAll('.pj-draw').forEach(b => b.addEventListener('click', () => {
+      if (typeof Drawings !== 'undefined') Drawings.openDialog({ key: b.dataset.key, title: b.dataset.title });
     }));
     el.querySelectorAll('.pj-main').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openProject(b.dataset.fp, b.dataset.id); }));
     el.querySelectorAll('.pj-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); projectMenu(b.dataset.fp); }));

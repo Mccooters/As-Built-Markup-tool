@@ -443,6 +443,9 @@ const App = (() => {
     const holderOpts = '<option value="">— Not linked (all locations) —</option>'
       + holders.map(h => `<option value="${v(h.name)}"${h.name === linked ? ' selected' : ''}>${v(h.name)}${h.kind ? ' — ' + v(h.kind) : ''}</option>`).join('');
     const stNow = Project.status();
+    // the project's SharePoint drawings folder (deployments with a register)
+    const spOn = typeof Drawings !== 'undefined' && Drawings.available && Drawings.available();
+    let spf = Project.spFolder(), spfChanged = false;
     modal(`
       <h3>Project details</h3>
       <div class="form-row two">
@@ -474,6 +477,11 @@ const App = (() => {
         <div class="muted" style="margin-top:4px">${holders.length
           ? 'The site container, ute or store for this job. Site stock opens on it, deliveries book into it, the pick list lands on it and used parts come out of it while this drawing is open.'
           : 'Open Site stock and sync once (⟳) to list your AroFlo holders here.'}</div></div>
+      ${spOn ? `<div class="form-row"><label>SharePoint drawings folder</label>
+        <div class="pj-spf"><span id="pj-spf-name" class="${spf ? '' : 'muted'}">${spf ? v(spf.path || spf.name) : 'Not linked — the register shows the whole drawings root'}</span>
+          <button type="button" class="pj-link" id="pj-spf-pick">${spf ? 'Change…' : 'Choose folder…'}</button>
+          <button type="button" class="pj-link" id="pj-spf-clear"${spf ? '' : ' hidden'}>Unlink</button></div>
+        <div class="muted" style="margin-top:4px">The project’s own drawings folder on SharePoint. The Drawings panel lists it, Home shows it under the project, and sheets opened from it join this project.</div></div>` : ''}
       <div class="form-row"><label>Drawing revisions</label>
         <div class="muted">${(S.revisions || []).length
           ? (S.revisions.length + ' earlier revision' + (S.revisions.length === 1 ? '' : 's') + ' kept for Compare')
@@ -487,9 +495,23 @@ const App = (() => {
       </div>`, (box, close) => {
       $('pj-remove').onclick = () => { close(); Home.projectMenu(S.fingerprint); };
       $('pj-name').focus();
+      const g = id => $(id).value.trim();
+      const paintSpf = () => {
+        const n = $('pj-spf-name');
+        if (!n) return;
+        n.textContent = spf ? (spf.path || spf.name) : 'Not linked — the register shows the whole drawings root';
+        n.classList.toggle('muted', !spf);
+        $('pj-spf-pick').textContent = spf ? 'Change…' : 'Choose folder…';
+        $('pj-spf-clear').hidden = !spf;
+      };
+      if ($('pj-spf-pick')) {
+        // the picker is its own overlay, so the details stay as typed underneath it
+        $('pj-spf-pick').onclick = () => Drawings.pickFolder({ current: spf, hints: [g('pj-aro'), g('pj-name'), g('pj-site')] }, f => { spf = f; spfChanged = true; paintSpf(); });
+        $('pj-spf-clear').onclick = () => { spf = null; spfChanged = true; paintSpf(); };
+      }
       $('pj-ok').onclick = () => {
-        const g = id => $(id).value.trim();
         Project.setDetails({ name: g('pj-name'), site: g('pj-site'), client: g('pj-client'), contractor: g('pj-contractor'), contact: g('pj-contact'), phone: g('pj-phone'), status: g('pj-status') });
+        if (spfChanged) Project.setDetails({ spFolder: spf });
         S.jobRef = g('pj-ref');
         const aro = g('pj-aro');
         if (aro || (S.aroSite && S.aroSite.project)) S.aroSite = Object.assign({}, S.aroSite || {}, { project: aro });

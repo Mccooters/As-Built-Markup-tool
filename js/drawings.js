@@ -13,20 +13,33 @@
 
 const Drawings = (() => {
 
-  const REG_KEY = 'abmt:spreg';   // last fetched register {when, root, sections}
+  const REG_KEY = 'abmt:spreg';   // the drawings root's register {when, root, sections}
+  const REGS_KEY = 'abmt:spregs'; // project folders' registers: folder id → {when, root, path, folder, sections}
+  const SEL_KEY = 'abmt:spsel';   // which register Home's card shows: {key, title}
   const MAP_KEY = 'abmt:spmap';   // itemId → {etag, fp, name, when} downloaded on this device
   const FOLD_KEY = 'abmt:spfold'; // section path → folded?
   const PANEL_KEY = 'abmt:drawpanel'; // drawings panel open? (desktop)
   const PFOLD_KEY = 'abmt:dpfold';    // drawings panel: section path → folded?
   const API = '/api/cloud';
   const STALE_MS = 30 * 60000;    // auto re-check the register after this
+  const KEEP_REGS = 12;           // project registers kept on the device
 
+  // One register per folder: 'root' is the whole drawings root
+  // (SP_DRAWINGS_URL); a project's key is its linked folder's item id.
   const st = {
-    reg: null, map: {}, fold: {},
-    phase: 'idle', error: '', errorKind: '', filter: '', busy: false,
+    regs: {},                     // key → { when, root, path, folder, sections }
+    status: {},                   // key → { phase, error, errorKind }
+    key: 'root', keyTitle: '',    // the register Home's card shows, and its project's name
+    chosen: false,                // …picked by hand (else the card follows the open project)
+    map: {}, fold: {}, filter: '', busy: false,
     pfilter: '', pfold: {},       // drawings panel search + folds
+    // Home's card register in the older single-register shape (Home and the tests read these)
+    get reg() { return st.regs[st.key] || null; },
+    get phase() { return (st.status[st.key] || {}).phase || 'idle'; },
+    get error() { return (st.status[st.key] || {}).error || ''; },
+    get errorKind() { return (st.status[st.key] || {}).errorKind || ''; },
   };
-  let dlg = null; // { el, close } while the register dialog is open
+  let dlg = null; // { el, close, key, title } while the register dialog is open
   let panelOpen = false;
   let thumbs = {};      // fingerprint → small JPEG data URL (device store 'thumbs')
   let localIdx = {};    // fingerprint → device project row (markup counts, project name)
@@ -54,15 +67,16 @@ const Drawings = (() => {
     return mins < 1 ? 'just now' : mins < 60 ? mins + ' min ago' : mins < 1440 ? Math.round(mins / 60) + ' h ago' : Math.round(mins / 1440) + ' d ago';
   };
 
-  async function call(action, body) {
+  async function call(action, body, qs) {
     const headers = { 'X-AirMark-Auth': cloudSt().token || '' };
+    const url = API + '?action=' + action + (qs ? '&' + qs : '');
     let resp;
     try {
       if (body !== undefined) {
         headers['Content-Type'] = 'application/json';
-        resp = await fetch(API + '?action=' + action, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(45000) });
+        resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(45000) });
       } else {
-        resp = await fetch(API + '?action=' + action, { headers, signal: AbortSignal.timeout(45000) });
+        resp = await fetch(url, { headers, signal: AbortSignal.timeout(45000) });
       }
     } catch (e) { const err = new Error('No connection.'); err.offline = true; throw err; }
     let j;
@@ -74,7 +88,9 @@ const Drawings = (() => {
 
   /* ---------------- register data ---------------- */
 
-  const allFiles = () => (st.reg && st.reg.sections || []).flatMap(s => s.files);
+  const regOf = key => st.regs[key || 'root'] || null;
+  const statusOf = key => st.status[key || 'root'] || {};
+  const allFiles = key => ((regOf(key) || {}).sections || []).flatMap(s => s.files);
 
   function fileState(f) {
     const m = st.map[f.id];
@@ -82,28 +98,81 @@ const Drawings = (() => {
     return m.etag === f.etag ? 'have' : 'update';
   }
 
-  async function sync() {
-    if (!available() || !signedIn() || st.phase === 'loading') return;
-    st.phase = 'loading'; st.error = '';
-    renderCards();
-    try {
-      const r = await call('drawings');
-      st.reg = { when: Date.now(), root: r.root || '', sections: r.sections || [] };
-      saveJson(REG_KEY, st.reg);
-    } catch (e) {
-      st.error = e.offline
-        ? (st.reg ? 'Offline — showing the last saved register.' : 'Offline — the register loads when there’s signal.')
-        : e.message;
-      st.errorKind = e.offline ? 'offline' : 'setup';
-    }
-    st.phase = 'idle';
-    renderCards();
+  /** How much of a register is on this device — null until it has been fetched once. */
+  function summary(key) {
+    if (!regOf(key)) return null;
+    const files = allFiles(key);
+    return { total: files.length, have: files.filter(f => fileState(f) !== 'cloud').length };
   }
 
-  /** The register's error, with a Check setup button when it is the deployment rather than the signal. */
-  const errHtml = () => !st.error ? '' :
-    `<div class="cloud-err">${esc(st.error)}</div>${st.errorKind === 'setup'
-      ? '<div class="sp-fix"><button type="button" class="mini-btn" data-act="check" title="Test each step of the SharePoint setup and say which one needs fixing">Check setup</button></div>' : ''}`;
+  /* ---------------- which folder is whose ---------------- */
+
+  /** Every project with a linked SharePoint folder: the open drawing's and Home's rows. */
+  function linkedProjects() {
+    const out = new Map();
+    const add = (pname, f) => { if (f && f.id && !out.has(f.id)) out.set(f.id, { key: f.id, title: String(pname || '').trim() || f.name, folder: f }); };
+    if (State.S.pdf && typeof Project !== 'undefined') add(Project.details().name, Project.spFolder());
+    if (typeof Home !== 'undefined' && Home.projectRows) for (const r of Home.projectRows()) add(r.pname, r.spFolder);
+    return [...out.values()];
+  }
+
+  /** The open drawing's project folder: its own link, or the link on another sheet of the same project. */
+  function panelFolder() {
+    if (!State.S.pdf) return null;
+    const own = Project.spFolder();
+    if (own) return own;
+    const pname = (Project.details().name || '').trim().toLowerCase();
+    if (!pname || typeof Home === 'undefined' || !Home.projectRows) return null;
+    for (const r of Home.projectRows()) if (r.spFolder && (r.pname || '').trim().toLowerCase() === pname) return r.spFolder;
+    return null;
+  }
+  const panelKey = () => { const f = panelFolder(); return f ? f.id : 'root'; };
+
+  /** What a register is called — the project's name, else the folder's, else the root's. */
+  function regTitle(key) {
+    if (!key || key === 'root') return (regOf('root') || {}).root || '';
+    const lp = linkedProjects().find(p => p.key === key);
+    if (lp) return lp.title;
+    const reg = regOf(key);
+    return (reg && reg.folder && reg.folder.name) || (reg && reg.root) || (key === st.key ? st.keyTitle : '') || '';
+  }
+
+  function saveRegs() {
+    if (st.regs.root) saveJson(REG_KEY, st.regs.root);
+    const keys = Object.keys(st.regs).filter(k => k !== 'root').sort((a, b) => st.regs[b].when - st.regs[a].when);
+    for (const k of keys.slice(KEEP_REGS)) delete st.regs[k];
+    const others = {};
+    for (const k of keys.slice(0, KEEP_REGS)) others[k] = st.regs[k];
+    saveJson(REGS_KEY, others);
+  }
+
+  async function sync(key) {
+    key = key || st.key || 'root';
+    if (!available() || !signedIn() || statusOf(key).phase === 'loading') return;
+    st.status[key] = { phase: 'loading', error: '', errorKind: '' };
+    renderCards();
+    try {
+      const r = await call('drawings', undefined, key === 'root' ? '' : 'folder=' + encodeURIComponent(key));
+      st.regs[key] = { when: Date.now(), root: r.root || '', path: (r.folder && r.folder.path) || '', folder: r.folder || null, sections: r.sections || [] };
+      saveRegs();
+      st.status[key] = { phase: 'idle', error: '', errorKind: '' };
+    } catch (e) {
+      st.status[key] = {
+        phase: 'idle',
+        error: e.offline
+          ? (regOf(key) ? 'Offline — showing the last saved register.' : 'Offline — the register loads when there’s signal.')
+          : e.message,
+        errorKind: e.offline ? 'offline' : 'setup',
+      };
+    }
+    renderCards();
+    if (typeof Home !== 'undefined' && Home.renderProjects) Home.renderProjects();   // the projects' drawing counts
+  }
+
+  /** A register's error, with a Check setup button when it is the deployment rather than the signal. */
+  const errHtml = key => { const s = statusOf(key); return !s.error ? '' :
+    `<div class="cloud-err">${esc(s.error)}</div>${s.errorKind === 'setup'
+      ? '<div class="sp-fix"><button type="button" class="mini-btn" data-act="check" title="Test each step of the SharePoint setup and say which one needs fixing">Check setup</button></div>' : ''}`; };
 
   /** Step-by-step test of the SharePoint setup (server-side, from a fresh Microsoft sign-in). */
   async function checkSetup() {
@@ -114,7 +183,7 @@ const Drawings = (() => {
       (box, cl) => {
         body = box.querySelector('#spChk');
         box.querySelector('#spChkClose').addEventListener('click', cl);
-        box.querySelector('#spChkSync').addEventListener('click', () => { cl(); sync(); });
+        box.querySelector('#spChkSync').addEventListener('click', () => { cl(); sync(st.key); });
       });
     let r;
     try { r = await call('spcheck'); }
@@ -132,11 +201,13 @@ const Drawings = (() => {
     void close;
   }
 
-  function maybeAutoSync() {
+  function maybeAutoSync(key) {
+    key = key || st.key || 'root';
     if (!available() || !signedIn()) return;
-    if (st.reg && Date.now() - st.reg.when < STALE_MS) return;
+    const reg = regOf(key);
+    if (reg && Date.now() - reg.when < STALE_MS) return;
     if (navigator.onLine === false) return;
-    sync();
+    sync(key);
   }
 
   /* ---------------- download / open ---------------- */
@@ -166,14 +237,31 @@ const Drawings = (() => {
     return { bytes, etag: r.etag || f.etag };
   }
 
-  // A sheet opened from the register while a project is open joins that
-  // project (same details, status and stock list) unless it has its own.
-  function joinProject(snap) {
-    if (snap && snap.project && !State.S.project) Project.adoptDetails(snap);
+  // A sheet opened from a register joins the project it was opened for
+  // (same details, status, stock list and folder) unless it has its own:
+  // the open project's details while a sheet is open, else the project the
+  // register belongs to — its details from a sheet already on this device,
+  // or at least its name and folder so it lands under the project on Home.
+  async function joinProject(snap, ctx) {
+    if (State.S.project) return;
+    if (snap && snap.project) { Project.adoptDetails(snap); return; }
+    if (!ctx || !ctx.key || ctx.key === 'root') return;
+    const reg = regOf(ctx.key);
+    const folder = (reg && reg.folder) || null;
+    let fromRow = null;
+    if (typeof Home !== 'undefined' && Home.projectRows) {
+      fromRow = Home.projectRows().find(r => r.onDevice && r.spFolder && r.spFolder.id === ctx.key && r.fp !== State.S.fingerprint) || null;
+    }
+    const rec = fromRow ? await Store.record(fromRow.fp) : null;
+    if (rec && rec.data && rec.data.project) {
+      Project.adoptDetails({ project: rec.data.project, aroSite: rec.data.aroSite || null, jobRef: rec.data.jobRef || '' });
+    } else if (ctx.title || folder) {
+      Project.setDetails({ name: ctx.title || '', spFolder: folder ? { id: ctx.key, name: folder.name, path: folder.path } : null });
+    }
   }
   const afterOpen = () => { if (isPhone()) closePanel(); renderPanel(); };
 
-  async function openDrawing(f) {
+  async function openDrawing(f, ctx) {
     if (st.busy) return;
     const m = st.map[f.id];
     const snap = State.S.pdf ? Project.detailsSnapshot() : null;
@@ -184,7 +272,7 @@ const Drawings = (() => {
       if (have && have.pdf) {
         if (dlg) dlg.close();
         await Project.openFromStore(m.fp);
-        joinProject(snap);
+        await joinProject(snap, ctx);
         afterOpen();
         return;
       }
@@ -209,7 +297,7 @@ const Drawings = (() => {
         await Project.importRevision(bytes, f.name);
       } else {
         await Viewer.openPdf(bytes, f.name);
-        joinProject(snap);
+        await joinProject(snap, ctx);
       }
       st.map[f.id] = { etag, fp: State.S.fingerprint, name: f.name, when: Date.now() };
       saveJson(MAP_KEY, st.map);
@@ -352,8 +440,8 @@ const Drawings = (() => {
     saveJson(MAP_KEY, st.map);
   }
 
-  async function downloadSection(path) {
-    const sec = ((st.reg && st.reg.sections) || []).find(s => s.path === path);
+  async function downloadSection(path, key) {
+    const sec = allSections(key || panelKey()).find(s => s.path === path);
     if (!sec || st.busy) return;
     const todo = sec.files.filter(f => fileState(f) === 'cloud');
     if (!todo.length) return;
@@ -401,13 +489,16 @@ const Drawings = (() => {
     </button>`;
   }
 
-  function panelSectionHtml(sec, q) {
+  const allSections = key => ((regOf(key) || {}).sections || []);
+
+  function panelSectionHtml(sec, q, key) {
     const cur = State.S.fingerprint;
     const files = q ? sec.files.filter(f => (f.name + ' ' + sec.path).toLowerCase().includes(q)) : sec.files;
     if (!files.length) return '';
     const have = sec.files.filter(f => fileState(f) !== 'cloud').length;
     const missing = sec.files.length - have;
-    const folded = q ? false : !!st.pfold[sec.path];
+    const folded = q ? false : !!st.pfold[foldKey(key, sec.path)];
+    const reg = regOf(key);
     const rows = files.map(f => {
       const m = st.map[f.id], fp = m && m.fp;
       const rec = fp && localIdx[fp];
@@ -417,7 +508,7 @@ const Drawings = (() => {
       <div class="dp-sechead">
         <button type="button" class="dp-secbtn" data-path="${esc(sec.path)}">
           <span class="dp-chev">${folded ? '▸' : '▾'}</span>
-          <span class="dp-secmain"><span class="dp-secname">${esc(sec.path || (st.reg && st.reg.root) || 'Drawings')}</span>
+          <span class="dp-secmain"><span class="dp-secname">${esc(sec.path || (reg && reg.root) || 'Drawings')}</span>
           <span class="dp-secn">${have} of ${sec.files.length} drawing${sec.files.length === 1 ? '' : 's'} downloaded</span></span>
         </button>
         ${missing ? `<button type="button" class="dp-dlall" data-path="${esc(sec.path)}" title="Download all ${missing} to this device"${st.busy ? ' disabled' : ''}>${ICON_DL}</button>` : '<span class="dp-dlall done" title="All on this device">✓</span>'}
@@ -441,19 +532,27 @@ const Drawings = (() => {
     const body = document.getElementById('dpBody');
     if (!body || !panelOpen) return;
     const q = st.pfilter.trim().toLowerCase();
+    const key = panelKey();
     let h = `<div class="dp-tools"><input type="search" id="dp-q" placeholder="Search drawings…" value="${esc(st.pfilter)}" autocomplete="off"></div>`;
     if (available()) {
       if (!signedIn()) {
         h += '<div class="dp-sync"><span class="muted">Sign in to the team cloud (Home) and the project’s SharePoint drawing register loads here.</span></div>';
       } else {
-        const files = allFiles();
+        const reg = regOf(key), s = statusOf(key);
+        const files = allFiles(key);
         const have = files.filter(f => fileState(f) !== 'cloud').length;
-        h += `<div class="dp-sync"><div class="dp-syncmain"><b>${st.phase === 'loading' ? 'Checking SharePoint…' : 'Check for updates'}</b>
-            <small class="muted">Updated ${esc(ageOf(st.reg && st.reg.when))}${files.length ? ` · ${have} of ${files.length} on device` : ''}</small></div>
-          <button type="button" class="mini-btn primary" data-act="sync"${st.phase === 'loading' ? ' disabled' : ''}>Sync</button></div>`;
-        h += errHtml();
-        const secs = ((st.reg && st.reg.sections) || []).map(sec => panelSectionHtml(sec, q)).join('');
-        h += secs || (st.reg ? `<div class="cloud-note">${q ? 'Nothing matches “' + esc(st.pfilter) + '”.' : 'No PDFs in the drawings folder yet.'}</div>` : '');
+        const folder = panelFolder();
+        const where = folder ? esc(folder.path || folder.name) : (reg && reg.root ? esc(reg.root) + ' (the whole drawings root)' : '');
+        h += `<div class="dp-sync"><div class="dp-syncmain"><b>${s.phase === 'loading' ? 'Checking SharePoint…' : 'Check for updates'}</b>
+            <small class="muted">${where ? where + ' · ' : ''}Updated ${esc(ageOf(reg && reg.when))}${files.length ? ` · ${have} of ${files.length} on device` : ''}</small></div>
+          <button type="button" class="mini-btn primary" data-act="sync"${s.phase === 'loading' ? ' disabled' : ''}>Sync</button></div>`;
+        // an open project with no folder of its own: offer the link right here
+        if (!folder && State.S.project && State.S.project.name) {
+          h += '<div class="dp-linkhint">Showing the whole drawings root. <button type="button" class="pj-link" data-act="link">Link this project’s folder…</button></div>';
+        }
+        h += errHtml(key);
+        const secs = allSections(key).map(sec => panelSectionHtml(sec, q, key)).join('');
+        h += secs || (reg ? `<div class="cloud-note">${q ? 'Nothing matches “' + esc(st.pfilter) + '”.' : 'No PDFs in this folder yet.'}</div>` : '');
       }
     }
     const others = projectRows().filter(r => !q || (r.fileName + ' ' + r.name).toLowerCase().includes(q));
@@ -470,22 +569,25 @@ const Drawings = (() => {
     const qEl = body.querySelector('#dp-q');
     qEl.addEventListener('input', () => { st.pfilter = qEl.value; const pos = qEl.selectionStart; renderPanel(); const n = body.querySelector('#dp-q'); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* ignore */ } });
     const syncBtn = body.querySelector('[data-act="sync"]');
-    if (syncBtn) syncBtn.addEventListener('click', () => { syncBtn.disabled = true; syncBtn.textContent = '…'; sync(); });
+    if (syncBtn) syncBtn.addEventListener('click', () => { syncBtn.disabled = true; syncBtn.textContent = '…'; sync(key); });
     const chkBtn = body.querySelector('[data-act="check"]');
     if (chkBtn) chkBtn.addEventListener('click', checkSetup);
+    const linkBtn = body.querySelector('[data-act="link"]');
+    if (linkBtn) linkBtn.addEventListener('click', () => pickFolder({ hints: projectHints() }, f => { Project.setDetails({ spFolder: f }); maybeAutoSync(f.id); }));
     body.querySelectorAll('.dp-secbtn[data-path]').forEach(b => b.addEventListener('click', () => {
-      st.pfold[b.dataset.path] = !st.pfold[b.dataset.path];
+      const fk = foldKey(key, b.dataset.path);
+      st.pfold[fk] = !st.pfold[fk];
       saveJson(PFOLD_KEY, st.pfold);
       renderPanel();
     }));
-    body.querySelectorAll('.dp-dlall[data-path]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); downloadSection(b.dataset.path); }));
+    body.querySelectorAll('.dp-dlall[data-path]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); downloadSection(b.dataset.path, key); }));
     body.querySelectorAll('.dp-row').forEach(b => b.addEventListener('click', () => {
-      const key = b.dataset.key;
-      if (key.startsWith('sp:')) {
-        const f = allFiles().find(x => x.id === key.slice(3));
-        if (f) openDrawing(f);
+      const rk = b.dataset.key;
+      if (rk.startsWith('sp:')) {
+        const f = allFiles(key).find(x => x.id === rk.slice(3));
+        if (f) openDrawing(f, { key, title: regTitle(key) });
       } else {
-        const fp = key.slice(3);
+        const fp = rk.slice(3);
         if (State.S.fingerprint === fp) { if (isPhone()) closePanel(); return; }
         const r = projectRows().find(x => x.fp === fp);
         if (r) Home.openProject(r.fp, r.id);
@@ -505,7 +607,7 @@ const Drawings = (() => {
     if (!isPhone()) saveJson(PANEL_KEY, true);
     renderPanel();
     refreshLocal();
-    maybeAutoSync();
+    maybeAutoSync(panelKey());
   }
   function closePanel() {
     const el = document.getElementById('drawPanel');
@@ -518,22 +620,26 @@ const Drawings = (() => {
 
   /* ---------------- UI ---------------- */
 
-  function sectionsHtml() {
-    const reg = st.reg;
+  // fold state is per register: the root's keys are bare paths (as stored before projects had folders)
+  const foldKey = (key, path) => (!key || key === 'root') ? path : key + '|' + path;
+
+  function sectionsHtml(key) {
+    const reg = regOf(key), s = statusOf(key);
     if (!reg || !reg.sections.length) {
-      if (st.phase === 'loading') return '<div class="cloud-note">Checking SharePoint…</div>';
-      if (!reg && st.error) return '';   // the error says what happened; "no PDFs" would be a second, wrong story
+      if (s.phase === 'loading') return '<div class="cloud-note">Checking SharePoint…</div>';
+      if (!reg && s.error) return '';   // the error says what happened; "no PDFs" would be a second, wrong story
       return '<div class="cloud-note">No PDFs found in the drawings folder yet.</div>';
     }
     const q = st.filter.trim().toLowerCase();
-    const total = allFiles().length;
+    const total = allFiles(key).length;
     const defFold = total > 12;
     let h = '';
     for (const sec of reg.sections) {
       const files = q ? sec.files.filter(f => f.name.toLowerCase().includes(q) || sec.path.toLowerCase().includes(q)) : sec.files;
       if (!files.length) continue;
       const have = sec.files.filter(f => fileState(f) !== 'cloud').length;
-      const folded = q ? false : (st.fold[sec.path] !== undefined ? st.fold[sec.path] : defFold);
+      const fk = foldKey(key, sec.path);
+      const folded = q ? false : (st.fold[fk] !== undefined ? st.fold[fk] : defFold);
       h += `<div class="sp-sec${folded ? ' folded' : ''}" data-path="${esc(sec.path)}">
         <button class="sp-sechead" type="button">
           <span class="sp-chev">${folded ? '▸' : '▾'}</span>
@@ -560,6 +666,21 @@ const Drawings = (() => {
     return h || '<div class="cloud-note">Nothing matches “' + esc(st.filter) + '”.</div>';
   }
 
+  // Home's card follows the register the user picked (a project, or the
+  // whole root); when a project's link is gone, it falls back to the root
+  function cardKey() {
+    if (st.key !== 'root' && !linkedProjects().some(p => p.key === st.key) && !regOf(st.key)) st.key = 'root';
+    // nothing picked yet: the open drawing's project, if it has a folder
+    if (!st.chosen) { const f = panelFolder(); if (f && f.id) return f.id; }
+    return st.key;
+  }
+  function selectKey(key, title) {
+    st.key = key || 'root'; st.keyTitle = title || ''; st.chosen = true;
+    saveJson(SEL_KEY, { key: st.key, title: st.keyTitle });
+    renderCards();
+    maybeAutoSync(st.key);
+  }
+
   function renderInto(el, opts = {}) {
     if (!el) return;
     if (!available()) { el.innerHTML = ''; return; }
@@ -571,78 +692,179 @@ const Drawings = (() => {
         </div>`;
       return;
     }
-    const files = allFiles();
+    const key = opts.key || cardKey();
+    const reg = regOf(key), s = statusOf(key);
+    const files = allFiles(key);
     const have = files.filter(f => fileState(f) !== 'cloud').length;
+    const title = opts.title || regTitle(key);
+    // the projects with folders of their own, as a picker on Home's card
+    const linked = opts.dialog ? [] : linkedProjects();
+    const rootName = (regOf('root') || {}).root || 'the whole drawings root';
+    const picker = linked.length ? `<select class="sp-projsel" data-act="proj" title="Which project’s drawings to show">
+        ${linked.map(p => `<option value="${esc(p.key)}"${p.key === key ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}
+        <option value="root"${key === 'root' ? ' selected' : ''}>All site drawings — ${esc(rootName)}</option></select>` : '';
     el.innerHTML = `
       <div class="cloud-card sp-card">
-        ${opts.dialog ? '' : `<div class="recent-cap">Site drawings${st.reg && st.reg.root ? ' — ' + esc(st.reg.root) : ''}</div>`}
+        ${opts.dialog ? '' : `<div class="recent-cap">Site drawings${picker ? '' : (title ? ' — ' + esc(title) : '')}${picker}</div>`}
         <div class="cloud-who">
-          <span>SharePoint · checked ${esc(ageOf(st.reg && st.reg.when))}${files.length ? ` · <b>${have} of ${files.length}</b> on device` : ''}</span>
-          <button class="mini-btn" data-act="sync" title="Check SharePoint for new and updated drawings"${st.phase === 'loading' ? ' disabled' : ''}>${st.phase === 'loading' ? '…' : '⟳ Sync'}</button>
+          <span>SharePoint${reg && reg.path ? ' · ' + esc(reg.path) : ''} · checked ${esc(ageOf(reg && reg.when))}${files.length ? ` · <b>${have} of ${files.length}</b> on device` : ''}</span>
+          <button class="mini-btn" data-act="sync" title="Check SharePoint for new and updated drawings"${s.phase === 'loading' ? ' disabled' : ''}>${s.phase === 'loading' ? '…' : '⟳ Sync'}</button>
         </div>
-        ${errHtml()}
+        ${errHtml(key)}
         ${files.length > 6 ? `<div class="sp-search"><input type="search" data-act="filter" placeholder="Search drawings…" value="${esc(st.filter)}"></div>` : ''}
-        <div class="sp-list">${sectionsHtml()}</div>
+        <div class="sp-list">${sectionsHtml(key)}</div>
       </div>`;
 
-    el.querySelector('[data-act="sync"]').addEventListener('click', e => { e.stopPropagation(); sync(); });
+    el.querySelector('[data-act="sync"]').addEventListener('click', e => { e.stopPropagation(); sync(key); });
     const chk = el.querySelector('[data-act="check"]');
     if (chk) chk.addEventListener('click', e => { e.stopPropagation(); checkSetup(); });
+    const sel = el.querySelector('[data-act="proj"]');
+    if (sel) {
+      sel.addEventListener('click', e => e.stopPropagation());
+      sel.addEventListener('change', () => { const p = linked.find(x => x.key === sel.value); selectKey(sel.value, p ? p.title : ''); });
+    }
     const search = el.querySelector('[data-act="filter"]');
     if (search) {
       search.addEventListener('input', () => {
         st.filter = search.value;
         const list = el.querySelector('.sp-list');
-        if (list) list.innerHTML = sectionsHtml();
-        wireList(el);
+        if (list) list.innerHTML = sectionsHtml(key);
+        wireList(el, key, title);
       });
       search.addEventListener('click', e => e.stopPropagation());
     }
-    wireList(el);
+    wireList(el, key, title);
   }
 
-  function wireList(el) {
+  function wireList(el, key, title) {
     el.querySelectorAll('.sp-sechead').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation();
       const sec = b.closest('.sp-sec');
-      const path = sec.dataset.path;
-      const total = allFiles().length;
-      const cur = st.fold[path] !== undefined ? st.fold[path] : total > 12;
-      st.fold[path] = !cur;
+      const fk = foldKey(key, sec.dataset.path);
+      const total = allFiles(key).length;
+      const cur = st.fold[fk] !== undefined ? st.fold[fk] : total > 12;
+      st.fold[fk] = !cur;
       saveJson(FOLD_KEY, st.fold);
       renderCards();
     }));
     el.querySelectorAll('.sp-row').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation();
-      const f = allFiles().find(x => x.id === b.dataset.id);
-      if (f) openDrawing(f);
+      const f = allFiles(key).find(x => x.id === b.dataset.id);
+      if (f) openDrawing(f, { key, title });
     }));
   }
 
   function renderCards() {
     renderInto(document.getElementById('spCard'));
-    if (dlg && dlg.el && dlg.el.isConnected) renderInto(dlg.el, { dialog: true });
+    if (dlg && dlg.el && dlg.el.isConnected) renderInto(dlg.el, { dialog: true, key: dlg.key, title: dlg.title });
     else dlg = null;
     renderPanel();
   }
 
-  function openDialog() {
-    App.modal('<h3>Site drawings</h3><div id="spDlgBody"></div>', (box, close) => {
-      dlg = { el: box.querySelector('#spDlgBody'), close: () => { dlg = null; close(); } };
-      renderInto(dlg.el, { dialog: true });
+  /** The register in a dialog — Home's Drawings item, or one project's folder from its Home heading. */
+  function openDialog(opts = {}) {
+    const key = opts.key || cardKey();
+    const title = opts.title || regTitle(key);
+    App.modal(`<h3>Site drawings${title ? ' — ' + esc(title) : ''}</h3><div id="spDlgBody"></div>`, (box, close) => {
+      dlg = { el: box.querySelector('#spDlgBody'), key, title, close: () => { dlg = null; close(); } };
+      renderInto(dlg.el, { dialog: true, key, title });
     });
-    maybeAutoSync();
+    maybeAutoSync(key);
+  }
+
+  /* ---------------- choosing a project's folder ---------------- */
+
+  const ICON_FOLDER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+
+  /** Words that mark the open project's folder: its AroFlo number, name and site. */
+  function projectHints() {
+    const d = State.S.pdf ? Project.details() : {};
+    return [State.S.aroSite && State.S.aroSite.project, d.name, d.site];
+  }
+
+  /**
+   * Browse the drawings root one level at a time and pick the project's
+   * folder (or paste its address). Its own overlay, so the dialog it was
+   * opened from stays as typed underneath. cb({id, name, path}) on a pick.
+   */
+  function pickFolder(opts, cb) {
+    const hints = ((opts && opts.hints) || []).map(s => String(s || '').trim().toLowerCase()).filter(h => h.length >= 2);
+    const suggested = name => { const n = String(name).toLowerCase(); return hints.some(h => n.includes(h) || (h.length >= 4 && h.includes(n))); };
+    const old = document.getElementById('spPick');
+    if (old) old.remove();
+    const ov = document.createElement('div');
+    ov.id = 'spPick'; ov.className = 'sp-pick';
+    ov.innerHTML = `<div class="sp-pick-back"></div><div class="sp-pick-box" role="dialog">
+      <h3>Choose the project’s drawings folder</h3>
+      <div class="spb-crumbs" id="spb-crumbs"></div>
+      <div class="spb-list" id="spb-list"><div class="cloud-note">Loading…</div></div>
+      <div class="spb-paste"><input type="url" id="spb-url" placeholder="…or paste the folder’s address (Copy link on SharePoint)" autocomplete="off"><button type="button" class="mini-btn" id="spb-find">Find</button></div>
+      <div class="cloud-err" id="spb-err"></div>
+      <div class="modal-actions"><button type="button" class="mini-btn" id="spb-cancel">Cancel</button><button type="button" class="mini-btn primary" id="spb-use" disabled>Use this folder</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+    const q = sel => ov.querySelector(sel);
+    const done = f => { ov.remove(); if (f) cb(f); };
+    q('.sp-pick-back').onclick = () => done();
+    q('#spb-cancel').onclick = () => done();
+    let trail = [];   // [{id, name}] root … the folder shown ('' is the root)
+    let cur = null;   // the folder shown: {id, name, path, isRoot}
+    async function show(id) {
+      q('#spb-list').innerHTML = '<div class="cloud-note">Loading…</div>';
+      q('#spb-err').textContent = '';
+      q('#spb-use').disabled = true;
+      let r;
+      try { r = await call('spbrowse', undefined, id ? 'folder=' + encodeURIComponent(id) : ''); }
+      catch (e) { q('#spb-list').innerHTML = `<div class="cloud-err">${esc(e.offline ? 'No connection — choosing a folder needs signal.' : e.message)}</div>`; return; }
+      if (!ov.isConnected) return;
+      cur = r.folder;
+      if (cur.isRoot) trail = [{ id: '', name: r.rootName || cur.name }];
+      else {
+        const i = trail.findIndex(t => t.id === cur.id);
+        if (i >= 0) trail = trail.slice(0, i + 1);
+        else { if (!trail.length) trail = [{ id: '', name: r.rootName || 'Drawings' }]; trail.push({ id: cur.id, name: cur.name }); }
+      }
+      q('#spb-crumbs').innerHTML = trail.map((t, i) => `<button type="button" class="spb-crumb${i === trail.length - 1 ? ' cur' : ''}" data-id="${esc(t.id)}">${esc(t.name)}</button>`).join('<span class="spb-sep">›</span>');
+      q('#spb-crumbs').querySelectorAll('.spb-crumb').forEach(b => { b.onclick = () => show(b.dataset.id); });
+      const folders = (r.folders || []).map(f => ({ ...f, sug: suggested(f.name) })).sort((a, b) => (b.sug ? 1 : 0) - (a.sug ? 1 : 0));
+      q('#spb-list').innerHTML = (folders.length
+        ? folders.map(f => `<button type="button" class="spb-row${f.sug ? ' sug' : ''}" data-id="${esc(f.id)}">${ICON_FOLDER}<span class="spb-name">${esc(f.name)}</span>${f.sug ? '<span class="spb-tag">suggested</span>' : ''}<span class="spb-n">${f.items} item${f.items === 1 ? '' : 's'}</span></button>`).join('')
+        : '<div class="cloud-note">No sub-folders here.</div>')
+        + `<div class="cloud-note">${r.pdfs ? `${r.pdfs} PDF${r.pdfs === 1 ? '' : 's'} directly in this folder` : 'No PDFs directly in this folder'}${cur.isRoot ? ' — this is the drawings root; pick the project’s own folder inside it' : ''}.</div>`;
+      q('#spb-list').querySelectorAll('.spb-row').forEach(b => { b.onclick = () => show(b.dataset.id); });
+      q('#spb-use').disabled = !!cur.isRoot;
+      q('#spb-use').textContent = cur.isRoot ? 'Use this folder' : 'Use “' + cur.name + '”';
+    }
+    q('#spb-use').onclick = () => { if (cur && !cur.isRoot) done({ id: cur.id, name: cur.name, path: cur.path }); };
+    q('#spb-find').onclick = async () => {
+      const url = q('#spb-url').value.trim();
+      if (!url) return;
+      q('#spb-err').textContent = '';
+      q('#spb-find').disabled = true;
+      try {
+        const r = await call('spresolve', { url });
+        if (r.folder.isRoot) q('#spb-err').textContent = 'That is the drawings root itself — paste the address of the project’s own folder inside it.';
+        else done({ id: r.folder.id, name: r.folder.name, path: r.folder.path });
+      } catch (e) { q('#spb-err').textContent = e.offline ? 'No connection.' : e.message; }
+      if (ov.isConnected) q('#spb-find').disabled = false;
+    };
+    q('#spb-url').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); q('#spb-find').click(); } });
+    show(opts && opts.current && opts.current.id ? opts.current.id : '');
   }
 
   /** Called by Cloud whenever sign-in state or the deployment probe changes
    *  (Home refreshes its Drawings menu item from the same hook). */
   function onCloudState() {
     renderCards();
-    maybeAutoSync();
+    maybeAutoSync(cardKey());
   }
 
   function init() {
-    st.reg = loadJson(REG_KEY, null);
+    st.regs = loadJson(REGS_KEY, {});
+    const root = loadJson(REG_KEY, null);
+    if (root) st.regs.root = root;
+    const sel = loadJson(SEL_KEY, null);
+    if (sel && sel.key) { st.key = sel.key; st.keyTitle = sel.title || ''; st.chosen = true; }
     st.map = loadJson(MAP_KEY, {});
     st.fold = loadJson(FOLD_KEY, {});
     st.pfold = loadJson(PFOLD_KEY, {});
@@ -662,12 +884,14 @@ const Drawings = (() => {
       }
       if (panelOpen) refreshLocal(); else renderPanel();
     });
-    State.on('project', renderPanel);
+    // the project's folder may have changed: the panel follows it, Home's card picker too
+    State.on('project', () => { renderCards(); if (panelOpen) maybeAutoSync(panelKey()); });
     let t = 0;
     State.on('autosave', () => { if (!panelOpen) return; clearTimeout(t); t = setTimeout(refreshLocal, 600); });   // markup counts
   }
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { onCloudState, sync, checkSetup, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection, _state: st };
+  return { onCloudState, sync, checkSetup, openDialog, openPanel, closePanel, togglePanel, rekey, forget, parseName, downloadSection,
+    available, summary, linkedProjects, pickFolder, selectKey, _state: st };
 })();

@@ -25,6 +25,7 @@ const Cloud = (() => {
     listAt: 0,            // when the team list last loaded
     statusCol: null,      // server has the status column? false → statuses stay per device
     fileNameCol: null,    // …and the file_name column? false → a project's sheets aren't grouped for the team
+    spFolderCol: null,    // …and sp_folder? false → a project's SharePoint folder link stays on the device that set it
     colError: '',         // Supabase's own words when a column is missing
     sync: { state: 'idle', at: 0, msg: '' }, // idle|saving|synced|offline|error|conflict
     conflictWith: null,   // registry row that beat us, while unresolved
@@ -121,6 +122,7 @@ const Cloud = (() => {
       st.projects = r.projects || [];
       if (r.statusColumn === false || r.statusColumn === true) st.statusCol = r.statusColumn;
       if (r.fileNameColumn === false || r.fileNameColumn === true) st.fileNameCol = r.fileNameColumn;
+      if (r.spFolderColumn === false || r.spFolderColumn === true) st.spFolderCol = r.spFolderColumn;
       st.colError = r.columnError || '';
       st.listAt = Date.now();
       st.listPhase = 'ready';
@@ -131,7 +133,7 @@ const Cloud = (() => {
     }
     renderCard();
     if (typeof Home !== 'undefined') Home.refresh();
-    return st.statusCol !== false && st.fileNameCol !== false;
+    return st.statusCol !== false && st.fileNameCol !== false && st.spFolderCol !== false;
   }
 
   // Home asks for a fresh list when it comes back into view — at most once a minute.
@@ -342,10 +344,11 @@ const Cloud = (() => {
       const sentRevs = (known && known.revs) || [];
       const revFps = (State.S.revisions || []).map(r => r.fp).filter(f => f && !sentRevs.includes(f));
       const fileName = String(State.S.fileName || '').slice(0, 200);
+      const spFolder = Project.spFolder ? (Project.spFolder() || '') : '';   // the project's SharePoint folder, mirrored into the list
       const body = JSON.stringify(Project.serialize(false));
       const pdfBytes = State.S.pdfBytes;
       const prep = await call('prepare', {
-        fingerprint: fp, name, aroNo, fileName,
+        fingerprint: fp, name, aroNo, fileName, spFolder,
         version: known ? known.version : 0,
         force: !!opts.force,
         status: sendStatus ? status : undefined,
@@ -365,7 +368,7 @@ const Cloud = (() => {
         if (up.ok) { pdfUploaded = true; pdfSize = pdfBytes.length; }
       }
 
-      const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, fileName, pdfUploaded, pdfSize, pdfPath: prep.pdfPath || '', status: sendStatus ? status : undefined });
+      const com = await call('commit', { id: prep.id, version: prep.nextVersion, name, aroNo, fileName, spFolder, pdfUploaded, pdfSize, pdfPath: prep.pdfPath || '', status: sendStatus ? status : undefined });
       if (com.conflict) { conflictPrompt(com.project, false); chipSet('conflict'); return; }
       map[fp] = { id: prep.id, version: prep.nextVersion, status: sendStatus ? status : known.status, revs: sentRevs.slice() };
       saveJson(MAP_KEY, map);

@@ -85,11 +85,21 @@ const Project = (() => {
 
   function setDetails(patch) {
     const cur = Object.assign({}, details());
-    for (const k of Object.keys(patch || {})) cur[k] = String(patch[k] == null ? '' : patch[k]).trim();
+    for (const k of Object.keys(patch || {})) {
+      if (k === 'spFolder') {
+        // the project's SharePoint drawings folder: {id, name, path} or nothing
+        const f = patch[k];
+        if (f && typeof f === 'object' && f.id) cur.spFolder = { id: String(f.id), name: String(f.name || ''), path: String(f.path || '') };
+        else delete cur.spFolder;
+      } else cur[k] = String(patch[k] == null ? '' : patch[k]).trim();
+    }
     State.S.project = Object.values(cur).some(Boolean) ? cur : null;
     State.emit('project');
     State.touch();
   }
+
+  /** The project's linked SharePoint drawings folder, if any. */
+  const spFolder = () => { const f = details().spFolder; return f && typeof f === 'object' && f.id ? f : null; };
 
   /* ---------- status: In progress → DLP (defects liability period) → Completed / archived ---------- */
 
@@ -396,7 +406,7 @@ const Project = (() => {
   }
 
   return {
-    init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails,
+    init, saveProject, openProjectFile, serialize, applyData, openFromStore, details, displayName, setDetails, spFolder,
     status, statusLabel, normStatus, setStatus,
     importRevision, scaleMarkups, removeRevision, detailsSnapshot, adoptDetails, blankData,
     closeDoc, removeFromDevice,
