@@ -991,8 +991,31 @@ body.mode-home #panelFab, body.mode-home #panelBackdrop, body.mode-home .cloud-c
 .imp-opt.armed { border-color: #e05555; background: rgba(224,85,85,.12); }
 .imp-opt:disabled { opacity: .6; cursor: default; }
 /* several sheets on one project: a heading, then the drawings indented under it */
-.pj-projhead { display: flex; align-items: center; gap: 8px; padding: 9px 4px 3px; font-size: 12.5px; font-weight: 600; border-top: 1px solid var(--edge); flex-wrap: wrap; }
+/* one entry per project: heading (name, meta, register, ＋, ONE status, ⋯) with its drawings folded underneath */
+.pj-proj { border-top: 1px solid var(--edge); }
+.pj-proj.simple { border-top: 0; }
+.pj-projhead { display: flex; align-items: center; gap: 8px; padding: 8px 4px 6px; font-size: 12.5px; font-weight: 600; flex-wrap: wrap; }
 .pj-projhead .pj-count { margin-left: 0; }
+.pj-projmain { flex: 1 1 240px; min-width: 0; display: flex; align-items: flex-start; gap: 6px; text-align: left;
+  background: none; border: 0; color: var(--txt); font: inherit; padding: 2px 0; cursor: pointer; }
+.pj-projmain:hover .pj-projname { text-decoration: underline; }
+.pj-chev { flex: 0 0 12px; color: var(--txt-dim); font-size: 12px; line-height: 18px; }
+.pj-chev::before { content: '▸'; }
+.pj-proj.open .pj-chev::before { content: '▾'; }
+.pj-projtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pj-projname { font-size: 14px; font-weight: 700; }
+.pj-proj.current .pj-projname { color: var(--accent); }
+.pj-projmeta { font-size: 12px; font-weight: 400; color: var(--txt-dim); }
+.pj-sheets { padding-bottom: 2px; }
+.pj-sheets .pj-row.sub { margin-left: 18px; }
+.pj-sheets .pj-row.sub .pj-main { padding-left: 4px; }
+.pj-sheets .pj-row.sub .pj-name { font-weight: 500; font-size: 13px; }
+@media (max-width: 760px) {
+  .pj-projhead { row-gap: 6px; }
+  .pj-projmain { flex-basis: 100%; }
+  .pj-headacts { margin-left: 0; }
+  .pj-sheets .pj-row.sub { margin-left: 8px; }
+}
 .pj-projname.unnamed { color: var(--txt-dim); font-style: italic; }
 .pj-headacts { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .pj-add { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--edge); background: var(--bg3); color: var(--accent);

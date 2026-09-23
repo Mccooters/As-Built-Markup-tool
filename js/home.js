@@ -172,66 +172,180 @@ const Home = (() => {
     return projectGroups(mergedProjects()).find(g => g.rows.some(r => r.fp === fp)) || null;
   }
 
-  function rowsHtml(list) {
-    const groups = projectGroups(list);
-    const groupOf = new Map();
-    for (const g of groups) for (const r of g.rows) groupOf.set(r.fp, g);
-    const done = new Set();
-    let h = '';
-    for (const r of list) {
-      const g = groupOf.get(r.fp);
-      // a heading whenever there is a project to name: several sheets, a folder, or a project set up ahead of its drawings
-      if (g.rows.length > 1 || g.folder || g.rows.some(x => x.stub)) {
-        if (done.has(g)) continue;
-        done.add(g);
-        h += `<div class="pj-projhead"><span class="pj-projname${g.named ? '' : ' unnamed'}" title="${g.named ? '' : 'No project name yet — set one in Project details'}">${esc(g.name)}</span>${g.rows.length > 1 ? `<span class="pj-count">${g.rows.length} drawings</span>` : ''}
-          <span class="pj-headacts">${g.folder ? drawBtn(g.folder, g.name) : ''}<button type="button" class="pj-add" data-fp="${esc(g.rows[0].fp)}" title="Add a drawing to ${esc(g.name)}" aria-label="Add a drawing to ${esc(g.name)}">＋</button></span></div>`;
-        h += g.rows.map(x => rowHtml(x, true)).join('');
-      } else h += rowHtml(r, false);
+  /* ---------------- the list: one entry per project, its drawings inside ---------------- */
+  // A project is one thing on Home: a heading (name, where, how many sheets,
+  // who touched it last), ONE status for the whole job, its SharePoint
+  // register and ＋, and its drawings listed underneath (tap the heading to
+  // fold them away — remembered per device).
+
+  const OPEN_KEY = 'abmt:pjopen';
+  const pjOpen = (() => { try { return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; } catch (e) { return {}; } })();
+  const savePjOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify(pjOpen)); } catch (e) { /* ignore */ } };
+  /** A stable handle for a project: its folder, else its name, else its AroFlo number, else its only sheet. */
+  const groupKey = g => (g.folder && g.folder.id) ? 'f:' + g.folder.id
+    : g.named ? 'n:' + g.name.trim().toLowerCase()
+      : g.aroNo ? 'a:' + g.aroNo.toLowerCase()
+        : 'p:' + ((g.rows[0] && g.rows[0].fp) || '');
+  /** The project's status is one thing: what its most recently touched sheet says (setting it sets every sheet). */
+  function groupStatus(g) {
+    let best = null;
+    for (const r of g.rows) if (!best || (r.when || 0) > (best.when || 0)) best = r;
+    return Project.normStatus(best && best.status);
+  }
+  const statusOpts = status => ['active', 'dlp', 'done'].map(s => `<option value="${s}"${status === s ? ' selected' : ''}>${STATUS_SHORT[s]}</option>`).join('');
+  const fileLabel = r => String(r.fileName || '').replace(/\.pdf$/i, '') || r.name || 'Drawing';
+  const whereChip = r => (r.onDevice
+    ? '<span class="pj-where dev" title="Stored on this device — opens offline">on this device</span>'
+    : '<span class="pj-where cloud" title="In the team cloud — tap to download it to this device">☁ team cloud</span>');
+
+  /** The rows Home shows: everything merged, minus set-up entries a real sheet has since matched. */
+  function liveRows() {
+    let rows = mergedProjects();
+    const drop = new Set();
+    for (const g of projectGroups(rows)) if (g.rows.some(r => !r.stub)) for (const r of g.rows) if (r.stub) drop.add(r.stubId);
+    if (drop.size) { stubs = stubs.filter(s => !drop.has(s.id)); saveStubs(); rows = rows.filter(r => !(r.stub && drop.has(r.stubId))); }
+    return rows;
+  }
+  const allGroups = () => projectGroups(liveRows());
+  const groupByKey = key => allGroups().find(g => groupKey(g) === key) || null;
+
+  function groupHtml(g) {
+    const key = groupKey(g);
+    const status = groupStatus(g);
+    const sheets = g.rows.filter(r => !r.stub);
+    const stub = g.rows.find(r => r.stub);
+    // a lone sheet that is not a project of anything (no name, folder or number): just the sheet, its status is its own
+    if (sheets.length === 1 && !stub && !g.named && !g.folder && !g.aroNo) {
+      return `<div class="pj-proj simple" data-key="${esc(key)}">${sheetRowHtml(sheets[0], false, key, status)}</div>`;
     }
-    return h;
+    const open = pjOpen[key] !== undefined ? !!pjOpen[key] : true;
+    const hasOpen = sheets.some(r => r.open);
+    const last = sheets.slice().sort((a, b) => (b.when || 0) - (a.when || 0))[0];
+    const onDev = sheets.filter(r => r.onDevice).length;
+    const meta = [];
+    meta.push(sheets.length
+      ? `${sheets.length} drawing${sheets.length === 1 ? '' : 's'}${onDev === sheets.length ? ' · on this device' : onDev ? ` · ${onDev} on this device` : ' · ☁ team cloud'}`
+      : 'no drawings yet');
+    const site = (g.rows.find(r => r.site) || {}).site || (g.rows.find(r => r.client) || {}).client;
+    if (site) meta.push(esc(site));
+    if (g.aroNo) meta.push('#' + esc(g.aroNo));
+    if (last) meta.push((last.inCloud && last.updatedBy ? esc(last.updatedBy) + ' · ' : '') + esc(ageOf(last.when)));
+    return `<div class="pj-proj${open ? ' open' : ''}${hasOpen ? ' current' : ''}" data-key="${esc(key)}">
+      <div class="pj-projhead">
+        <button type="button" class="pj-projmain" data-key="${esc(key)}" aria-expanded="${open}" title="${open ? 'Fold the drawings away' : 'Show the drawings'}">
+          <span class="pj-chev" aria-hidden="true"></span>
+          <span class="pj-projtext">
+            <span class="pj-projname${g.named ? '' : ' unnamed'}" title="${g.named ? '' : 'No project name yet — set one in Project details'}">${esc(g.name)}</span>
+            <span class="pj-projmeta">${meta.join(' · ')}</span>
+          </span>
+        </button>
+        <span class="pj-headacts">${g.folder ? drawBtn(g.folder, g.name) : ''}<button type="button" class="pj-add" data-fp="${esc(g.rows[0].fp)}" title="Add a drawing to ${esc(g.name)}" aria-label="Add a drawing to ${esc(g.name)}">＋</button></span>
+        <select class="pj-sel ${status}" data-key="${esc(key)}" title="Project status — In progress, DLP or Completed — for every drawing of the project" aria-label="Status of ${esc(g.name)}">${statusOpts(status)}</select>
+        <button type="button" class="pj-more pj-projmore" data-key="${esc(key)}" title="Add a drawing · remove the project from this device · delete it from the team" aria-label="More for ${esc(g.name)}">⋯</button>
+      </div>
+      ${open ? `<div class="pj-sheets">${sheets.map(r => sheetRowHtml(r, true)).join('')}${stub ? stubRowHtml(stub) : ''}</div>` : ''}
+    </div>`;
   }
 
   // a project set up ahead of its drawings: the row is the way to add the first one
   function stubRowHtml(r) {
-    const meta = [];
-    if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
-    if (r.aroNo) meta.push('#' + esc(r.aroNo));
-    meta.push('<span class="pj-where new" title="Set up on this device — nothing drawn yet">no drawings yet</span>');
-    const opts = ['active', 'dlp', 'done'].map(s => `<option value="${s}"${r.status === s ? ' selected' : ''}>${STATUS_SHORT[s]}</option>`).join('');
+    const meta = ['<span class="pj-where new" title="Set up on this device — nothing drawn yet">no drawings yet</span>'];
     return `<div class="pj-row sub stub" data-fp="${esc(r.fp)}">
       <button type="button" class="pj-main pj-addfirst" data-fp="${esc(r.fp)}" title="Add the project’s first drawing — from its SharePoint register or a PDF on this device">
         <span class="pj-name">＋ Add the first drawing</span>
         <span class="pj-meta">${meta.join(' · ')}</span>
       </button>
-      <select class="pj-sel ${r.status}" data-fp="${esc(r.fp)}" data-id="" title="Project status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${opts}</select>
       <button type="button" class="pj-more" data-fp="${esc(r.fp)}" title="Add a drawing · remove this project" aria-label="More for ${esc(r.name)}">⋯</button>
     </div>`;
   }
 
-  function rowHtml(r, inProject) {
-    if (r.stub) return stubRowHtml(r);
-    const shown = inProject ? (String(r.fileName || '').replace(/\.pdf$/i, '') || r.name) : r.name;
+  /** One drawing. Inside a project it is the file; on its own (`key` given) it carries the status select. */
+  function sheetRowHtml(r, inProject, key, status) {
+    const shown = inProject ? fileLabel(r) : r.name;
     const meta = [];
-    if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
-    if (r.aroNo) meta.push('#' + esc(r.aroNo));
+    if (!inProject) {
+      if (r.site) meta.push(esc(r.site)); else if (r.client) meta.push(esc(r.client));
+      if (r.aroNo) meta.push('#' + esc(r.aroNo));
+    }
     if (r.inCloud && r.updatedBy) meta.push(esc(r.updatedBy) + ' · ' + esc(ageOf(r.updatedAt)));
     else if (r.savedAt) meta.push(esc(ageOf(r.savedAt)));
-    meta.push(r.onDevice
-      ? '<span class="pj-where dev" title="Stored on this device — opens offline">on this device</span>'
-      : '<span class="pj-where cloud" title="In the team cloud — tap to download it to this device">☁ team cloud</span>');
-    const opts = ['active', 'dlp', 'done'].map(s => `<option value="${s}"${r.status === s ? ' selected' : ''}>${STATUS_SHORT[s]}</option>`).join('');
+    if (inProject && r.markups) meta.push(r.markups + ' markup' + (r.markups === 1 ? '' : 's'));
+    meta.push(whereChip(r));
     return `<div class="pj-row${r.open ? ' open' : ''}${inProject ? ' sub' : ''}" data-fp="${esc(r.fp)}">
       <button type="button" class="pj-main${r.id ? ' cloud-proj' : ''}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="${esc(r.name)}${r.fileName ? ' — ' + esc(r.fileName) : ''}">
         <span class="pj-name">${esc(shown || 'Drawing')}${r.open ? ' <span class="pj-openchip">open now</span>' : ''}</span>
         <span class="pj-meta">${meta.join(' · ')}</span>
       </button>
-      <select class="pj-sel ${r.status}" data-fp="${esc(r.fp)}" data-id="${esc(r.id || '')}" title="Project status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${opts}</select>
-      <button type="button" class="pj-more" data-fp="${esc(r.fp)}" title="Open · remove from this device · delete from the team" aria-label="More for ${esc(r.name)}">⋯</button>
+      ${key ? `<select class="pj-sel ${status}" data-key="${esc(key)}" title="Status — In progress, DLP or Completed" aria-label="Status of ${esc(r.name)}">${statusOpts(status)}</select>` : ''}
+      <button type="button" class="pj-more" data-fp="${esc(r.fp)}" title="Open · remove this drawing from the device · delete it from the team" aria-label="More for ${esc(shown)}">⋯</button>
     </div>`;
   }
 
-  /** Per-project actions: open, remove from this device, delete from the team cloud. */
+  // destructive actions: the first tap arms the button, a second within 6 s does it
+  function arm(btn, run) {
+    const b = btn.querySelector('b'), orig = b.textContent;
+    let armed = false, t = 0;
+    btn.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true; btn.classList.add('armed'); b.textContent = 'Tap again to confirm';
+        t = setTimeout(() => { armed = false; btn.classList.remove('armed'); b.textContent = orig; }, 6000);
+        return;
+      }
+      clearTimeout(t); btn.disabled = true; b.textContent = 'Working…';
+      await run();
+    });
+  }
+
+  /** ⋯ on a project: add a drawing, remove every sheet from this device, delete the whole project from the team. */
+  function projectGroupMenu(key) {
+    const g = groupByKey(key);
+    if (!g) return;
+    const sheets = g.rows.filter(r => !r.stub);
+    if (!sheets.length) { const stub = g.rows.find(r => r.stub); if (stub) projectMenu(stub.fp); return; }
+    const cl = cloudState();
+    const signed = !!(cl && cl.token);
+    const onDev = sheets.filter(r => r.onDevice);
+    const inCloud = sheets.filter(r => r.inCloud && r.id);
+    const n = k => `${k} drawing${k === 1 ? '' : 's'}`;
+    const where = [n(sheets.length), `${onDev.length} on this device`, inCloud.length ? `${inCloud.length} in the team cloud` : 'this device only'].join(' · ');
+    App.modal(`
+      <h3>${esc(g.name)}</h3>
+      <p class="muted">${where}</p>
+      <div class="imp-opts">
+        <button type="button" class="imp-opt" id="pm-add"><b>Add a drawing</b><span>From its SharePoint register or a PDF on this device — it takes the project’s details, status and stock list.</span></button>
+        ${onDev.length ? `<button type="button" class="imp-opt${inCloud.length ? '' : ' danger'}" id="pm-device"><b>Remove from this device</b><span>${n(onDev.length)} — ${inCloud.length
+          ? 'frees the space here; the team cloud copies stay and open again from this list.'
+          : 'this device holds the only copies — the drawings and their markups are gone for good.'}</span></button>` : ''}
+        ${inCloud.length && signed ? `<button type="button" class="imp-opt danger" id="pm-cloud"><b>Delete from the team cloud</b><span>The whole project — ${n(inCloud.length)}, markups and earlier revisions — gone for everyone, and off this device. A device that already downloaded a sheet keeps that copy, as a device-only project.</span></button>` : ''}
+      </div>
+      <div class="modal-actions"><button class="mini-btn" id="pm-cancel">Cancel</button></div>`, (box, close) => {
+      box.querySelector('#pm-cancel').onclick = close;
+      box.querySelector('#pm-add').onclick = () => { close(); addDrawingDialog(sheets[0].fp); };
+      const dev = box.querySelector('#pm-device');
+      if (dev) {
+        const run = async () => {
+          close();
+          for (const r of onDev) await Project.removeFromDevice(r.fp);
+          App.toast(`${g.name} removed from this device${inCloud.length ? ' — still in the team cloud' : ''}.`, 'ok', 5000);
+        };
+        if (inCloud.length) dev.onclick = run; else arm(dev, run);
+      }
+      const cld = box.querySelector('#pm-cloud');
+      if (cld) arm(cld, async () => {
+        try {
+          for (const r of inCloud) await Cloud.deleteProject(r.id);
+          for (const r of onDev) await Project.removeFromDevice(r.fp);
+          close();
+          App.toast(`${g.name} deleted from the team cloud and this device.`, 'ok', 6000);
+        } catch (e) {
+          close();
+          App.toast('Couldn’t delete it from the team cloud: ' + e.message, 'error', 8000);
+        }
+      });
+    });
+  }
+
+  /** ⋯ on one drawing: open, remove it from this device, delete it from the team cloud. */
   function projectMenu(fp) {
     const row = mergedProjects().find(r => r.fp === fp);
     if (!row) return;
@@ -254,34 +368,23 @@ const Home = (() => {
     const signed = !!(cl && cl.token);
     const onDevice = !!row.onDevice;
     const inCloud = !!row.inCloud && !!row.id;
+    const g = projectOf(fp);
+    const title = g && g.rows.length > 1 ? fileLabel(row) : row.name;   // one sheet of several: name the file, not the job
     const where = [
+      g && g.rows.length > 1 ? 'one of ' + g.rows.filter(r => !r.stub).length + ' drawings of ' + esc(g.name) : '',
       onDevice ? (row.markups ? row.markups + ' markup' + (row.markups === 1 ? '' : 's') + ' on this device' : 'on this device') : 'not on this device',
       row.inCloud ? 'in the team cloud' + (row.updatedBy ? ' (' + esc(row.updatedBy) + ' · ' + esc(ageOf(row.updatedAt)) + ')' : '') : 'this device only',
-    ].join(' · ');
-    // destructive actions: the first tap arms the button, a second within 6 s does it
-    const arm = (btn, run) => {
-      const b = btn.querySelector('b'), orig = b.textContent;
-      let armed = false, t = 0;
-      btn.addEventListener('click', async () => {
-        if (!armed) {
-          armed = true; btn.classList.add('armed'); b.textContent = 'Tap again to confirm';
-          t = setTimeout(() => { armed = false; btn.classList.remove('armed'); b.textContent = orig; }, 6000);
-          return;
-        }
-        clearTimeout(t); btn.disabled = true; b.textContent = 'Working…';
-        await run();
-      });
-    };
+    ].filter(Boolean).join(' · ');
     App.modal(`
-      <h3>${esc(row.name)}</h3>
+      <h3>${esc(title)}</h3>
       <p class="muted">${where}</p>
       <div class="imp-opts">
         <button type="button" class="imp-opt" id="pm-open"><b>${row.open ? 'Back to the drawing' : 'Open'}</b><span>${onDevice ? 'From this device — works offline.' : 'Downloads the drawing and markups from the team cloud.'}</span></button>
         <button type="button" class="imp-opt" id="pm-add"><b>Add a drawing to this project</b><span>From its SharePoint register or a PDF on this device — it takes the same details, status and stock list.</span></button>
-        ${onDevice ? `<button type="button" class="imp-opt${row.inCloud ? '' : ' danger'}" id="pm-device"><b>Remove from this device</b><span>${row.inCloud
+        ${onDevice ? `<button type="button" class="imp-opt${row.inCloud ? '' : ' danger'}" id="pm-device"><b>Remove this drawing from this device</b><span>${row.inCloud
           ? 'Frees the space here. The team cloud copy stays and it can be opened again from this list.'
           : 'This is the only copy — the drawing and its markups are gone for good.'}</span></button>` : ''}
-        ${inCloud && signed ? `<button type="button" class="imp-opt danger" id="pm-cloud"><b>Delete from the team cloud</b><span>Gone for everyone — drawing, markups and earlier revisions — and removed from this device. Another device that already downloaded it keeps that copy, as a device-only project.</span></button>` : ''}
+        ${inCloud && signed ? `<button type="button" class="imp-opt danger" id="pm-cloud"><b>Delete this drawing from the team cloud</b><span>Gone for everyone — drawing, markups and earlier revisions — and removed from this device. Another device that already downloaded it keeps that copy, as a device-only project.</span></button>` : ''}
       </div>
       <div class="modal-actions"><button class="mini-btn" id="pm-cancel">Cancel</button></div>`, (box, close) => {
       box.querySelector('#pm-cancel').onclick = close;
@@ -292,7 +395,7 @@ const Home = (() => {
         const run = async () => {
           close();
           await Project.removeFromDevice(row.fp);
-          App.toast(`${row.name} removed from this device${row.inCloud ? ' — still in the team cloud' : ''}.`, 'ok', 5000);
+          App.toast(`${title} removed from this device${row.inCloud ? ' — still in the team cloud' : ''}.`, 'ok', 5000);
         };
         if (row.inCloud) dev.onclick = run; else arm(dev, run);
       }
@@ -302,7 +405,7 @@ const Home = (() => {
           await Cloud.deleteProject(row.id);
           await Project.removeFromDevice(row.fp);
           close();
-          App.toast(`${row.name} deleted from the team cloud and this device.`, 'ok', 6000);
+          App.toast(`${title} deleted from the team cloud and this device.`, 'ok', 6000);
         } catch (e) {
           close();
           App.toast('Couldn’t delete it from the team cloud: ' + e.message, 'error', 8000);
@@ -403,7 +506,7 @@ const Home = (() => {
         <span class="pj-dot ${key}"></span><span class="pj-sectitle">${STATUS_LABEL[key]}</span>
         <span class="pj-count">${list.length}</span><span class="pj-caret">${open ? '▾' : '▸'}</span>
       </button>
-      ${open ? (list.length ? rowsHtml(list) : '<p class="pj-empty">Nothing in progress — open a drawing and it lands here.</p>') : ''}
+      ${open ? (list.length ? list.map(groupHtml).join('') : '<p class="pj-empty">Nothing in progress — open a drawing and it lands here.</p>') : ''}
     </section>`;
   }
 
@@ -420,13 +523,10 @@ const Home = (() => {
       const out = who.querySelector('#cl-out'); if (out) out.addEventListener('click', () => Cloud.signOut());
       const si = who.querySelector('#hsProjSignin'); if (si) si.addEventListener('click', goSignIn);
     }
-    let rows = mergedProjects();
-    // a project set up ahead of its drawings is done with once a sheet matches it (name, folder or AroFlo number)
-    const drop = new Set();
-    for (const g of projectGroups(rows)) if (g.rows.some(r => !r.stub)) for (const r of g.rows) if (r.stub) drop.add(r.stubId);
-    if (drop.size) { stubs = stubs.filter(s => !drop.has(s.id)); saveStubs(); rows = rows.filter(r => !(r.stub && drop.has(r.stubId))); }
+    const rows = liveRows();
+    // one entry per project, in the section of the project's status
     const groups = { active: [], dlp: [], done: [] };
-    for (const r of rows) groups[r.status].push(r);
+    for (const g of projectGroups(rows)) groups[groupStatus(g)].push(g);
     let h = '';
     // a drawing is on its way into a project (＋ on Home): say so until it opens or the user thinks again
     const pend = typeof Project !== 'undefined' && Project.pendingAdoption ? Project.pendingAdoption() : null;
@@ -495,10 +595,18 @@ const Home = (() => {
     // the Site drawings card's project picker follows the projects (a project set up with a folder is in it at once)
     if (typeof Drawings !== 'undefined' && Drawings.projectsChanged) Drawings.projectsChanged();
     el.querySelectorAll('.pj-main').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); openProject(b.dataset.fp, b.dataset.id); }));
-    el.querySelectorAll('.pj-more').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); projectMenu(b.dataset.fp); }));
-    el.querySelectorAll('.pj-sel').forEach(s => {
+    el.querySelectorAll('.pj-more[data-fp]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); projectMenu(b.dataset.fp); }));
+    el.querySelectorAll('.pj-projmore[data-key]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); projectGroupMenu(b.dataset.key); }));
+    el.querySelectorAll('.pj-projmain[data-key]').forEach(b => b.addEventListener('click', () => {
+      const key = b.dataset.key;
+      const wasOpen = b.getAttribute('aria-expanded') === 'true';
+      pjOpen[key] = !wasOpen;
+      savePjOpen();
+      paintProjects();
+    }));
+    el.querySelectorAll('.pj-sel[data-key]').forEach(s => {
       s.addEventListener('click', e => e.stopPropagation());
-      s.addEventListener('change', e => { e.stopPropagation(); changeStatus(s.dataset.fp, s.dataset.id, s.value); });
+      s.addEventListener('change', e => { e.stopPropagation(); changeProjectStatus(s.dataset.key, s.value); });
     });
   }
 
@@ -513,27 +621,33 @@ const Home = (() => {
   // Status changes from the list: the open drawing changes in place (autosave
   // and cloud sync carry it); a stored drawing is patched in the device store;
   // a team project is updated in the registry without touching its drawing.
-  async function changeStatus(fp, id, status) {
+  // The status is the project's: every sheet of the job moves together —
+  // the open drawing in place (autosave and cloud sync carry it), stored
+  // drawings patched in the device store, team sheets updated in the
+  // registry without touching their drawings, a set-up entry in its record.
+  async function changeProjectStatus(key, status) {
     status = Project.normStatus(status);
-    if (String(fp).startsWith('stub:')) {
-      const s = stubs.find(x => 'stub:' + x.id === fp);
-      if (s) { s.project = Object.assign({}, s.project || {}, { status }); saveStubs(); App.toast(`${s.project.name || 'Project'} → ${STATUS_SHORT[status]}`, 'ok', 2500); renderProjects(); }
-      return;
-    }
-    const row = mergedProjects().find(r => r.fp === fp) || {};
+    const g = groupByKey(key);
+    if (!g) return;
     const cl = cloudState();
     try {
-      if (State.S.pdf && State.S.fingerprint === fp) {
-        Project.setStatus(status);
-      } else {
-        const rec = typeof Store !== 'undefined' ? await Store.record(fp) : null;
-        if (rec && rec.data) {
-          rec.data.project = Object.assign({}, rec.data.project || {}, { status });
-          await Store.saveProject(fp, rec.name, rec.data);
+      for (const r of g.rows) {
+        if (r.stub) {
+          const s = stubs.find(x => x.id === r.stubId);
+          if (s) { s.project = Object.assign({}, s.project || {}, { status }); saveStubs(); }
+          continue;
         }
-        if (id && cl && cl.token) await Cloud.setStatus(id, status);
+        if (State.S.pdf && State.S.fingerprint === r.fp) { Project.setStatus(status); continue; }
+        if (r.onDevice && typeof Store !== 'undefined') {
+          const rec = await Store.record(r.fp);
+          if (rec && rec.data) {
+            rec.data.project = Object.assign({}, rec.data.project || {}, { status });
+            await Store.saveProject(r.fp, rec.name, rec.data);
+          }
+        }
+        if (r.id && cl && cl.token) await Cloud.setStatus(r.id, status);
       }
-      App.toast(`${row.name || 'Project'} → ${STATUS_SHORT[status]}`, 'ok', 2500);
+      App.toast(`${g.name} → ${STATUS_SHORT[status]}`, 'ok', 2500);
     } catch (e) {
       App.toast('Couldn’t change the status: ' + e.message, 'error', 7000);
     }
@@ -745,6 +859,6 @@ const Home = (() => {
 
   document.addEventListener('DOMContentLoaded', init);
 
-  return { setMode, refresh, renderProjects, projectRows: mergedProjects, projectGroups: () => projectGroups(mergedProjects()), projectOf, openProject, projectMenu,
-    createProject, addDrawingDialog, removeStub, stubFor, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
+  return { setMode, refresh, renderProjects, projectRows: mergedProjects, projectGroups: () => projectGroups(mergedProjects()), projectOf, openProject, projectMenu, projectGroupMenu,
+    changeProjectStatus, createProject, addDrawingDialog, removeStub, stubFor, openMenu, closeMenu, toggleMenu, checkForUpdate, mode: () => mode };
 })();
