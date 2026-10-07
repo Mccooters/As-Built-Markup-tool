@@ -283,6 +283,7 @@ const ACTIONS = {
       desc: str(it.description),
       pn: str(it.partnumber),
       cat: it.category ? str(it.category.categoryname) : '',
+      catId: it.category ? str(it.category.categoryid) : '',   // places the item in AroFlo's category tree even when two categories share a name
       cost: num(it.costex) || num(it.flexcost),
       sell: num(it.sell_task),
       levels: slimLevels(it.stocklevels),

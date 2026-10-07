@@ -48,7 +48,8 @@ const Aro = (() => {
   let jobSys = {};      // job → preset id                        (abmt:jobsys)
   let usedDrafts = {};  // job → {counts:{itemid:qty}, sys, at} — unsent tallies (abmt:used)
   let catParent = {};   // category leaf name → parent name       (abmt:cattree)
-  let catFold = {};     // section name → collapsed?               (abmt:catfold)
+  let catList = [];     // AroFlo's category tree [{id, name, parentId, parent}] (abmt:catlist)
+  let catFold = {};     // section path → collapsed?               (abmt:catfold)
   let deliveries = [];  // signed delivery records, newest first   (abmt:deliveries)
   let delivDraft = { lines: [] }; // an in-progress delivery       (abmt:delivdraft)
   const loadJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'null') || d; } catch (e) { return d; } };
@@ -268,12 +269,14 @@ const Aro = (() => {
             ...(h.businessUnits || []).map(name => ({ name, type: 'org' })),
           ];
       } catch (e) { /* non-fatal — fall back to holders seen on stock rows */ }
-      // Category tree (leaf → parent name) for catalogue section headers.
+      // Category tree, as AroFlo has it — the catalogue's folders follow it.
       try {
         const rc = await call('categories');
+        catList = (rc.categories || []).map(c => ({ id: c.id || '', name: c.name || '', parentId: c.parentId || '', parent: c.parent || '' })).filter(c => c.name);
         catParent = {};
-        for (const c of rc.categories || []) if (c.parent) catParent[c.name] = c.parent;
+        for (const c of catList) if (c.parent) catParent[c.name] = c.parent;
         saveJson('abmt:cattree', catParent);
+        saveJson('abmt:catlist', catList);
       } catch (e) { /* headers just show leaf names */ }
       st.asAt = new Date().toISOString();
       st.phase = 'ready';
@@ -682,11 +685,14 @@ const Aro = (() => {
     wireCountInputs(el);
   }
 
-  function wireCountInputs(el) {
+  function wireCountInputs(el, items) {
+    let t = 0;
     el.querySelectorAll('.aro-count').forEach(inp => {
       inp.addEventListener('input', () => {
         st.take.counts[inp.dataset.id] = inp.value;
         renderStatus();
+        // catalogue layout: the "n counted" on each folder follows the count, without redrawing the box being typed in
+        if (items && el.querySelector('.cat-cat')) { clearTimeout(t); t = setTimeout(() => refreshCatBadges(el, items, takeCatOpts()), 200); }
       });
     });
   }
@@ -784,60 +790,133 @@ const Aro = (() => {
     }));
   }
 
-  // Primary grouping = the item's AroFlo category (the org's own taxonomy,
-  // shown with its parent category), with the family/size rows nested inside
-  // each section — press fittings still read like the printed catalogue,
-  // while brackets and accessories sit in their own sections instead of
-  // polluting the fitting rows.
+  // Primary grouping = the item's AroFlo category (the org's own taxonomy),
+  // with the family/size rows nested inside each section — press fittings
+  // still read like the printed catalogue, while brackets and accessories
+  // sit in their own sections instead of polluting the fitting rows. Two
+  // categories that share a name under different parents stay apart (by id).
   function catSections(items) {
     const byCat = new Map();
     for (const it of items) {
-      const c = it.cat || 'Uncategorised';
-      if (!byCat.has(c)) byCat.set(c, []);
-      byCat.get(c).push(it);
+      const key = it.catId ? 'id:' + it.catId : 'n:' + (it.cat || 'Uncategorised');
+      if (!byCat.has(key)) byCat.set(key, { cat: it.cat || 'Uncategorised', catId: it.catId || '', items: [] });
+      byCat.get(key).items.push(it);
     }
-    const names = [...byCat.keys()].sort((a, b) =>
-      (a === 'Uncategorised') - (b === 'Uncategorised') || a.localeCompare(b));
-    return names.map(cat => ({ cat, groups: catGroups(byCat.get(cat)) }));
+    return [...byCat.values()]
+      .sort((a, b) => (a.cat === 'Uncategorised') - (b.cat === 'Uncategorised') || a.cat.localeCompare(b.cat))
+      .map(s => ({ cat: s.cat, catId: s.catId, groups: catGroups(s.items) }));
   }
 
-  // Sections collapse: tap a header to fold/unfold (remembered per device),
-  // many sections start folded so the right size is quick to find, and an
-  // active search always shows everything so results never hide. opts.badge
-  // can add a per-section marker (e.g. tallied-line counts) so folded
-  // sections still show what's in them.
-  function catSectionsHtml(items, cellFn, opts = {}) {
-    let h = '';
-    const sections = catSections(items);
-    for (const s of sections) {
-      const parent = catParent[s.cat];
-      const folded = !opts.noFold && (catFold[s.cat] != null ? !!catFold[s.cat] : sections.length > 4);
-      const n = s.groups.reduce((a, g) => a + g.list.length, 0);
-      const badge = opts.badge ? opts.badge(s) : '';
-      h += `<div class="cat-cat${folded ? ' folded' : ''}" data-cat="${esc(s.cat)}" role="button" tabindex="0">
-        <span class="cat-chev">${folded ? '▸' : '▾'}</span>
-        <span class="cat-name">${parent ? `<span class="cat-parent">${esc(parent)} · </span>` : ''}${esc(s.cat)}</span>
-        <span class="cat-n">${n}</span>${badge}</div>`;
-      if (folded) continue;
-      for (const g of s.groups) {
-        // a section whose only group is unparsed items needs no family row
-        const showHead = !(s.groups.length === 1 && g.name === 'Other');
-        h += `<div class="cat-group">${showHead ? `<div class="cat-head">${esc(g.name)}</div>` : ''}<div class="cat-cells">`;
-        for (const it of g.list) h += cellFn(it);
-        h += `</div></div>`;
-      }
+  // Where a section sits in AroFlo's category tree: its path of names from
+  // the top-level category down to itself (by id when the item carries one,
+  // else by name; just itself when the tree is not known).
+  function catPathOf(s) {
+    if (s.cat === 'Uncategorised') return ['Uncategorised'];
+    const byId = new Map(catList.map(c => [c.id, c]));
+    let n = (s.catId && byId.get(s.catId)) || catList.find(c => c.name === s.cat) || null;
+    if (!n) { const p = catParent[s.cat]; return p ? [p, s.cat] : [s.cat]; }
+    const path = [];
+    const seen = new Set();
+    while (n && !seen.has(n)) {
+      seen.add(n);
+      path.unshift(n.name);
+      n = n.parentId ? byId.get(n.parentId) : (n.parent ? catList.find(c => c.name === n.parent) : null);
     }
+    path[path.length - 1] = s.cat;   // as the item spells it, in case of a rename between syncs
+    return path;
+  }
+  const natCmp = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+
+  // The catalogue as AroFlo's folder tree: top-level categories down to the
+  // ones that hold items, each a header that folds (remembered per device,
+  // by path), item-holding categories starting folded when there are many
+  // so the right size is quick to find; an active search shows everything.
+  // opts.tally(section) → a number shown on the header and summed up the
+  // folders (e.g. lines counted); opts.tallyWord names it.
+  function catTree(items, opts = {}) {
+    const sections = catSections(items);
+    const mk = (name, key) => ({ name, key, kids: new Map(), section: null, n: 0, t: 0 });
+    const root = mk('', '');
+    for (const s of sections) {
+      let node = root;
+      for (const name of catPathOf(s)) {
+        if (!node.kids.has(name)) node.kids.set(name, mk(name, node.key ? node.key + ' / ' + name : name));
+        node = node.kids.get(name);
+      }
+      node.section = s;
+    }
+    const total = node => {
+      node.n = node.section ? node.section.groups.reduce((a, g) => a + g.list.length, 0) : 0;
+      node.t = node.section && opts.tally ? opts.tally(node.section) : 0;
+      for (const k of node.kids.values()) { total(k); node.n += k.n; node.t += k.t; }
+    };
+    total(root);
+    root.manyLeaves = sections.length > 4;
+    return root;
+  }
+  const catKids = node => [...node.kids.values()].sort((a, b) => (a.name === 'Uncategorised') - (b.name === 'Uncategorised') || natCmp(a.name, b.name));
+  const catBadge = (node, opts) => (node.t ? `<span class="cat-badge">${qty(node.t)} ${esc(opts.tallyWord || 'tallied')}</span>` : '');
+
+  function catSectionsHtml(items, cellFn, opts = {}) {
+    const root = catTree(items, opts);
+    let h = '';
+    const draw = (node, depth) => {
+      const folder = node.kids.size > 0;
+      const folded = !opts.noFold && (catFold[node.key] != null ? !!catFold[node.key] : (!folder && root.manyLeaves));
+      h += `<div class="cat-cat${folder ? ' cat-folder' : ''}${folded ? ' folded' : ''}" data-key="${esc(node.key)}" style="--depth:${depth}" role="button" tabindex="0" aria-expanded="${!folded}">
+        <span class="cat-chev">${folded ? '▸' : '▾'}</span>
+        <span class="cat-name">${esc(node.name)}</span>
+        <span class="cat-n">${node.n}</span>${catBadge(node, opts)}</div>`;
+      if (folded) return;
+      if (node.section) {
+        h += `<div class="cat-body" style="--depth:${depth}">`;
+        for (const g of node.section.groups) {
+          // a section whose only group is unparsed items needs no family row
+          const showHead = !(node.section.groups.length === 1 && g.name === 'Other');
+          h += `<div class="cat-group">${showHead ? `<div class="cat-head">${esc(g.name)}</div>` : ''}<div class="cat-cells">`;
+          for (const it of g.list) h += cellFn(it);
+          h += `</div></div>`;
+        }
+        h += '</div>';
+      }
+      for (const k of catKids(node)) draw(k, depth + 1);
+    };
+    for (const k of catKids(root)) draw(k, 0);
     return h;
+  }
+
+  /** Tallies change as you count: redo the headers' badges in place, without redrawing the inputs being typed in. */
+  function refreshCatBadges(el, items, opts = {}) {
+    const root = catTree(items, opts);
+    const visit = node => {
+      if (node.key) {
+        const head = el.querySelector(`.cat-cat[data-key="${CSS.escape(node.key)}"]`);
+        if (head) {
+          const old = head.querySelector('.cat-badge');
+          if (old) old.remove();
+          if (node.t) head.insertAdjacentHTML('beforeend', catBadge(node, opts));
+        }
+      }
+      for (const k of node.kids.values()) visit(k);
+    };
+    visit(root);
   }
 
   function wireCatFolds(el, redraw) {
     el.querySelectorAll('.cat-cat').forEach(head =>
       head.addEventListener('click', () => {
-        catFold[head.dataset.cat] = !head.classList.contains('folded');
+        catFold[head.dataset.key] = !head.classList.contains('folded');
         saveJson('abmt:catfold', catFold);
         redraw();
       }));
   }
+
+  // what the stocktake catalogue shows on its headers: lines counted so far, rolled up the folders
+  const takeCatOpts = () => ({
+    noFold: !!st.filter.trim(),
+    tally: s => s.groups.reduce((a, g) => a + g.list.filter(it => String(st.take.counts[it.id] ?? '').trim() !== '').length, 0),
+    tallyWord: 'counted',
+  });
 
   function renderTakeCatalogue(el, items) {
     el.innerHTML = catSectionsHtml(items, it => {
@@ -850,15 +929,9 @@ const Aro = (() => {
         <span class="cat-have">has ${qty(have)}</span>
         <input class="aro-count" data-id="${esc(it.id)}" type="text" inputmode="decimal" placeholder="${qty(have)}" value="${esc(val)}" autocomplete="off">
       </label>`;
-    }, {
-      noFold: !!st.filter.trim(),
-      badge: s => {
-        const c = s.groups.reduce((a, g) => a + g.list.filter(it => String(st.take.counts[it.id] ?? '').trim() !== '').length, 0);
-        return c ? `<span class="cat-badge">${c} counted</span>` : '';
-      },
-    });
+    }, takeCatOpts());
     wireCatFolds(el, () => renderTakeCatalogue(el, items));
-    wireCountInputs(el);
+    wireCountInputs(el, items);
   }
 
   function aroLevelsHtml(it) {
@@ -1116,10 +1189,7 @@ const Aro = (() => {
           </button>`;
         }, {
           noFold: !!qEl.value.trim(),
-          badge: s => {
-            const c = s.groups.reduce((a, g) => a + g.list.reduce((x, it) => x + (draft.counts[it.id] || 0), 0), 0);
-            return c ? `<span class="cat-badge">${qty(c)} tallied</span>` : '';
-          },
+          tally: s => s.groups.reduce((a, g) => a + g.list.reduce((x, it) => x + (draft.counts[it.id] || 0), 0), 0),
         });
         if (items.length > 600) h += `<p class="prop-note">…and ${items.length - 600} more — search, or pick a system preset.</p>`;
         grid.innerHTML = h;
@@ -2874,6 +2944,7 @@ const Aro = (() => {
     jobSys = loadJson('abmt:jobsys', {});
     usedDrafts = loadJson('abmt:used', {});
     catParent = loadJson('abmt:cattree', {});
+    catList = loadJson('abmt:catlist', []);
     deliveries = loadJson('abmt:deliveries', []);
     delivDraft = loadJson('abmt:delivdraft', { lines: [] });
     if (!Array.isArray(delivDraft.lines)) delivDraft.lines = [];

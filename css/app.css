@@ -744,6 +744,16 @@ button.cat-cell { font: inherit; color: inherit; background: var(--bg2); text-al
 .cat-badge { flex: 0 0 auto; margin-left: auto; font-size: 10.5px; font-weight: 700;
   color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 8px; }
 .cat-cat.folded { margin-bottom: 10px; opacity: .85; }
+/* the catalogue as AroFlo's folder tree: folders indent their contents, item-holding categories keep the accent rule */
+.cat-cat { padding-left: calc(var(--depth, 0) * 14px); }
+.cat-cat.cat-folder { color: var(--txt); border-bottom: 1px solid var(--edge); margin: 18px 0 6px; font-size: 13px; }
+.cat-cat.cat-folder .cat-name { text-transform: none; }
+.cat-cat.cat-folder.folded { opacity: 1; }
+.cat-body { padding-left: calc(var(--depth, 0) * 14px + 18px); }
+@media (max-width: 760px) {
+  .cat-cat { padding-left: calc(var(--depth, 0) * 10px); }
+  .cat-body { padding-left: calc(var(--depth, 0) * 10px + 8px); }
+}
 @media (max-width: 760px) { .cat-cat { padding-top: 4px; padding-bottom: 6px; } }
 
 /* SharePoint site-drawings register */
