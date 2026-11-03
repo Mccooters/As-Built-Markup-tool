@@ -359,12 +359,12 @@ const Cloud = (() => {
       if (prep.gone) { goneNow(fp); return; }
       if (prep.conflict) { conflictPrompt(prep.project, !!prep.superseded); chipSet('conflict'); return; }
 
-      let up = await fetch(prep.uploadData, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(120000) });
+      let up = await fetch(prep.uploadData, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'x-upsert': 'true' }, body, signal: AbortSignal.timeout(120000) });
       if (!up.ok) throw new Error('markup upload failed (HTTP ' + up.status + ')');
 
       let pdfUploaded = false, pdfSize = 0;
       if (prep.needPdf && prep.uploadPdf && pdfBytes) {
-        up = await fetch(prep.uploadPdf, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: pdfBytes, signal: AbortSignal.timeout(600000) });
+        up = await fetch(prep.uploadPdf, { method: 'PUT', headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' }, body: pdfBytes, signal: AbortSignal.timeout(600000) });
         if (up.ok) { pdfUploaded = true; pdfSize = pdfBytes.length; }
       }
 
@@ -380,7 +380,7 @@ const Cloud = (() => {
         try {
           const bytes = await Store.getPdf(rf);
           if (!bytes) continue;
-          const r = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/pdf' }, body: bytes, signal: AbortSignal.timeout(600000) });
+          const r = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' }, body: bytes, signal: AbortSignal.timeout(600000) });
           if (r.ok || r.status === 409) { map[fp].revs.push(rf); saveJson(MAP_KEY, map); }
         } catch (e) { /* next save tries again */ }
       }

@@ -178,8 +178,13 @@ async function hasCol(col, force) {
 const colError = col => (colKnown[col] && colKnown[col].err) || '';
 const hasStatusCol = () => hasCol('status');
 
+// Signed upload URLs may overwrite. A save that uploaded its files but never
+// committed (signal dropped, conflict, timeout) is retried with the SAME
+// version path; without upsert Storage answers "The resource already exists"
+// and the drawing can never sync again. Paths are chosen here, inside the
+// project's own folder, so overwriting only ever replaces an orphaned attempt.
 async function signedUpload(path) {
-  const r = await sb('POST', `/storage/v1/object/upload/sign/${BUCKET}/${path}`, {});
+  const r = await sb('POST', `/storage/v1/object/upload/sign/${BUCKET}/${path}`, {}, { 'x-upsert': 'true' });
   return sbBase() + '/storage/v1' + r.url;
 }
 
