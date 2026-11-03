@@ -323,8 +323,11 @@
     <button class="tool-btn" data-tool="arrow" title="Arrow — points at where you release">
       <svg viewBox="0 0 24 24"><path d="M4 20 18 6M18 6h-6.5M18 6v6.5"/></svg>
     </button>
-    <button class="tool-btn" data-tool="polyline" title="Polyline — click points, double-click to finish">
+    <button class="tool-btn" data-tool="polyline" title="Polyline — click points, double-click to finish. Arrowheads and a cloud outline in the panel on the right.">
       <svg viewBox="0 0 24 24"><path d="M3 18 8.5 8l5.5 6L20 4"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="polygon" title="Polygon — click corners, double-click to close. Any shape, filled or not; tick Cloud outline for a polygon revision cloud.">
+      <svg viewBox="0 0 24 24"><path d="M12 3l9 6.5-3.5 10.5h-11L3 9.5z"/></svg>
     </button>
     <button class="tool-btn" data-tool="rect" title="Rectangle (R)">
       <svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
@@ -346,6 +349,9 @@
     </button>
     <button class="tool-btn" data-tool="callout" title="Callout (Q) — drag from the arrow point to where the note box goes, then type">
       <svg viewBox="0 0 24 24"><rect x="10" y="3" width="11" height="8" rx="1"/><path d="M10 8 3.5 20.5M3.5 20.5l1-4.3m-1 4.3 4.3-1"/></svg>
+    </button>
+    <button class="tool-btn" data-tool="sequence" title="Sequence (N) — each click drops the next numbered label (D-01, D-02…). Prefix and counter in the panel on the right.">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 15V9l-1.5 1M14 9.5a1.6 1.6 0 1 1 2.8 1L14 15h3.2"/></svg>
     </button>
     <button class="tool-btn" data-tool="photo" title="Photo — pin a site photo to the drawing. Pick an image (or just drag one onto the sheet), click to place, drag corners to resize, double-click to view full size. Photos flatten into the exported PDF.">
       <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M8 6l1.5-2.5h5L16 6"/><circle cx="12" cy="13" r="3.6"/></svg>
@@ -426,9 +432,19 @@
     <select id="listTypeFilter" title="Filter by markup type">
       <option value="">All types</option>
     </select>
+    <select id="listStatusFilter" title="Filter by review status">
+      <option value="">Any status</option>
+      <option value="none">No status</option>
+      <option value="any">Has a status</option>
+      <option value="accepted">✓ Accepted</option>
+      <option value="rejected">✗ Rejected</option>
+      <option value="completed">✔ Completed</option>
+      <option value="cancelled">⊘ Cancelled</option>
+    </select>
     <select id="listGroup" title="Group the list — every group collapses here and can be hidden on the drawing">
       <option value="type">Group: type › zone</option>
       <option value="zone">Group: zone</option>
+      <option value="layer">Group: layer</option>
       <option value="none">No grouping</option>
     </select>
     <label class="chk"><input type="checkbox" id="listPageOnly"> This page only</label>
@@ -445,6 +461,7 @@
           <th data-k="subject">Subject</th>
           <th data-k="label">Label / Comments</th>
           <th data-k="measure">Measurement</th>
+          <th data-k="status">Status</th>
           <th data-k="color">Color</th>
           <th data-k="author">Author</th>
           <th data-k="date">Date</th>

@@ -80,6 +80,46 @@ const Props = (() => {
     return h;
   }
 
+  /** Arrowheads for lines and open polylines (the Arrow tool's own head is implied). */
+  function endsRow(o, isArrow) {
+    const cur = isArrow ? (o.ends === 'both' ? 'both' : 'end') : (o.ends || 'none');
+    const opt = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${label}</option>`;
+    return `<div class="prop-row"><label>Line ends</label><select id="p-ends">${isArrow ? '' : opt('none', 'None')}${opt('end', 'Arrow at end')}${isArrow ? '' : opt('start', 'Arrow at start')}${opt('both', 'Arrows both ends')}</select></div>`;
+  }
+
+  /** Lock, review status and layer — the bookkeeping every markup carries. */
+  function reviewRows(sel) {
+    const first = sel[0];
+    const allLocked = sel.every(m => m.locked), anyZone = sel.some(m => m.type === 'zone');
+    const st = first.status || '';
+    const layers = State.layerNames();
+    return `<div class="prop-section"><div class="prop-cap">Review</div>
+      <div class="prop-row"><label>Status</label><select id="p-status">${State.STATUSES.map(s => `<option value="${s.id}"${s.id === st ? ' selected' : ''}>${s.mark ? s.mark + ' ' : ''}${s.name}</option>`).join('')}</select></div>
+      <div class="prop-row"><label>Layer</label><input type="text" id="p-layer" value="${esc(first.layer || '')}" list="layer-names" placeholder="e.g. Stage 2 · Existing"><datalist id="layer-names">${layers.map(l => `<option value="${esc(l)}">`).join('')}</datalist></div>
+      ${anyZone && sel.length === 1 ? '' : `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-lock"${allLocked ? ' checked' : ''}> Locked — can’t move, resize or delete</label></div>`}
+      ${sel.some(m => m.grp) ? `<div class="prop-row"><label></label><button class="mini-btn" id="p-ungroup">Ungroup</button></div>` : sel.length > 1 ? `<div class="prop-row"><label></label><button class="mini-btn" id="p-group">Group (Ctrl+G)</button></div>` : ''}
+    </div>`;
+  }
+
+  function textRows(o) {
+    const bg = o.fill && o.fill !== 'none';
+    return `<div class="prop-section"><div class="prop-cap">Text</div>
+      <div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${o.fontSize || 12}"></div>
+      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-bold"${o.bold ? ' checked' : ''}> Bold</label></div>
+      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-border"${o.border ? ' checked' : ''}> Border</label></div>
+      <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-bg"${bg ? ' checked' : ''}> White background</label></div>
+    </div>`;
+  }
+
+  function sequenceRows(d) {
+    return `<div class="prop-section"><div class="prop-cap">Sequence</div>
+      <div class="prop-row"><label>Prefix</label><input type="text" id="p-seqpre" value="${esc(d.seqPrefix)}" placeholder="D-"></div>
+      <div class="prop-row"><label>Next number</label><input type="number" id="p-seqnext" min="1" value="${d.seqNext || 1}"></div>
+      <div class="prop-row"><label>Digits</label><input type="number" id="p-seqpad" min="0" max="6" value="${d.seqPad ?? 2}"></div>
+      <p class="prop-note">Next label: <b>${esc(Tools.seqLabel(d, Math.max(1, parseInt(d.seqNext, 10) || 1)))}</b>. Each click drops the next one — number drops, outlets, penetrations or test points in order. Edit a placed label like any text.</p>
+    </div>`;
+  }
+
   /** True-scale width state for a markup-or-defaults object ('scale' unless explicitly fixed). */
   const pipeScaleMode = o => (o.widthMode || D().pipeWidthMode || 'scale') !== 'fixed';
 
@@ -162,8 +202,16 @@ const Props = (() => {
         <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-preset-all" checked> Apply to all pages</label></div>`;
     } else if (t === 'text' || t === 'callout') {
       h += commonRows(d, { noStroke: true });
-      h += `<div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${d.fontSize}"></div>`;
+      h += t === 'text'
+        ? textRows({ fontSize: d.fontSize, bold: d.textBold, border: d.textBorder, fill: d.textBg === 'white' ? '#ffffff' : 'none' })
+        : `<div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${d.fontSize}"></div>`;
       h += `<div class="prop-row"><label>Line width</label><input type="range" id="p-lw" min="0.5" max="10" step="0.5" value="${d.lineWidth}"><span class="val" id="p-lw-v">${d.lineWidth}</span></div>`;
+    } else if (t === 'sequence') {
+      h += sequenceRows(d) + commonRows(d, { noStroke: true });
+      h += `<div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${d.fontSize}"></div>`;
+    } else if (t === 'chest') {
+      const ct = Tools.chestById(Tools.activeChest());
+      h += `<p class="prop-note">${ct ? `Placing <b>${esc(ct.name)}</b> — click the drawing to drop it. ` : ''}Saved tools live in the <b>Symbols</b> tab under Tool Chest. Select any markups and choose <b>Save to Tool Chest</b> from their menu to add one.</p>`;
     } else if (t === 'symbol') {
       h += `<p class="prop-note">Pick a symbol or stamp in the <b>Symbols</b> tab, then click the drawing to place it. Press <kbd>R</kbd> to rotate.</p>` + commonRows(d, { noStroke: true });
     } else if (t === 'highlight') {
@@ -173,8 +221,14 @@ const Props = (() => {
       h = `<div class="prop-cap">Properties</div><p class="prop-note">Nothing selected.<br><br>Select markups to edit their color, size, pipe data or notes here. Defaults for each drawing tool appear when that tool is active.</p>`;
     } else {
       h += commonRows(d);
-      if (t === 'rect' || t === 'ellipse' || t === 'cloud' || t === 'marea') h += fillRows(d);
-      if (t === 'cloud') h += `<div class="prop-row"><label>Scallop size</label><input type="range" id="p-arc" min="6" max="40" step="1" value="${d.arcSize}"><span class="val" id="p-arc-v">${d.arcSize}</span></div>`;
+      if (t === 'line' || t === 'polyline' || t === 'arrow') h += endsRow(d, t === 'arrow');
+      if (t === 'rect' || t === 'ellipse' || t === 'cloud' || t === 'marea' || t === 'polygon') h += fillRows(d);
+      if (t === 'polyline' || t === 'polygon') h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-cloudstyle"${d.cloudStyle ? ' checked' : ''}> Cloud outline (scalloped)</label></div>`;
+      if (t === 'cloud' || ((t === 'polyline' || t === 'polygon') && d.cloudStyle)) h += `<div class="prop-row"><label>Scallop size</label><input type="range" id="p-arc" min="6" max="40" step="1" value="${d.arcSize}"><span class="val" id="p-arc-v">${d.arcSize}</span></div>`;
+      if (t === 'marea') h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-perim"${d.showPerim ? ' checked' : ''}> Show perimeter too</label></div>`;
+    }
+    if (t !== 'select' && t !== 'pan' && t !== 'calibrate') {
+      h += `<div class="prop-row" style="margin-top:8px"><label>Layer</label><input type="text" id="p-deflayer" value="${esc(d.layer || '')}" list="layer-names" placeholder="none"><datalist id="layer-names">${State.layerNames().map(l => `<option value="${esc(l)}">`).join('')}</datalist></div>`;
     }
     return h;
   }
@@ -279,7 +333,8 @@ const Props = (() => {
     }
 
     const textish = types.has('text') || types.has('callout');
-    if (textish) h += `<div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${first.fontSize || 12}"></div>`;
+    if (types.has('text')) h += textRows(first);
+    else if (textish) h += `<div class="prop-row"><label>Font size</label><input type="number" id="p-fs" min="6" max="72" value="${first.fontSize || 12}"></div>`;
 
     const symbolish = types.has('symbol') || types.has('stamp') || types.has('penet');
     if (symbolish) {
@@ -290,15 +345,28 @@ const Props = (() => {
 
     h += commonRows(first, { noColor: hasPipe && D().colorBySize, noWidth: hasPipe && pipeScaleMode(first) });
 
-    const closed = ['rect', 'ellipse', 'cloud', 'marea'].some(t => types.has(t));
+    if (types.has('line') || types.has('polyline') || types.has('arrow')) {
+      const poly = sel.find(m => m.type === 'polyline');
+      if (!(poly && poly.closed) || types.has('line') || types.has('arrow')) h += endsRow(first, first.type === 'arrow');
+    }
+    if (types.has('polyline')) {
+      h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-closed"${first.closed ? ' checked' : ''}> Closed shape (polygon)</label></div>
+        <div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-cloudstyle"${first.cloudStyle ? ' checked' : ''}> Cloud outline (scalloped)</label></div>`;
+      if (first.closed) h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-plabel"${first.showLabel ? ' checked' : ''}> Show perimeter label</label></div>`;
+    }
+    const closed = ['rect', 'ellipse', 'cloud', 'marea'].some(t => types.has(t)) || sel.some(m => m.type === 'polyline' && m.closed);
     if (closed) h += fillRows(first);
-    if (types.has('cloud')) h += `<div class="prop-row"><label>Scallop size</label><input type="range" id="p-arc" min="6" max="40" step="1" value="${first.arcSize || 14}"><span class="val" id="p-arc-v">${first.arcSize || 14}</span></div>`;
+    if (types.has('cloud') || sel.some(m => m.type === 'polyline' && m.cloudStyle)) h += `<div class="prop-row"><label>Scallop size</label><input type="range" id="p-arc" min="6" max="40" step="1" value="${first.arcSize || 14}"><span class="val" id="p-arc-v">${first.arcSize || 14}</span></div>`;
     if (['pipe', 'mlength', 'mpoly', 'marea'].some(t => types.has(t)) && !hasPipe) {
       h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-plabel"${first.showLabel !== false ? ' checked' : ''}> Show measurement label</label></div>`;
     }
+    if (types.has('marea')) h += `<div class="prop-row"><label></label><label class="chk"><input type="checkbox" id="p-perim"${first.showPerim ? ' checked' : ''}> Show perimeter too</label></div>`;
 
-    h += `<div class="prop-row" style="margin-top:14px"><button class="mini-btn danger" id="p-delete">Delete (${sel.length})</button>
-          <button class="mini-btn" id="p-dup" title="Duplicate (Ctrl+D)">Duplicate</button></div>`;
+    h += reviewRows(sel);
+
+    h += `<div class="prop-row" style="margin-top:14px;flex-wrap:wrap;gap:6px"><button class="mini-btn danger" id="p-delete">Delete (${sel.length})</button>
+          <button class="mini-btn" id="p-dup" title="Duplicate (Ctrl+D)">Duplicate</button>
+          <button class="mini-btn" id="p-more" title="Copy, paste, order, align, lock, status, tool chest…">More ▾</button></div>`;
     return h;
   }
 
@@ -328,6 +396,52 @@ const Props = (() => {
     if (has('#p-ssize')) bindLive(has('#p-ssize'), has('#p-ssize-v'), v => applyLive({ size: v }));
     if (has('#p-ls')) has('#p-ls').addEventListener('change', e => apply({ lineStyle: e.target.value }));
     if (has('#p-fs')) has('#p-fs').addEventListener('change', e => apply({ fontSize: Math.max(6, parseFloat(e.target.value) || 12) }));
+    if (has('#p-ends')) has('#p-ends').addEventListener('change', e => {
+      const v = e.target.value;
+      if (sel.length) State.updateMarkups([...S().selection], m => (m.type === 'line' || m.type === 'polyline' || m.type === 'arrow') ? { ends: v } : {});
+      D().ends = v;
+    });
+    if (has('#p-bold')) has('#p-bold').addEventListener('change', e => { if (sel.length) apply({ bold: e.target.checked }); else D().textBold = e.target.checked; });
+    if (has('#p-border')) has('#p-border').addEventListener('change', e => { if (sel.length) apply({ border: e.target.checked }); else D().textBorder = e.target.checked; });
+    if (has('#p-bg')) has('#p-bg').addEventListener('change', e => {
+      if (sel.length) apply({ fill: e.target.checked ? '#ffffff' : 'none', fillOpacity: 0.85 });
+      else D().textBg = e.target.checked ? 'white' : 'none';
+    });
+    if (has('#p-closed')) has('#p-closed').addEventListener('change', e => {
+      const closed = e.target.checked;
+      State.updateMarkups([...S().selection], m => m.type === 'polyline' ? { closed, subject: m.subject === 'Polyline' || m.subject === 'Polygon' ? (closed ? 'Polygon' : 'Polyline') : m.subject } : {});
+      renderProps();
+    });
+    if (has('#p-cloudstyle')) has('#p-cloudstyle').addEventListener('change', e => {
+      const on = e.target.checked;
+      if (sel.length) State.updateMarkups([...S().selection], m => m.type === 'polyline' ? { cloudStyle: on, arcSize: m.arcSize || D().arcSize } : {});
+      D().cloudStyle = on;
+      renderProps();
+    });
+    if (has('#p-perim')) has('#p-perim').addEventListener('change', e => { if (sel.length) apply({ showPerim: e.target.checked }); else D().showPerim = e.target.checked; });
+    if (has('#p-deflayer')) has('#p-deflayer').addEventListener('change', e => { D().layer = e.target.value.trim(); });
+    // sequence tool
+    const seqSync = () => {
+      const d = D();
+      if (has('#p-seqpre')) d.seqPrefix = has('#p-seqpre').value;
+      if (has('#p-seqnext')) d.seqNext = Math.max(1, parseInt(has('#p-seqnext').value, 10) || 1);
+      if (has('#p-seqpad')) d.seqPad = Math.max(0, Math.min(6, parseInt(has('#p-seqpad').value, 10) || 0));
+      try { localStorage.setItem('abmt:seq', JSON.stringify({ prefix: d.seqPrefix, next: d.seqNext, pad: d.seqPad })); } catch (err) { /* ignore */ }
+      renderProps();
+    };
+    for (const id of ['#p-seqpre', '#p-seqnext', '#p-seqpad']) if (has(id)) has(id).addEventListener('change', seqSync);
+    // review: status, layer, lock, group
+    if (has('#p-status')) has('#p-status').addEventListener('change', e => { Tools.setStatus(e.target.value); MarkupList.render(); });
+    if (has('#p-layer')) has('#p-layer').addEventListener('change', e => {
+      const layer = e.target.value.trim();
+      State.updateMarkups([...S().selection], m => (layer ? { layer } : (m.layer ? { layer: undefined } : {})));
+      for (const m of State.S.markups) if (m.layer === undefined) delete m.layer;
+      MarkupList.render();
+    });
+    if (has('#p-lock')) has('#p-lock').addEventListener('change', e => Tools.setLocked(e.target.checked));
+    if (has('#p-group')) has('#p-group').addEventListener('click', () => { Tools.groupSelection(); renderProps(); });
+    if (has('#p-ungroup')) has('#p-ungroup').addEventListener('click', () => { Tools.ungroupSelection(); renderProps(); });
+    if (has('#p-more')) has('#p-more').addEventListener('click', e => { const r = e.target.getBoundingClientRect(); App.markupMenu(r.left, r.bottom + 4); });
     if (has('#p-rot')) has('#p-rot').addEventListener('change', e => apply({ rotation: (parseFloat(e.target.value) || 0) % 360 }));
     if (has('#p-slabel')) has('#p-slabel').addEventListener('change', e => { apply({ showLabel: e.target.checked }); D().symbolLabel = e.target.checked; });
     if (has('#p-plabel')) has('#p-plabel').addEventListener('change', e => apply({ showLabel: e.target.checked }));
@@ -448,9 +562,7 @@ const Props = (() => {
     });
 
     if (has('#p-delete')) has('#p-delete').addEventListener('click', () => State.deleteMarkups([...S().selection]));
-    if (has('#p-dup')) has('#p-dup').addEventListener('click', () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true }));
-    });
+    if (has('#p-dup')) has('#p-dup').addEventListener('click', () => Tools.duplicateSelection());
 
     // count groups
     root.querySelectorAll('.count-group-row[data-gid]').forEach(row => {
@@ -491,9 +603,43 @@ const Props = (() => {
         <span class="stamp-pill" style="color:${st.color};border-color:${st.color}">${esc(st.text)}</span></div>`;
     }
     h += `</div><p class="prop-note" style="margin-top:10px">Click a symbol, then click the drawing to place it. <kbd>R</kbd> rotates before placing.</p>`;
-    symbolsRoot.innerHTML = h;
 
-    symbolsRoot.querySelectorAll('.sym-cell').forEach(cell => {
+    // the Tool Chest: markups saved from a selection, placed again as one
+    const chest = Tools.chestList();
+    const active = S().tool === 'chest' ? Tools.activeChest() : null;
+    h += `<div class="prop-cap" style="margin-top:14px">Tool Chest <span class="muted" style="font-weight:400">— this device</span></div>`;
+    if (!chest.length) h += `<p class="prop-note">Nothing saved yet. Select any markups on the sheet — a valve with its tag, a typical drop, a legend block — then <b>More ▾ → Save to Tool Chest</b>. They come back as one tool you can place anywhere.</p>`;
+    else {
+      h += `<div class="sym-grid">`;
+      for (const t of chest) {
+        const pad = 4, vb = `${-pad} ${-pad} ${t.w + pad * 2} ${t.h + pad * 2}`;
+        h += `<div class="sym-cell chest-cell${active === t.id ? ' active' : ''}" data-chest="${t.id}" title="${esc(t.name)} — ${t.items.length} markup${t.items.length === 1 ? '' : 's'}">
+          <svg viewBox="${vb}" data-chest-thumb="${t.id}"></svg>
+          <span class="sym-name">${esc(t.name)}</span>
+          <button type="button" class="chest-del" data-del="${t.id}" title="Remove this tool from the chest">✕</button></div>`;
+      }
+      h += `</div>`;
+    }
+    symbolsRoot.innerHTML = h;
+    // thumbnails are the real renderers, so a saved tool looks like what it places
+    symbolsRoot.querySelectorAll('svg[data-chest-thumb]').forEach(svgEl => {
+      const t = Tools.chestById(svgEl.dataset.chestThumb);
+      if (!t) return;
+      for (const m of t.items) { try { svgEl.appendChild(Render.buildMarkupEl({ ...m, page: S().page })); } catch (e) { /* skip */ } }
+    });
+    symbolsRoot.querySelectorAll('.chest-cell').forEach(cell => {
+      cell.addEventListener('click', e => {
+        if (e.target.classList.contains('chest-del')) {
+          const t = Tools.chestById(e.target.dataset.del);
+          if (t && confirm(`Remove “${t.name}” from the Tool Chest?`)) Tools.removeChestTool(t.id);
+          return;
+        }
+        Tools.armChest(cell.dataset.chest);
+        renderSymbols();
+      });
+    });
+
+    symbolsRoot.querySelectorAll('.sym-cell[data-sym]').forEach(cell => {
       cell.addEventListener('click', () => {
         S().activeSymbol = cell.dataset.sym;
         S().symbolRotation = 0;
@@ -613,9 +759,10 @@ const Props = (() => {
     return ({
       select: 'Select', pan: 'Pan', pipe: 'Pipe run', calibrate: 'Calibrate', mlength: 'Length',
       mpoly: 'Polylength', marea: 'Area', count: 'Count', line: 'Line', arrow: 'Arrow',
-      polyline: 'Polyline', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud',
+      polyline: 'Polyline', polygon: 'Polygon', rect: 'Rectangle', ellipse: 'Ellipse', cloud: 'Revision cloud',
       pen: 'Pen', highlight: 'Highlighter', text: 'Text', callout: 'Callout', symbol: 'Symbol',
       penet: 'Penetration', photo: 'Photo', fitting: 'Press fitting', zone: 'Area zone',
+      sequence: 'Sequence', chest: 'Tool Chest',
     })[t] || t;
   }
   function typeName(t) {
@@ -656,7 +803,7 @@ const Props = (() => {
     State.on('selection', refresh);
     State.on('tool', () => {
       renderProps();
-      if (S().tool === 'symbol') showTab('symbols');
+      if (S().tool === 'symbol' || S().tool === 'chest') { showTab('symbols'); renderSymbols(); }
       else if (S().tool === 'fitting') { showTab('fittings'); renderFittings(); }
       else showTab('props');
     });

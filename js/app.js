@@ -264,9 +264,18 @@ const App = (() => {
       <div class="form-row" style="margin-top:8px"><label>Note printed in the schedule header</label>
         <input type="text" id="csv-note" value="${esc(prev.note)}" placeholder='e.g. Penetration Ø = pipe OD — fire-rating clearance TBC'></div>
       <div class="modal-actions">
+        <button class="mini-btn" id="csv-summary" title="A PDF table of every markup — page, subject, comments, measurement, status, author, date — for the handover pack">Markup summary PDF</button>
+        <div class="tb-flex"></div>
         <button class="mini-btn" id="csv-cancel">Cancel</button>
         <button class="mini-btn primary" id="csv-ok">Export CSV</button>
       </div>`, (box, close) => {
+      $('csv-summary').onclick = () => {
+        const scopeEl = box.querySelector('input[name="csv-scope"]:checked');
+        const day = scopeEl && scopeEl.value === 'day' ? State.S.workDay : null;
+        const note = $('csv-note').value;
+        close();
+        Export.exportSummaryPdf({ day, note });
+      };
 
       // section checkbox enables/disables its rows
       const syncRows = () => {
@@ -663,7 +672,8 @@ const App = (() => {
         <dt><kbd>A</kbd></dt><dd>Area measurement</dd>
         <dt><kbd>C</kbd></dt><dd>Count</dd>
         <dt><kbd>T</kbd> / <kbd>Q</kbd></dt><dd>Text / Callout</dd>
-        <dt><kbd>Enter</kbd> / dbl-click</dt><dd>Finish pipe / polyline</dd>
+        <dt><kbd>N</kbd></dt><dd>Sequence — numbered labels (D-01, D-02…)</dd>
+        <dt><kbd>Enter</kbd> / dbl-click</dt><dd>Finish pipe / polyline / polygon</dd>
         <dt><kbd>Shift</kbd></dt><dd>Snap to 45° while drawing (relative to the previous pipe leg — off-axis runs still get square tees)</dd>
         <dt><kbd>Backspace</kbd></dt><dd>Remove last pipe point while drawing</dd>
         <dt><kbd>R</kbd></dt><dd>Rotate symbol (before or after placing)</dd>
@@ -671,6 +681,12 @@ const App = (() => {
         <dt><kbd>Del</kbd></dt><dd>Delete selection</dd>
         <dt><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd></dt><dd>Undo / redo</dd>
         <dt><kbd>Ctrl+D</kbd></dt><dd>Duplicate selection</dd>
+        <dt><kbd>Ctrl+C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></dt><dd>Copy / cut / paste — onto any page</dd>
+        <dt><kbd>Ctrl+G</kbd> / <kbd>Ctrl+Shift+G</kbd></dt><dd>Group / ungroup (grouped markups select and move as one)</dd>
+        <dt><kbd>Ctrl+L</kbd></dt><dd>Lock / unlock the selection</dd>
+        <dt><kbd>Ctrl+]</kbd> / <kbd>Ctrl+[</kbd></dt><dd>Bring to front / send to back</dd>
+        <dt><kbd>Ctrl+F</kbd></dt><dd>Find text in the drawing · bookmarks</dd>
+        <dt>Right-click / hold</dt><dd>Markup menu — align, status, Tool Chest, copy to all pages…</dd>
         <dt><kbd>Ctrl+S</kbd></dt><dd>Save project (.airmark)</dd>
         <dt>Arrows</dt><dd>Pan the view — works mid pipe run (<kbd>Shift</kbd> = faster) · nudges the selection when using Select</dd>
         <dt>Wheel</dt><dd>Zoom at cursor · <kbd>+</kbd>/<kbd>−</kbd>/<kbd>0</kbd> zoom &amp; fit</dd>
@@ -680,6 +696,219 @@ const App = (() => {
       <p class="muted" id="help-diag" style="font-size:10.5px;word-break:break-word;opacity:.8"><b>Diagnostics</b> (screenshot this if something looks off on a device): ${diagLine().replace(/</g, '&lt;')}</p>
       <div class="modal-actions"><button class="mini-btn primary" id="help-ok">Got it</button></div>`,
       (box, close) => { $('help-ok').onclick = close; });
+  }
+
+  /* ================= markup menu (right-click / held finger / More ▾) ================= */
+
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+
+  /**
+   * Everything you can do to the selection in one place — Bluebeam's
+   * right-click menu: clipboard, order, grouping, alignment, lock, review
+   * status, copy to every page, save to the Tool Chest. Opens at a screen
+   * point; with nothing selected it offers Paste only.
+   */
+  function markupMenu(cx, cy, pagePt) {
+    closeMenu();
+    if (!State.S.pdf) return;
+    const sel = State.selectedMarkups();
+    const n = sel.length;
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const item = (act, label, extra = '', disabled = false) => `<button type="button" class="mm-item${extra ? ' ' + extra : ''}" data-act="${act}"${disabled ? ' disabled' : ''}>${label}</button>`;
+    const locked = n && Tools.selectionLocked();
+    const grouped = sel.some(m => m.grp);
+    const st = n ? (sel[0].status || '') : '';
+    let h = '';
+    if (n) {
+      h += `<div class="mm-cap">${n === 1 ? esc(sel[0].subject || Props.typeName(sel[0].type)) : n + ' markups'}</div>`;
+      h += `<div class="mm-row">${item('cut', 'Cut', 'mm-k')}${item('copy', 'Copy', 'mm-k')}${item('paste', 'Paste', 'mm-k', !Tools.hasClipboard())}${item('dup', 'Duplicate', 'mm-k')}</div>`;
+      h += `<div class="mm-row">${item('front', '⤒ Bring to front', 'mm-k')}${item('back', '⤓ Send to back', 'mm-k')}</div>`;
+      if (n > 1) {
+        h += `<div class="mm-sub">Align</div><div class="mm-row">` +
+          [['left', '⇤', 'Align left edges'], ['hcenter', '↔', 'Align centres'], ['right', '⇥', 'Align right edges'], ['top', '⤒', 'Align top edges'], ['vcenter', '↕', 'Align middles'], ['bottom', '⤓', 'Align bottom edges']]
+            .map(([op, g, t]) => `<button type="button" class="mm-item mm-k mm-icon" data-act="align:${op}" title="${t}">${g}</button>`).join('') + `</div>`;
+      }
+      h += `<div class="mm-row">${n > 1 ? item('group', grouped ? 'Ungroup' : 'Group', 'mm-k') : (grouped ? item('group', 'Ungroup', 'mm-k') : '')}${item('lock', locked ? '🔓 Unlock' : '🔒 Lock', 'mm-k')}</div>`;
+      h += `<div class="mm-sub">Review status</div><div class="mm-row mm-status">` +
+        State.STATUSES.map(s => `<button type="button" class="mm-item mm-k${s.id === st ? ' on' : ''}" data-act="status:${s.id}" style="${s.color ? 'color:' + s.color : ''}">${s.mark ? s.mark + ' ' : ''}${s.name}</button>`).join('') + `</div>`;
+      h += `<div class="mm-row">${item('chest', 'Save to Tool Chest…')}${n === 1 ? item('defaults', 'Set as tool defaults') : ''}</div>`;
+      if (State.S.pageCount > 1) h += `<div class="mm-row">${item('allpages', `Copy to all ${State.S.pageCount} pages`)}</div>`;
+      h += `<div class="mm-row">${item('delete', 'Delete', 'mm-danger')}</div>`;
+    } else {
+      h += `<div class="mm-row">${item('paste', 'Paste', 'mm-k', !Tools.hasClipboard())}${item('selectall', 'Select all on page', 'mm-k')}</div>`;
+    }
+    menuEl = document.createElement('div');
+    menuEl.id = 'markupMenu';
+    menuEl.innerHTML = h;
+    document.body.appendChild(menuEl);
+    const W = menuEl.offsetWidth, H = menuEl.offsetHeight;
+    menuEl.style.left = Math.max(6, Math.min(window.innerWidth - W - 6, cx)) + 'px';
+    menuEl.style.top = Math.max(6, Math.min(window.innerHeight - H - 6, cy)) + 'px';
+
+    const run = act => {
+      const ids = [...State.S.selection];
+      if (act === 'cut') Tools.cutSelection();
+      else if (act === 'copy') { const k = Tools.copySelection(); toast(`Copied ${k} markup${k === 1 ? '' : 's'} — paste on any page.`, 'ok', 2500); }
+      else if (act === 'paste') Tools.paste();
+      else if (act === 'dup') Tools.duplicateSelection();
+      else if (act === 'front') State.reorder(ids, true);
+      else if (act === 'back') State.reorder(ids, false);
+      else if (act.startsWith('align:')) Tools.alignSelection(act.slice(6));
+      else if (act === 'group') { if (grouped) Tools.ungroupSelection(); else Tools.groupSelection(); }
+      else if (act === 'lock') Tools.setLocked(!locked);
+      else if (act.startsWith('status:')) { Tools.setStatus(act.slice(7)); MarkupList.render(); }
+      else if (act === 'chest') chestSaveDialog();
+      else if (act === 'defaults') Tools.setAsDefaults();
+      else if (act === 'allpages') { const k = Tools.copyToAllPages(); toast(`Copied onto every other page (${k} markup${k === 1 ? '' : 's'} added).`, 'ok', 3500); }
+      else if (act === 'delete') State.deleteMarkups(ids);
+      else if (act === 'selectall') State.select(State.pageMarkups(State.S.page).map(m => m.id));
+      Props.renderProps();
+    };
+    menuEl.addEventListener('click', e => {
+      const b = e.target.closest('button[data-act]');
+      if (!b || b.disabled) return;
+      closeMenu();
+      run(b.dataset.act);
+    });
+    menuEl.addEventListener('contextmenu', e => e.preventDefault());
+    // anything outside closes it
+    setTimeout(() => {
+      const off = e => { if (menuEl && !menuEl.contains(e.target)) { closeMenu(); window.removeEventListener('pointerdown', off, true); } };
+      window.addEventListener('pointerdown', off, true);
+    }, 0);
+    void pagePt;
+  }
+
+  function chestSaveDialog() {
+    const sel = State.selectedMarkups();
+    if (!sel.length) return;
+    const guess = sel.length === 1 ? (sel[0].subject || Props.typeName(sel[0].type)) : '';
+    modal(`
+      <h3>Save to Tool Chest</h3>
+      <p class="muted">${sel.length} markup${sel.length === 1 ? '' : 's'} saved as one reusable tool on this device. It appears in the <b>Symbols</b> tab — tap it, then tap the drawing to place the whole thing again.</p>
+      <div class="form-row"><label>Tool name</label><input type="text" id="ch-name" value="${guess.replace(/"/g, '&quot;')}" placeholder="e.g. Typical drop with FRL"></div>
+      <div class="modal-actions"><button class="mini-btn" id="ch-cancel">Cancel</button><button class="mini-btn primary" id="ch-ok">Save</button></div>`, (box, close) => {
+      $('ch-name').focus(); $('ch-name').select();
+      const ok = () => {
+        const t = Tools.saveToChest($('ch-name').value.trim());
+        close();
+        if (t) { toast(`“${t.name}” is in your Tool Chest (Symbols tab).`, 'ok', 4000); Props.showTab('symbols'); }
+      };
+      $('ch-ok').onclick = ok;
+      $('ch-cancel').onclick = close;
+      $('ch-name').addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
+    });
+  }
+
+  /* ================= find: text in the drawing, bookmarks ================= */
+
+  let textCache = { doc: null, pages: {} };
+  async function pageText(n) {
+    const S = State.S;
+    if (textCache.doc !== S.pdf) textCache = { doc: S.pdf, pages: {} };
+    if (textCache.pages[n]) return textCache.pages[n];
+    const page = await S.pdf.getPage(n);
+    const vp = page.getViewport({ scale: 1 });
+    const tc = await page.getTextContent();
+    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => {
+      // text origin in PDF space → displayed page units (y-down), box = width × height
+      const [x, y] = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
+      const h = Math.hypot(it.transform[2], it.transform[3]) || it.height || 10;
+      return { str: it.str, x, y: y - h, w: it.width || h * it.str.length * 0.5, h };
+    });
+    textCache.pages[n] = items;
+    return items;
+  }
+
+  async function findText(query, progressCb) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const S = State.S, hits = [];
+    for (let p = 1; p <= S.pageCount; p++) {
+      const items = await pageText(p);
+      if (textCache.doc !== S.pdf) return hits;
+      // match within an item, and across a run of neighbouring items (words split by the PDF)
+      for (let i = 0; i < items.length; i++) {
+        let s = items[i].str, j = i, boxes = [items[i]];
+        while (s.toLowerCase().length < q.length + 40 && j + 1 < items.length && Math.abs(items[j + 1].y - items[i].y) < items[i].h) {
+          j++; s += ' ' + items[j].str; boxes.push(items[j]);
+        }
+        const at = s.toLowerCase().indexOf(q);
+        // the match must begin inside this item — later items report the ones that start in them
+        if (at < 0 || at >= items[i].str.length) continue;
+        const b = boxes[0];
+        let x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+        for (const o of boxes) { x0 = Math.min(x0, o.x); y0 = Math.min(y0, o.y); x1 = Math.max(x1, o.x + o.w); y1 = Math.max(y1, o.y + o.h); }
+        hits.push({ page: p, text: s.length > 90 ? s.slice(Math.max(0, at - 30), at + 60) : s, rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } });
+        if (hits.length >= 300) return hits;
+      }
+      if (progressCb) progressCb(p);
+    }
+    return hits;
+  }
+
+  async function outlineEntries() {
+    const S = State.S, out = [];
+    let ol = null;
+    try { ol = await S.pdf.getOutline(); } catch (e) { ol = null; }
+    const walk = async (nodes, depth) => {
+      for (const nd of nodes || []) {
+        let page = null;
+        try {
+          let dest = nd.dest;
+          if (typeof dest === 'string') dest = await S.pdf.getDestination(dest);
+          if (Array.isArray(dest) && dest[0]) page = (await S.pdf.getPageIndex(dest[0])) + 1;
+        } catch (e) { page = null; }
+        out.push({ title: nd.title || '(untitled)', page, depth });
+        if (nd.items && nd.items.length && depth < 4) await walk(nd.items, depth + 1);
+      }
+    };
+    await walk(ol, 0);
+    return out;
+  }
+
+  let lastFind = '';
+  function findDialog() {
+    if (!State.S.pdf) { toast('Open a drawing first.', 'warn'); return; }
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    modal(`
+      <h3>Find in drawing</h3>
+      <div class="form-row" style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="fd-q" value="${esc(lastFind)}" placeholder="Equipment tag, room name, grid ref… (Enter)" autocomplete="off" style="flex:1">
+        <button class="mini-btn primary" id="fd-go">Find</button></div>
+      <p class="muted" id="fd-status">Searches the text of every page of the PDF. Markups are searched in the Markups List filter below the sheet.</p>
+      <div id="fd-results" class="fd-list"></div>
+      <div class="prop-cap" style="margin-top:12px">Bookmarks</div>
+      <div id="fd-outline" class="fd-list"><span class="muted">Loading…</span></div>
+      <div class="modal-actions"><button class="mini-btn" id="fd-close">Close</button></div>`, (box, close) => {
+      const q = $('fd-q'); q.focus(); q.select();
+      $('fd-close').onclick = close;
+      const go = async () => {
+        lastFind = q.value;
+        const res = $('fd-results'), stat = $('fd-status');
+        res.innerHTML = '';
+        if (!q.value.trim()) return;
+        stat.textContent = 'Searching…';
+        let hits;
+        try { hits = await findText(q.value, p => { stat.textContent = `Searching page ${p} of ${State.S.pageCount}…`; }); }
+        catch (e) { stat.textContent = 'Search failed: ' + (e.message || e); return; }
+        if (!$('fd-results')) return;   // dialog closed meanwhile
+        stat.textContent = hits.length ? `${hits.length}${hits.length >= 300 ? '+' : ''} match${hits.length === 1 ? '' : 'es'} — tap one to go there.` : 'No matches. Scanned drawings have no text layer to search.';
+        res.innerHTML = hits.map((h, i) => `<button type="button" class="fd-hit" data-i="${i}"><span class="fd-pg">p${h.page}</span><span>${esc(h.text)}</span></button>`).join('');
+        res.querySelectorAll('.fd-hit').forEach(b => b.onclick = () => { const h = hits[Number(b.dataset.i)]; close(); Viewer.flashRect(h.page, h.rect); });
+      };
+      $('fd-go').onclick = go;
+      q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+      if (lastFind) go();
+      outlineEntries().then(entries => {
+        const ol = $('fd-outline');
+        if (!ol) return;
+        if (!entries.length) { ol.innerHTML = '<span class="muted">This PDF has no bookmarks.</span>'; return; }
+        ol.innerHTML = entries.map((e, i) => `<button type="button" class="fd-hit" data-i="${i}" style="padding-left:${10 + e.depth * 14}px"${e.page ? '' : ' disabled'}><span class="fd-pg">${e.page ? 'p' + e.page : '—'}</span><span>${esc(e.title)}</span></button>`).join('');
+        ol.querySelectorAll('.fd-hit').forEach(b => b.onclick = () => { const e = entries[Number(b.dataset.i)]; if (e.page) { close(); Viewer.gotoPage(e.page); } });
+      });
+    });
   }
 
   /* ================= misc ================= */
@@ -980,6 +1209,7 @@ const App = (() => {
         case 'c': case 'C': State.setTool('count'); break;
         case 't': case 'T': State.setTool('text'); break;
         case 'q': case 'Q': State.setTool('callout'); break;
+        case 'n': case 'N': State.setTool('sequence'); break;
         case '?': helpDialog(); break;
         case '+': case '=': Viewer.zoomIn(); break;
         case '-': case '_': Viewer.zoomOut(); break;
@@ -1060,5 +1290,6 @@ const App = (() => {
     csvExportDialog, reportDialog, photoLightbox, download, savedIndicator, handleFiles, authorDialog, projectDialog, newProjectDialog,
     revisionsDialog, setImportMode, pickPdf: () => $('filePdf').click(),
     showTab: (...a) => Props.showTab(...a),
+    markupMenu, closeMenu, chestSaveDialog, findDialog, findText,
   };
 })();

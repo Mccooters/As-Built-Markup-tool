@@ -75,6 +75,14 @@ const State = (() => {
     showLabel: true,
     highlightColor: '#ffe419',
     highlightWidth: 14,
+    ends: 'none',             // line / polyline arrowheads: none | end | start | both
+    textBold: false,
+    textBorder: false,
+    textBg: 'none',           // text background: none | white
+    seqPrefix: 'D-',          // Sequence tool: label prefix, next number, zero-padding
+    seqNext: 1,
+    seqPad: 2,
+    layer: '',                // layer new markups land on ('' = none)
   };
 
   /* ================= undo / redo ================= */
@@ -163,15 +171,67 @@ const State = (() => {
     touch();
   }
 
-  function deleteMarkups(ids) {
+  /** Locked markups stay unless opts.force — a stray Delete must never take a locked as-built. */
+  function deleteMarkups(ids, opts = {}) {
     if (!ids.length) return;
+    let set = new Set(ids);
+    if (!opts.force) {
+      const kept = [...set].filter(id => { const m = getMarkup(id); return m && m.locked; });
+      if (kept.length) {
+        for (const id of kept) set.delete(id);
+        if (typeof App !== 'undefined') App.toast(`${kept.length} locked markup${kept.length === 1 ? '' : 's'} kept — unlock to delete.`, 'info', 3500);
+      }
+    }
+    if (!set.size) return;
     pushUndo();
-    const set = new Set(ids);
     S.markups = S.markups.filter(m => !set.has(m.id));
     for (const id of set) S.selection.delete(id);
     emit('markups'); emit('selection');
     touch();
   }
+
+  /* ---- z-order: the markups array is the paint order (last on top) ---- */
+  function reorder(ids, toFront) {
+    const set = new Set(ids);
+    const moving = S.markups.filter(m => set.has(m.id));
+    if (!moving.length) return;
+    pushUndo();
+    const rest = S.markups.filter(m => !set.has(m.id));
+    S.markups = toFront ? rest.concat(moving) : moving.concat(rest);
+    emit('markups');
+    touch();
+  }
+
+  /* ---- groups: markups that select and move as one ---- */
+  function groupMarkups(ids) {
+    if (ids.length < 2) return null;
+    const gid = 'grp' + (S.idCounter++);
+    updateMarkups(ids, { grp: gid });
+    return gid;
+  }
+  function ungroupMarkups(ids) {
+    updateMarkups(ids, m => (m.grp ? { grp: undefined } : {}));
+    for (const m of S.markups) if (m.grp === undefined) delete m.grp;
+  }
+  /** The ids a click on one markup really selects: the whole group it belongs to. */
+  function groupOf(id) {
+    const m = getMarkup(id);
+    if (!m || !m.grp) return [id];
+    return S.markups.filter(x => x.grp === m.grp && x.page === m.page).map(x => x.id);
+  }
+
+  /* ---- review status (Bluebeam-style) ---- */
+  const STATUSES = [
+    { id: '', name: 'None', mark: '' },
+    { id: 'accepted', name: 'Accepted', mark: '✓', color: '#1d9e45' },
+    { id: 'rejected', name: 'Rejected', mark: '✗', color: '#e02020' },
+    { id: 'completed', name: 'Completed', mark: '✔', color: '#1f6fd0' },
+    { id: 'cancelled', name: 'Cancelled', mark: '⊘', color: '#8a8f99' },
+  ];
+  const statusOf = m => STATUSES.find(s => s.id === (m && m.status || '')) || STATUSES[0];
+
+  /* ---- layers: a free name on any markup; the list groups and hides by it ---- */
+  const layerNames = () => [...new Set(S.markups.map(m => m.layer).filter(Boolean))].sort();
 
   const getMarkup = id => S.markups.find(m => m.id === id) || null;
   const pageMarkups = page => S.markups.filter(m => m.page === page);
@@ -197,6 +257,8 @@ const State = (() => {
 
   /** Zones are position-locked by default — a stray drag must never move one. */
   const zoneLocked = m => !!(m && m.type === 'zone' && !S.unlockedZones.has(m.id));
+  /** Anything that must not move, resize or nudge: a locked zone, or a markup locked on purpose. */
+  const isLocked = m => zoneLocked(m) || !!(m && m.locked);
   const selectedMarkups = () => S.markups.filter(m => S.selection.has(m.id));
 
   /* ---- work day ---- */
@@ -265,11 +327,11 @@ const State = (() => {
   }
   const zoneName = z => (z.label || z.subject || 'Area zone') + ((z.jobs || []).length ? ' · #' + z.jobs.join(' #') : '');
 
-  /** Every group key a markup belongs to: its type group, its zone, and the type-within-zone. */
+  /** Every group key a markup belongs to: its type group, its zone, the type-within-zone, and its layer. */
   function groupKeysOf(m) {
     const c = categoryOf(m), z = zoneOf(m);
     const zk = 'zone:' + (z ? z.id : 'none');
-    return ['type:' + c, zk, 'type:' + c + '|' + zk];
+    return ['type:' + c, zk, 'type:' + c + '|' + zk, 'layer:' + (m.layer || '')];
   }
 
   let viewFp = null;
@@ -391,6 +453,12 @@ const State = (() => {
     if (!sc || m.type !== 'marea') return null;
     return Geo.polygonArea(m.pts) * sc.ftPerUnit * sc.ftPerUnit;
   }
+  /** Perimeter of an area (or closed polygon) in feet. */
+  function perimeterFt(m) {
+    const sc = scaleForPage(m.page);
+    if (!sc || !m.pts || !(m.type === 'marea' || (m.type === 'polyline' && m.closed))) return null;
+    return (Geo.polylineLength(m.pts) + Geo.dist(m.pts[m.pts.length - 1], m.pts[0])) * sc.ftPerUnit;
+  }
 
   /* ---- count groups ---- */
   function addCountGroup(name, shape, color) {
@@ -427,11 +495,12 @@ const State = (() => {
     S, on, emit,
     pushUndo, undo, redo, canUndo, canRedo, clearHistory,
     addMarkup, updateMarkups, deleteMarkups, getMarkup, pageMarkups,
-    select, clearSelection, selectedMarkups, setTool, zoneLocked,
+    select, clearSelection, selectedMarkups, setTool, zoneLocked, isLocked,
+    reorder, groupMarkups, ungroupMarkups, groupOf, STATUSES, statusOf, layerNames,
     setWorkDay, setDayMode, dayStateOf,
     categoryOf, zoneOf, zoneName, groupKeysOf, isHidden, groupHidden, groupCollapsed, anyGroupHidden,
     setGroupHidden, setGroupCollapsed, showAllGroups, CATEGORY_ORDER, CATEGORY_NAME,
-    scaleForPage, setScale, lengthFt, areaFt, pipeDisplayWidth,
+    scaleForPage, setScale, lengthFt, areaFt, perimeterFt, pipeDisplayWidth,
     addCountGroup, countGroup, countOfGroup,
     resetDoc, newId, touch, flushAutosave, discardAutosave, addImage,
   };

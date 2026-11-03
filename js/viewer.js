@@ -406,12 +406,31 @@ const Viewer = (() => {
     setTimeout(() => r.remove(), 1600);
   }
 
+  /** Jump to a rectangle (page units) on a page and flash it — a Find hit. */
+  async function flashRect(page, rect) {
+    if (page !== State.S.page) await gotoPage(page);
+    const S = State.S;
+    if (S.zoom < 1) setZoom(1.5);
+    const b = Geo.inflate(rect, 6);
+    const vp = el.viewport.getBoundingClientRect();
+    el.viewport.scrollLeft = el.wrap.offsetLeft + (b.x + b.w / 2) * S.zoom - vp.width / 2;
+    el.viewport.scrollTop = el.wrap.offsetTop + (b.y + b.h / 2) * S.zoom - vp.height / 2;
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('x', b.x); r.setAttribute('y', b.y);
+    r.setAttribute('width', b.w); r.setAttribute('height', b.h);
+    r.setAttribute('fill', '#ffb300'); r.setAttribute('fill-opacity', '0.3'); r.setAttribute('stroke', '#ffb300');
+    r.setAttribute('stroke-width', 2 / S.zoom); r.setAttribute('rx', 3);
+    r.classList.add('flash-rect');
+    el.sel.appendChild(r);
+    setTimeout(() => r.remove(), 2600);
+  }
+
   const isSpacePan = () => spaceDown;
 
   return {
     init, openPdf, closeDoc, renderPage, layout, scheduleRender,
     setZoom, zoomAt, zoomIn, zoomOut, fitPage, fitWidth,
-    gotoPage, buildThumbs, syncThumbActive, toPage, pageRect, flashMarkup, getPageDims, isSpacePan,
+    gotoPage, buildThumbs, syncThumbActive, toPage, pageRect, flashMarkup, flashRect, getPageDims, isSpacePan,
     el,
   };
 })();

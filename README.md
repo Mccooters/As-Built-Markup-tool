@@ -49,15 +49,26 @@ AirMark is an installable web app. Open your deployment in Safari/Chrome, then *
 
 | Bluebeam | AirMark |
 |---|---|
-| Markup tools (line, arrow, box, ellipse, cloud, pen, highlighter, text, callout) | ✔ All included; revision clouds with adjustable scallops |
-| Measurement tools (calibrate, length, polylength, area, count) | ✔ Included, metric by default (meters, 1:20…1:500 presets, ratio entry), with ft-in / decimal-ft available |
+| Markup tools (line, arrow, polyline, polygon, box, ellipse, cloud, polygon cloud, pen, highlighter, text, callout) | ✔ All included; revision clouds with adjustable scallops, **cloud outline** on any polyline/polygon, **arrowheads at either or both ends** of lines and polylines, bold / bordered / white-backed text |
+| Sequence (auto-numbered labels) | ✔ `N` — every click drops the next label (`D-01`, `D-02`…), prefix and counter in the panel |
+| Measurement tools (calibrate, length, polylength, area, perimeter, count) | ✔ Included, metric by default (meters, 1:20…1:500 presets, ratio entry), with ft-in / decimal-ft available; areas can label their perimeter too |
 | — | ✔ Pipe runs render at their **actual OD width** for the sheet scale (toggleable per run) |
-| Tool Chest custom symbols | ✔ Built-in compressed-air symbol library + stamps |
-| Markups List panel | ✔ Grouped by type › area zone, each group collapsible and hide-able on the sheet with totals; sortable/filterable with subject, comments, measurement, author, date; CSV export |
+| Tool Chest custom symbols | ✔ Built-in compressed-air symbol library + stamps, plus **your own Tool Chest**: select any markups → *Save to Tool Chest*, then place the whole thing again anywhere |
+| Markup status (Accepted / Rejected / Completed / Cancelled) | ✔ On every markup — properties panel or right-click; a Status column and filter in the list, in the CSV and the summary PDF |
+| Layers | ✔ A layer name on any markup; the list groups by layer and hides a whole layer on the sheet |
+| Lock, group, align, z-order | ✔ Lock (`Ctrl+L`), group/ungroup (`Ctrl+G`), align edges & centres, bring to front / send to back (`Ctrl+]` / `Ctrl+[`) |
+| Cut / copy / paste, paste onto other pages, apply to all pages | ✔ `Ctrl+C/X/V` (pastes in place on another page), *Copy to all pages* for title-block stamps and legends |
+| Set as default / format painter | ✔ *Set as tool defaults* from any markup |
+| Markups List panel | ✔ Grouped by type › area zone or layer, each group collapsible and hide-able on the sheet with totals; sortable/filterable with subject, comments, measurement, status, author, date; CSV export |
+| Markup Summary | ✔ **Markup summary PDF** (table of every markup with page, comments, measurement, status, layer, day, author) from the CSV dialog, whole job or one work day |
+| Search text, bookmarks | ✔ `Ctrl+F` finds text in the PDF (tag numbers, room names, grid refs) and jumps to it; the PDF's bookmarks are listed in the same dialog |
 | Quantity takeoff | ✔ Live pipe takeoff by size & material + fitting/count schedules |
 | Flatten & export | ✔ One-click flattened PDF export |
 | Save markups separately from the PDF | ✔ `.airmark` project files (PDF embedded up to 50 MB) + per-drawing browser autosave |
 | Undo/redo, duplicate, nudge, multi-select, marquee | ✔ |
+| Right-click menu | ✔ Right-click (or hold a finger on the selection, or **More ▾** in Properties) — clipboard, order, align, group, lock, status, Tool Chest, copy to all pages |
+
+The full gap analysis — what Bluebeam has, what AirMark has, what's left out on purpose — is in [docs/bluebeam-audit.md](docs/bluebeam-audit.md).
 
 ## Keyboard shortcuts
 
@@ -69,7 +80,8 @@ AirMark is an installable web app. Open your deployment in Safari/Chrome, then *
 | `A` | Area measurement |
 | `C` | Count |
 | `T` / `Q` | Text / Callout |
-| `Enter` or double-click | Finish pipe / polyline |
+| `N` | Sequence — numbered labels (`D-01`, `D-02`…) |
+| `Enter` or double-click | Finish pipe / polyline / polygon |
 | `Backspace` | Remove last point while drawing |
 | `Shift` | Snap to 45° while drawing (free-angle is the default; inverted if 45°-snap is enabled in pipe properties) |
 | `R` | Rotate symbol (before or after placing) |
@@ -77,6 +89,12 @@ AirMark is an installable web app. Open your deployment in Safari/Chrome, then *
 | `Del` | Delete selection |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
 | `Ctrl+D` | Duplicate |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste — paste lands nudged on the same page, in place on another page |
+| `Ctrl+G` / `Ctrl+Shift+G` | Group / ungroup — grouped markups select and move as one |
+| `Ctrl+L` | Lock / unlock the selection (no move, resize, nudge or delete) |
+| `Ctrl+]` / `Ctrl+[` | Bring to front / send to back |
+| `Ctrl+F` | Find text in the drawing · bookmarks |
+| Right-click / hold a finger | Markup menu — align, status, Tool Chest, copy to all pages… |
 | `Ctrl+A` | Select all on page |
 | `Ctrl+S` | Save project |
 | Arrow keys | Pan the view — including mid pipe run (`Shift` = faster) · nudge the selection when on Select |
@@ -206,7 +224,21 @@ The list at the bottom of the editor is **grouped**: one group per kind of marku
 - **▾ / ▸ collapses** the group in the list (the zone sub-groups fold on their own).
 - **The eye hides the group on the drawing** — all measurements at once, or just one section's measurements. Hidden markups stay in the list, greyed, and are skipped by selection, marquee and snapping; **Show all** in the header brings everything back. Hiding a parent hides its sub-groups too.
 
-Collapsed and hidden groups are remembered **per device and per drawing**, never saved into the project: hiding a section's measurements on one iPad doesn't blank them for the rest of the crew, and exports and reports still include them. The **Group** menu switches to zones on top (each zone with everything inside it) or a flat list.
+Collapsed and hidden groups are remembered **per device and per drawing**, never saved into the project: hiding a section's measurements on one iPad doesn't blank them for the rest of the crew, and exports and reports still include them. The **Group** menu switches to zones on top (each zone with everything inside it), **layers**, or a flat list.
+
+## Review, layers, lock, groups and the Tool Chest
+
+Every markup carries three bits of bookkeeping, set in the **Review** section of Properties or from the markup menu (right-click, hold a finger on the selection, or **More ▾**):
+
+- **Status** — *Accepted ✓, Rejected ✗, Completed ✔, Cancelled ⊘* or none, Bluebeam's review workflow for checking as-builts and marking what's been installed. It shows as a chip in the Markups List (with a status filter), in the CSV and in the markup summary PDF; the sheet itself doesn't change.
+- **Layer** — any name (*Stage 2*, *Existing*, *Demo*). The list groups by layer and the eye on a layer hides it on the sheet; new markups land on the layer set in each tool's defaults.
+- **Lock** (`Ctrl+L`) — a locked markup can't be moved, resized, nudged or deleted (Delete keeps it and says so; it shows a 🔒 instead of handles). Area zones are locked by nature.
+
+**Groups** (`Ctrl+G`) make several markups select and move as one — a valve with its tag and arrow, say; `Ctrl+Shift+G` splits them again. **Align** (menu, two or more selected) lines up left/centre/right edges or top/middle/bottom. **Bring to front / send to back** (`Ctrl+]` / `Ctrl+[`) reorders what overlaps. **Cut / copy / paste** (`Ctrl+X/C/V`) works across pages — paste on the same page lands nudged, on another page in place — and **Copy to all pages** puts the selection on every sheet of a set (title-block stamps, a legend, the north arrow). **Set as tool defaults** makes a markup's look the defaults for everything you draw next.
+
+The **Tool Chest** (Symbols tab) holds your own tools: select any markups — a typical drop with its FRL, isolation valve and tag; a legend block; a standard note — and pick **Save to Tool Chest** from the menu. The set comes back as one tile; tap it and tap the drawing to place the whole thing, grouped, as often as you like. Tools are kept on the device (`localStorage`); a **Sequence** tool (`N`) covers numbered labels — set a prefix and the next number, then every click drops `D-01`, `D-02`…
+
+**Find** (`Ctrl+F`) searches the PDF's own text — equipment tags, room names, grid references — lists every match with its page, and jumps to it with a highlight; the dialog also lists the PDF's bookmarks. Scanned drawings have no text layer, so they return nothing. The **Markup summary PDF** (CSV dialog) is Bluebeam's Markup Summary: a landscape table of every markup — page, subject, label/comments, measurement, status, layer, work day, author — for the handover pack, scoped to the whole job or one work day.
 
 ## Project list
 
@@ -281,6 +313,6 @@ Markup geometry is stored in PDF page units (points), so markups stay put at any
 
 ## Known limits / ideas for later
 
-- One drawing open at a time; no markup layers/status workflow yet.
-- Symbol library is fixed — a custom "tool chest" editor would be a natural next step.
+- One drawing open at a time.
+- The Tool Chest is per device (not synced through the team cloud yet); there is no hatch-pattern fill, reply threads on markups, or a markup legend drawn onto the sheet — see [docs/bluebeam-audit.md](docs/bluebeam-audit.md) for the full list of what's deliberately left out.
 - Team cloud sync is per drawing and last-save-wins (you're warned when a newer version exists) — no live co-editing.

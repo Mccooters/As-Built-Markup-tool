@@ -25,6 +25,7 @@ const MarkupList = (() => {
     else if (m.type === 'penet') label = [`Ø${m.penSize || '?'}`, m.penType, m.penFire ? 'FIRE-RATED' : ''].filter(Boolean).join(' · ');
     else if (m.type === 'photo') label = m.caption || '';
     if (m.comment) label = label ? `${label} — ${m.comment}` : m.comment;
+    const st = State.statusOf(m);
     return {
       id: m.id, idx, page: m.page,
       subject: m.subject || m.type,
@@ -35,6 +36,9 @@ const MarkupList = (() => {
       author: m.author || '',
       date: m.date || '',
       type: m.type,
+      status: st.id, statusName: st.id ? st.name : '', statusMark: st.mark, statusColor: st.color || '',
+      layer: m.layer || '',
+      locked: !!m.locked,
       hidden: State.isHidden(m),
       cat: State.categoryOf(m),
       zone: State.zoneOf(m),
@@ -46,13 +50,15 @@ const MarkupList = (() => {
   function visibleRows() {
     const search = els.search.value.trim().toLowerCase();
     const type = els.typeFilter.value;
+    const status = els.statusFilter ? els.statusFilter.value : '';
     const pageOnly = els.pageOnly.checked;
     const rows = State.S.markups.map(rowData);
     let out = rows.filter(r => {
       if (type && r.type !== type) return false;
+      if (status === 'any' ? !r.status : (status && status !== 'any' && r.status !== (status === 'none' ? '' : status))) return false;
       if (pageOnly && r.page !== State.S.page) return false;
       if (search) {
-        const hay = `${r.subject} ${r.label} ${r.measure} ${r.author}`.toLowerCase();
+        const hay = `${r.subject} ${r.label} ${r.measure} ${r.author} ${r.layer} ${r.statusName}`.toLowerCase();
         if (!hay.includes(search)) return false;
       }
       return true;
@@ -89,8 +95,25 @@ const MarkupList = (() => {
     return out;
   }
 
+  function byLayer(rows) {
+    const buckets = new Map();
+    for (const r of rows) {
+      const k = 'layer:' + r.layer;
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(r);
+    }
+    const out = [];
+    for (const name of State.layerNames()) {
+      const k = 'layer:' + name;
+      if (buckets.has(k)) out.push({ key: k, name, rows: buckets.get(k), children: [] });
+    }
+    if (buckets.has('layer:')) out.push({ key: 'layer:', name: 'No layer', rows: buckets.get('layer:'), children: [] });
+    return out;
+  }
+
   function buildTree(rows) {
     if (groupMode === 'zone') return byZone(rows, '');
+    if (groupMode === 'layer') return byLayer(rows);
     const hasZones = State.S.markups.some(m => m.type === 'zone');
     const cats = new Map();
     for (const r of rows) { if (!cats.has(r.cat)) cats.set(r.cat, []); cats.get(r.cat).push(r); }
@@ -133,7 +156,7 @@ const MarkupList = (() => {
     const tr = document.createElement('tr');
     tr.className = `grp lvl${level}${off ? ' hid' : ''}${collapsed ? ' closed' : ''}`;
     tr.dataset.key = g.key;
-    tr.innerHTML = `<td colspan="9">
+    tr.innerHTML = `<td colspan="10">
       <button type="button" class="grp-tog" title="${collapsed ? 'Expand' : 'Collapse'}" aria-expanded="${!collapsed}">${collapsed ? '▸' : '▾'}</button>
       <button type="button" class="grp-eye" title="${own ? 'Show these on the drawing' : parentHidden ? 'Hidden with the whole group' : 'Hide these on the drawing'}" aria-pressed="${own}">${off ? EYE_OFF : EYE_ON}</button>
       <span class="grp-name">${esc(g.name)}</span><span class="grp-count">${rows.length}</span>${tot ? `<span class="grp-tot">${esc(tot)}</span>` : ''}</td>`;
@@ -160,9 +183,10 @@ const MarkupList = (() => {
     const d = r.date ? new Date(r.date) : null;
     const dateStr = d ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
     tr.innerHTML =
-      `<td>${r.idx + 1}</td><td>${r.page}</td><td>${esc(r.subject)}</td>` +
-      `<td title="${esc(r.label)}">${esc(r.label)}</td>` +
+      `<td>${r.idx + 1}</td><td>${r.page}</td><td>${r.locked ? '<span class="row-lock" title="Locked">🔒</span>' : ''}${esc(r.subject)}</td>` +
+      `<td title="${esc(r.label)}">${esc(r.label)}${r.layer ? `<span class="row-layer" title="Layer">${esc(r.layer)}</span>` : ''}</td>` +
       `<td>${esc(r.measure)}</td>` +
+      `<td>${r.status ? `<span class="status-chip" style="color:${r.statusColor}" title="${esc(r.statusName)}">${r.statusMark} ${esc(r.statusName)}</span>` : ''}</td>` +
       `<td><span class="color-chip" style="background:${r.color || '#888'}"></span></td>` +
       `<td>${esc(r.author)}</td><td>${dateStr}</td>` +
       `<td><button class="row-del" title="Delete this markup">✕</button></td>`;
@@ -400,11 +424,11 @@ const MarkupList = (() => {
 
     if (inc('list')) {
       lines.push(dayFilter ? `MARKUPS — ${dayFilter.day}` : 'ALL MARKUPS');
-      lines.push(['#', 'Page', 'Type', 'Subject', 'Label/Comments', 'Measurement', 'Day', 'Color', 'Author', 'Date'].join(','));
+      lines.push(['#', 'Page', 'Type', 'Subject', 'Label/Comments', 'Measurement', 'Status', 'Layer', 'Day', 'Color', 'Author', 'Date'].join(','));
       State.S.markups.forEach((m, i) => {
         if (dayFilter && dayOf(m) !== dayFilter.day) return;
         const r = rowData(m, i);
-        lines.push([r.idx + 1, r.page, r.type, r.subject, r.label, r.measure, dayOf(m), r.color, r.author, r.date].map(csvCell).join(','));
+        lines.push([r.idx + 1, r.page, r.type, r.subject, r.label, r.measure, r.statusName, r.layer, dayOf(m), r.color, r.author, r.date].map(csvCell).join(','));
       });
     }
 
@@ -422,6 +446,7 @@ const MarkupList = (() => {
       count: document.getElementById('listCount'),
       search: document.getElementById('listSearch'),
       typeFilter: document.getElementById('listTypeFilter'),
+      statusFilter: document.getElementById('listStatusFilter'),
       pageOnly: document.getElementById('listPageOnly'),
       toggle: document.getElementById('listToggle'),
       group: document.getElementById('listGroup'),
@@ -431,6 +456,7 @@ const MarkupList = (() => {
     els.toggle.addEventListener('click', () => els.panel.classList.toggle('collapsed'));
     els.search.addEventListener('input', render);
     els.typeFilter.addEventListener('change', render);
+    if (els.statusFilter) els.statusFilter.addEventListener('change', render);
     els.pageOnly.addEventListener('change', render);
     if (els.group) {
       els.group.value = groupMode;
@@ -467,5 +493,5 @@ const MarkupList = (() => {
     render();
   }
 
-  return { init, render, computeTakeoff, exportCsv, rowKeys, fittingCode, dayOf };
+  return { init, render, computeTakeoff, exportCsv, rowKeys, fittingCode, dayOf, rowData };
 })();

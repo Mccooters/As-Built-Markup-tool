@@ -4,7 +4,7 @@
 const Tools = (() => {
 
   const SNAP_TYPES = ['pipe', 'mpoly', 'mlength', 'line', 'polyline', 'arrow'];
-  const POLY_TOOLS = { pipe: 1, polyline: 1, mpoly: 1, marea: 1 };
+  const POLY_TOOLS = { pipe: 1, polyline: 1, polygon: 1, mpoly: 1, marea: 1 };
   const DRAG_TOOLS = { line: 1, arrow: 1, mlength: 1, rect: 1, ellipse: 1, cloud: 1, pen: 1, highlight: 1, callout: 1, zone: 1 };
 
   const TOOL_HINTS = {
@@ -19,7 +19,10 @@ const Tools = (() => {
     count: 'Click to place a count mark. Pick the count group in the panel on the right.',
     line: 'Drag to draw a line. Shift constrains to 45°.',
     arrow: 'Drag to draw — the arrow head lands where you release. Shift constrains to 45°.',
-    polyline: 'Click points · double-click or Enter finishes · Esc cancels.',
+    polyline: 'Click points · double-click or Enter finishes · Esc cancels. Arrowheads and a cloud outline are in the panel on the right.',
+    polygon: 'Click corners · double-click or Enter closes the shape. Fill, hatch-style cloud outline and perimeter label are in the panel on the right.',
+    sequence: 'Click to drop the next numbered label (D-01, D-02…). Prefix and next number are in the panel on the right.',
+    chest: 'Click to place the saved tool from your Tool Chest — pick a different one in the Symbols tab.',
     rect: 'Drag a rectangle.',
     ellipse: 'Drag an ellipse.',
     cloud: 'Drag a revision cloud.',
@@ -60,7 +63,7 @@ const Tools = (() => {
   let gestureAt = 0;           // when a second finger last landed
   let panConvertedAt = 0;      // when a touch turned into a one-finger pan
   const TAP_SLOP = 22;         // px of finger roll still counted as a tap
-  const CLICK_TOOLS = { calibrate: 1, symbol: 1, count: 1, text: 1, penet: 1, photo: 1, fitting: 1 };
+  const CLICK_TOOLS = { calibrate: 1, symbol: 1, count: 1, text: 1, penet: 1, photo: 1, fitting: 1, sequence: 1, chest: 1 };
 
   const S = () => State.S;
   const D = () => State.S.defaults;
@@ -216,6 +219,7 @@ const Tools = (() => {
       page: S().page, color: d.color, lineWidth: d.lineWidth, opacity: d.opacity,
       lineStyle: d.lineStyle, fontSize: d.fontSize,
     };
+    if (d.layer) base.layer = d.layer;
     let m = null;
 
     const start = snapPoint(p0);
@@ -230,6 +234,7 @@ const Tools = (() => {
           p = ev.shiftKey ? Geo.constrainAngle(start, p, 45) : snapPoint(p);
           m = { ...base, type: tool, pts: [{ x: start.x, y: start.y }, { x: p.x, y: p.y }] };
           if (tool === 'mlength') m.subject = 'Length';
+          if (tool === 'line' && d.ends && d.ends !== 'none') m.ends = d.ends;
           let extras = p.snapped ? snapIndicator(p) : '';
           if (tool === 'mlength') extras += lenReadout([m.pts[0]], p);
           preview(m, extras);
@@ -295,6 +300,7 @@ const Tools = (() => {
         page: S().page, color: d.color, lineWidth: d.lineWidth, opacity: d.opacity, lineStyle: d.lineStyle,
         fontSize: d.fontSize, pts: [{ x: sp.x, y: sp.y }],
       };
+      if (d.layer) base.layer = d.layer;
       if (tool === 'pipe') {
         Object.assign(base, {
           type: 'pipe',
@@ -308,9 +314,12 @@ const Tools = (() => {
       } else if (tool === 'mpoly') {
         Object.assign(base, { type: 'mpoly', subject: 'Polylength', showLabel: true });
       } else if (tool === 'marea') {
-        Object.assign(base, { type: 'marea', subject: 'Area', showLabel: true, fill: d.fill, fillOpacity: d.fillOpacity });
+        Object.assign(base, { type: 'marea', subject: 'Area', showLabel: true, fill: d.fill, fillOpacity: d.fillOpacity, showPerim: !!d.showPerim });
+      } else if (tool === 'polygon') {
+        Object.assign(base, { type: 'polyline', closed: true, subject: 'Polygon', fill: d.fill, fillOpacity: d.fillOpacity, cloudStyle: !!d.cloudStyle, arcSize: d.arcSize });
       } else {
-        Object.assign(base, { type: 'polyline', subject: 'Polyline' });
+        Object.assign(base, { type: 'polyline', subject: 'Polyline', cloudStyle: !!d.cloudStyle, arcSize: d.arcSize });
+        if (d.ends && d.ends !== 'none') base.ends = d.ends;
       }
       creating = base;
     }
@@ -338,7 +347,7 @@ const Tools = (() => {
     while (m.pts.length > 1 && Geo.dist(m.pts[m.pts.length - 1], m.pts[m.pts.length - 2]) < 2.5 / S().zoom) {
       m.pts.pop();
     }
-    const minPts = m.type === 'marea' ? 3 : 2;
+    const minPts = (m.type === 'marea' || m.closed) ? 3 : 2;
     if (m.pts.length < minPts) return;
     if (m.type === 'marea') m.closed = true;
     const created = State.addMarkup(m);
@@ -547,11 +556,263 @@ const Tools = (() => {
     const d = D();
     const m = State.addMarkup({
       type: 'text', page: S().page, x: p.x, y: p.y, w: 150, h: d.fontSize * 2,
-      color: d.color, fontSize: d.fontSize, text: '', fill: 'none', border: false,
-      lineWidth: 1.5, subject: 'Text',
+      color: d.color, fontSize: d.fontSize, text: '', fill: d.textBg === 'white' ? '#ffffff' : 'none', fillOpacity: 0.85,
+      border: !!d.textBorder, bold: !!d.textBold, lineWidth: 1.5, subject: 'Text', ...(d.layer ? { layer: d.layer } : {}),
     });
     State.select([m.id]);
     editText(m, true);
+  }
+
+  /* ================= sequence: auto-numbered labels (D-01, D-02…) ================= */
+
+  const seqLabel = (d, n) => `${d.seqPrefix || ''}${String(n).padStart(Math.max(0, d.seqPad || 0), '0')}`;
+
+  function placeSequence(p) {
+    const d = D();
+    const n = Math.max(1, parseInt(d.seqNext, 10) || 1);
+    const text = seqLabel(d, n);
+    const fs = d.fontSize || 12;
+    const w = Render.textWidth(text, fs, true) + fs * 0.9, h = fs * 1.7;
+    const m = State.addMarkup({
+      type: 'text', page: S().page, x: p.x - w / 2, y: p.y - h / 2, w, h,
+      color: d.color, fontSize: fs, text, fill: '#ffffff', fillOpacity: 0.9, border: true, bold: true,
+      lineWidth: Math.max(1, d.lineWidth || 1.5), subject: 'Sequence', seq: n, ...(d.layer ? { layer: d.layer } : {}),
+    });
+    d.seqNext = n + 1;
+    try { localStorage.setItem('abmt:seq', JSON.stringify({ prefix: d.seqPrefix, next: d.seqNext, pad: d.seqPad })); } catch (e) { /* ignore */ }
+    Props.renderProps();   // the next number shows in the panel
+    return m;
+  }
+
+  function sequenceGhost(p) {
+    const d = D();
+    const text = seqLabel(d, Math.max(1, parseInt(d.seqNext, 10) || 1));
+    const fs = d.fontSize || 12;
+    const w = Render.textWidth(text, fs, true) + fs * 0.9, h = fs * 1.7;
+    const g = Render.buildMarkupEl({ type: 'text', page: S().page, x: p.x - w / 2, y: p.y - h / 2, w, h, color: d.color, fontSize: fs, text, fill: '#ffffff', fillOpacity: 0.9, border: true, bold: true, lineWidth: 1.5 });
+    g.setAttribute('opacity', 0.55);
+    const layer = Viewer.el.preview;
+    layer.innerHTML = '';
+    layer.appendChild(g);
+  }
+
+  /* ================= tool chest: saved groups of markups, placed as one ================= */
+
+  const CHEST_KEY = 'abmt:toolchest';
+  let chest = (() => { try { return JSON.parse(localStorage.getItem(CHEST_KEY) || '[]') || []; } catch (e) { return []; } })();
+  let activeChest = null;   // id of the armed chest tool
+
+  const saveChest = () => { try { localStorage.setItem(CHEST_KEY, JSON.stringify(chest)); } catch (e) { /* ignore */ } };
+  const chestList = () => chest.slice();
+  const chestById = id => chest.find(t => t.id === id) || null;
+
+  /** Save the selected markups as a reusable tool: geometry relative to their common bounds. */
+  function saveToChest(name) {
+    const sel = State.selectedMarkups().filter(m => m.type !== 'zone' && m.type !== 'photo');
+    if (!sel.length) return null;
+    const b = unionBounds(sel);
+    const items = sel.map(m => {
+      const c = JSON.parse(JSON.stringify(m));
+      delete c.id; delete c.author; delete c.date; delete c.day; delete c.grp; delete c.locked; delete c.status;
+      moveBy(c, -b.x, -b.y);
+      return c;
+    });
+    const t = { id: 'ct' + Date.now().toString(36), name: name || (sel.length === 1 ? (sel[0].subject || sel[0].type) : `${sel.length} markups`), w: b.w, h: b.h, items };
+    chest.push(t);
+    saveChest();
+    if (typeof Props !== 'undefined') Props.renderSymbols();
+    return t;
+  }
+  function removeChestTool(id) {
+    chest = chest.filter(t => t.id !== id);
+    if (activeChest === id) activeChest = null;
+    saveChest();
+    if (typeof Props !== 'undefined') Props.renderSymbols();
+  }
+  function armChest(id) {
+    activeChest = id;
+    State.setTool('chest');
+    if (hoverPt) chestGhost(hoverPt);
+  }
+
+  function chestMarkupsAt(t, p) {
+    const d = D();
+    const gid = t.items.length > 1 ? 'grp' + (State.S.idCounter++) : null;
+    return t.items.map(it => {
+      const c = JSON.parse(JSON.stringify(it));
+      moveBy(c, p.x - t.w / 2, p.y - t.h / 2);
+      c.page = S().page;
+      if (gid) c.grp = gid;
+      if (d.layer) c.layer = d.layer;
+      return c;
+    });
+  }
+  function chestGhost(p) {
+    const t = chestById(activeChest);
+    if (!t) { clearPreview(); return; }
+    const layer = Viewer.el.preview;
+    layer.innerHTML = '';
+    for (const m of chestMarkupsAt(t, p)) { const g = Render.buildMarkupEl(m); g.setAttribute('opacity', 0.55); layer.appendChild(g); }
+  }
+  function placeChest(p) {
+    const t = chestById(activeChest);
+    if (!t) { App.toast('Pick a tool in the Tool Chest (Symbols tab) first.', 'warn'); App.showTab('symbols'); return; }
+    State.pushUndo();
+    const ids = [];
+    for (const m of chestMarkupsAt(t, p)) ids.push(State.addMarkup(m, { noUndo: true }).id);
+    State.select(ids);
+  }
+
+  /* ================= edit operations: clipboard, order, groups, align, lock ================= */
+
+  let clipboard = [];   // deep copies of markups, ids stripped
+
+  const unionBounds = ms => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const m of ms) {
+      const b = Geo.markupBounds(m);
+      x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  };
+
+  const cloneOf = m => { const c = JSON.parse(JSON.stringify(m)); delete c.id; return c; };
+
+  function copySelection() {
+    const sel = State.selectedMarkups();
+    if (!sel.length) return 0;
+    clipboard = sel.map(cloneOf);
+    return sel.length;
+  }
+  function cutSelection() {
+    const n = copySelection();
+    if (n) State.deleteMarkups([...S().selection]);
+    return n;
+  }
+  /** Paste onto the current page: nudged when it lands on the page it came from, in place on any other page. */
+  function paste() {
+    if (!clipboard.length) return 0;
+    State.pushUndo();
+    const samePage = clipboard.every(m => m.page === S().page);
+    const grpMap = {};
+    const ids = [];
+    for (const src of clipboard) {
+      const c = JSON.parse(JSON.stringify(src));
+      c.page = S().page;
+      c.date = new Date().toISOString(); c.day = S().workDay; c.author = S().author;
+      if (c.grp) c.grp = grpMap[c.grp] || (grpMap[c.grp] = 'grp' + (State.S.idCounter++));
+      if (samePage) moveBy(c, 14, 14);
+      ids.push(State.addMarkup(c, { noUndo: true }).id);
+    }
+    // the next paste of the same thing lands a step further along
+    if (samePage) for (const m of clipboard) moveBy(m, 14, 14);
+    State.select(ids);
+    return ids.length;
+  }
+
+  function duplicateSelection() {
+    const sel = [...S().selection];
+    if (!sel.length) return;
+    State.pushUndo();
+    const clones = [];
+    const grpMap = {};
+    for (const id of sel) {
+      const m = State.getMarkup(id);
+      if (!m) continue;
+      const c = JSON.parse(JSON.stringify(m));
+      c.id = State.newId();
+      c.date = new Date().toISOString();
+      delete c.locked;
+      if (c.grp) c.grp = grpMap[c.grp] || (grpMap[c.grp] = 'grp' + (State.S.idCounter++));
+      moveBy(c, 14, 14);
+      State.S.markups.push(c);
+      clones.push(c.id);
+    }
+    State.emit('markups'); State.touch();
+    State.select(clones);
+  }
+
+  /** Clone the selection onto every other page (title-block stamps, legends, north arrows…). */
+  function copyToAllPages() {
+    const sel = State.selectedMarkups();
+    if (!sel.length || S().pageCount < 2) return 0;
+    State.pushUndo();
+    let n = 0;
+    for (let p = 1; p <= S().pageCount; p++) {
+      if (p === S().page) continue;
+      const grpMap = {};
+      for (const m of sel) {
+        const c = cloneOf(m);
+        c.page = p;
+        if (c.grp) c.grp = grpMap[c.grp] || (grpMap[c.grp] = 'grp' + (State.S.idCounter++));
+        State.addMarkup(c, { noUndo: true });
+        n++;
+      }
+    }
+    return n;
+  }
+
+  const ALIGN_OPS = ['left', 'hcenter', 'right', 'top', 'vcenter', 'bottom'];
+  function alignSelection(op) {
+    const sel = State.selectedMarkups().filter(m => !State.isLocked(m));
+    if (sel.length < 2) return;
+    const U = unionBounds(sel);
+    State.pushUndo();
+    for (const m of sel) {
+      const b = Geo.markupBounds(m);
+      let dx = 0, dy = 0;
+      if (op === 'left') dx = U.x - b.x;
+      else if (op === 'right') dx = U.x + U.w - (b.x + b.w);
+      else if (op === 'hcenter') dx = U.x + U.w / 2 - (b.x + b.w / 2);
+      else if (op === 'top') dy = U.y - b.y;
+      else if (op === 'bottom') dy = U.y + U.h - (b.y + b.h);
+      else if (op === 'vcenter') dy = U.y + U.h / 2 - (b.y + b.h / 2);
+      moveBy(m, dx, dy);
+    }
+    const ids = sel.map(m => m.id);
+    State.emit('markups', { changed: ids }); State.touch();
+  }
+
+  function setLocked(locked) {
+    const sel = [...S().selection];
+    if (!sel.length) return;
+    State.updateMarkups(sel, m => (m.type === 'zone' ? {} : { locked: !!locked }));
+    for (const m of State.S.markups) if (m.locked === false) delete m.locked;
+    State.emit('selection');
+  }
+  const selectionLocked = () => { const sel = State.selectedMarkups(); return sel.length > 0 && sel.every(m => m.locked); };
+
+  function setStatus(status) {
+    const sel = [...S().selection];
+    if (!sel.length) return;
+    State.updateMarkups(sel, { status: status || '' });
+    for (const m of State.S.markups) if (m.status === '') delete m.status;
+  }
+
+  function groupSelection() {
+    const ids = [...S().selection];
+    if (ids.length < 2) { App.toast('Select two or more markups to group them.', 'info'); return; }
+    State.groupMarkups(ids);
+    App.toast(`Grouped ${ids.length} markups — they select and move as one.`, 'ok', 3000);
+  }
+  function ungroupSelection() {
+    const ids = [...S().selection].filter(id => { const m = State.getMarkup(id); return m && m.grp; });
+    if (!ids.length) return;
+    State.ungroupMarkups(ids);
+    App.toast('Ungrouped.', 'ok', 2000);
+  }
+
+  /** A markup's look becomes the tool defaults (Bluebeam's "Set as Default"). */
+  function setAsDefaults() {
+    const m = State.selectedMarkups()[0];
+    if (!m) return;
+    const d = D();
+    for (const k of ['color', 'lineWidth', 'opacity', 'lineStyle', 'fontSize', 'fill', 'fillOpacity', 'arcSize']) if (m[k] != null) d[k] = m[k];
+    if (m.ends) d.ends = m.ends;
+    if (m.type === 'text') { d.textBold = !!m.bold; d.textBorder = !!m.border; d.textBg = m.fill && m.fill !== 'none' ? 'white' : 'none'; }
+    if (m.type === 'pipe') { d.pipeSize = m.pipeSize; d.material = m.material; d.system = m.system; }
+    if (m.layer != null) d.layer = m.layer;
+    App.toast('These properties are now the defaults for new markups.', 'ok', 3000);
   }
 
   /* ================= inline text editing ================= */
@@ -610,8 +871,10 @@ const Tools = (() => {
     if (g) {
       const id = g.dataset.id;
       const additive = e.shiftKey;
-      if (additive) { State.select([id], true); return; }
-      if (!S().selection.has(id)) State.select([id]);
+      // a grouped markup brings its whole group along
+      const ids = State.groupOf(id);
+      if (additive) { State.select(ids, true); return; }
+      if (!S().selection.has(id)) State.select(ids);
       beginMoveDrag(e, p);
       return;
     }
@@ -623,14 +886,26 @@ const Tools = (() => {
     const ids = [...S().selection];
     if (!ids.length) return;
     // zones are position-locked unless explicitly unlocked — a stray drag
-    // across a big zone box must never haul the zone along
-    const movable = ids.filter(id => !State.zoneLocked(State.getMarkup(id)));
+    // across a big zone box must never haul the zone along; locked markups likewise
+    const movable = ids.filter(id => !State.isLocked(State.getMarkup(id)));
     let started = false;
     let moved = false;
     let last = p0;
+    // touch: a finger held still on the selection opens the markup menu (no right button on a tablet)
+    let holdTimer = null;
+    if (e.pointerType === 'touch') {
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (moved || started) return;
+        if (activeDragAbort) activeDragAbort();
+        Loupe.end();
+        App.markupMenu(e.clientX, e.clientY);
+      }, 550);
+    }
     windowDrag(ev => {
       const p = Viewer.toPage(ev);
       moved = moved || Geo.dist(p0, p) * S().zoom >= 3;
+      if (moved && holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
       if (!movable.length) return;
       if (!started) {
         if (!moved) return;
@@ -645,6 +920,7 @@ const Tools = (() => {
       }
       Render.refresh(movable);
     }, () => {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
       if (started) { State.touch(); State.emit('markups', { changed: movable }); }
       else if (!moved && ids.length === 1) {
         // a plain tap on a zone opens its task/materials popover
@@ -652,6 +928,7 @@ const Tools = (() => {
         if (m && m.type === 'zone' && typeof Aro !== 'undefined') Aro.zonePopover(m);
       }
     }, () => {
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
       if (started) State.undo();   // gesture abort: put the markups back
     }, e, false);
   }
@@ -675,7 +952,10 @@ const Tools = (() => {
       const hits = State.pageMarkups(S().page)
         .filter(m => !State.isHidden(m) && Geo.rectsIntersect(box, Geo.markupBounds(m)))
         .map(m => m.id);
-      State.select(hits, additive);
+      // touching any member of a group takes the whole group
+      const all = new Set();
+      for (const id of hits) for (const g of State.groupOf(id)) all.add(g);
+      State.select([...all], additive);
     }, clearPreview, e, false);
   }
 
@@ -686,7 +966,7 @@ const Tools = (() => {
     const id = h.dataset.hid, kind = h.dataset.kind;
     const m = State.getMarkup(id);
     if (!m) return;
-    if (State.zoneLocked(m)) return; // locked zones don't resize either
+    if (State.isLocked(m)) return; // locked zones / markups don't resize either
     e.stopPropagation();
     let started = false;
     windowDrag(ev => {
@@ -776,6 +1056,21 @@ const Tools = (() => {
     if (tool === 'penet') { placePenetration(p); return; }
     if (tool === 'photo') { placePhoto(p); return; }
     if (tool === 'fitting') { placeFitting(p); return; }
+    if (tool === 'sequence') { placeSequence(p); return; }
+    if (tool === 'chest') { placeChest(p); return; }
+  }
+
+  /** Right-click (or a held finger) on the sheet: the markup menu for what's under it. */
+  function onContextMenu(e) {
+    if (!S().pdf) return;
+    e.preventDefault();
+    if (creating) return;
+    const g = e.target.closest && e.target.closest('g[data-id]');
+    if (g) {
+      if (S().tool !== 'select') State.setTool('select');
+      if (!S().selection.has(g.dataset.id)) State.select(State.groupOf(g.dataset.id));
+    } else if (S().tool !== 'select') return;
+    App.markupMenu(e.clientX, e.clientY, Viewer.toPage(e));
   }
 
   /** The tap action itself — shared by the pointerup path and the click fallback. */
@@ -783,7 +1078,7 @@ const Tools = (() => {
     tapConsumedAt = performance.now();
     if (POLY_TOOLS[tool]) {
       // tapping the last vertex again finishes the run (no double-click on touch)
-      if (creating && creating.pts.length >= (creating.type === 'marea' ? 3 : 2)) {
+      if (creating && creating.pts.length >= ((creating.type === 'marea' || creating.closed) ? 3 : 2)) {
         const lastPt = creating.pts[creating.pts.length - 1];
         if (Geo.dist(p, lastPt) < 16 / S().zoom) { finishPoly(); return; }
       }
@@ -797,6 +1092,8 @@ const Tools = (() => {
     if (tool === 'penet') { placePenetration(p); return; }
     if (tool === 'photo') { placePhoto(p); return; }
     if (tool === 'fitting') { placeFitting(p); return; }
+    if (tool === 'sequence') { placeSequence(p); return; }
+    if (tool === 'chest') { placeChest(p); return; }
   }
 
   /**
@@ -865,20 +1162,24 @@ const Tools = (() => {
       pendingTap.lastX = e.clientX; pendingTap.lastY = e.clientY;
       Loupe.track(e);
     }
-    if (creating) updatePolyPreview(hoverPt, e.shiftKey);
-    else if (S().tool === 'calibrate') calibratePreview(hoverPt);
-    else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
-    else if (S().tool === 'photo' && !dragging) photoGhost(hoverPt);
+    hoverPreview(hoverPt, e.shiftKey);
+  }
+
+  function hoverPreview(pt, shift) {
+    if (creating) updatePolyPreview(pt, shift);
+    else if (S().tool === 'calibrate') calibratePreview(pt);
+    else if (dragging) return;
+    else if (S().tool === 'symbol') symbolGhost(pt);
+    else if (S().tool === 'photo') photoGhost(pt);
+    else if (S().tool === 'sequence') sequenceGhost(pt);
+    else if (S().tool === 'chest') chestGhost(pt);
   }
 
   /** After the view pans under a stationary cursor, re-derive the hover point and previews. */
   function refreshHover(shift) {
     if (!lastClient) return;
     hoverPt = Viewer.toPage(lastClient);
-    if (creating) updatePolyPreview(hoverPt, shift);
-    else if (S().tool === 'calibrate') calibratePreview(hoverPt);
-    else if (S().tool === 'symbol' && !dragging) symbolGhost(hoverPt);
-    else if (S().tool === 'photo' && !dragging) photoGhost(hoverPt);
+    hoverPreview(hoverPt, shift);
   }
 
   function onOverlayDblClick(e) {
@@ -898,6 +1199,18 @@ const Tools = (() => {
   function onKeyDown(e) {
     if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
     const sel = [...S().selection];
+
+    if (e.ctrlKey || e.metaKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'c' && sel.length) { e.preventDefault(); const n = copySelection(); App.toast(`Copied ${n} markup${n === 1 ? '' : 's'} — Ctrl+V pastes, on any page.`, 'ok', 2500); return; }
+      if (k === 'x' && sel.length) { e.preventDefault(); cutSelection(); return; }
+      if (k === 'v' && S().pdf) { e.preventDefault(); if (!paste()) App.toast('Nothing copied yet.', 'info', 2000); return; }
+      if (k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSelection(); else groupSelection(); return; }
+      if (k === 'l' && sel.length) { e.preventDefault(); setLocked(!selectionLocked()); return; }
+      if (k === ']' && sel.length) { e.preventDefault(); State.reorder(sel, true); return; }
+      if (k === '[' && sel.length) { e.preventDefault(); State.reorder(sel, false); return; }
+      if (k === 'f') { e.preventDefault(); App.findDialog(); return; }
+    }
 
     switch (e.key) {
       case 'Escape':
@@ -939,7 +1252,7 @@ const Tools = (() => {
         if (!S().pdf) return;
         // Select tool with a selection → nudge the markups (original behavior)
         if (sel.length && S().tool === 'select') {
-          const targets = sel.filter(id => !State.zoneLocked(State.getMarkup(id)));
+          const targets = sel.filter(id => !State.isLocked(State.getMarkup(id)));
           if (!targets.length) { e.preventDefault(); return; } // locked zones don't nudge
           const step = (e.shiftKey ? 10 : 1);
           const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
@@ -966,20 +1279,7 @@ const Tools = (() => {
       case 'd': case 'D': {
         if ((e.ctrlKey || e.metaKey) && sel.length) {
           e.preventDefault();
-          State.pushUndo();
-          const clones = [];
-          for (const id of sel) {
-            const m = State.getMarkup(id);
-            if (!m) continue;
-            const c = JSON.parse(JSON.stringify(m));
-            c.id = State.newId();
-            c.date = new Date().toISOString();
-            moveBy(c, 14, 14);
-            State.S.markups.push(c);
-            clones.push(c.id);
-          }
-          State.emit('markups'); State.touch();
-          State.select(clones);
+          duplicateSelection();
         }
         return;
       }
@@ -992,7 +1292,14 @@ const Tools = (() => {
     o.addEventListener('pointermove', onOverlayMove);
     o.addEventListener('click', onOverlayClick);
     o.addEventListener('dblclick', onOverlayDblClick);
+    o.addEventListener('contextmenu', onContextMenu);
+    Viewer.el.sel.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('pointerup', onGlobalPointerUp);
+    // the Sequence tool remembers its prefix and counter across drawings
+    try {
+      const sq = JSON.parse(localStorage.getItem('abmt:seq') || 'null');
+      if (sq) { if (sq.prefix != null) D().seqPrefix = sq.prefix; if (sq.next) D().seqNext = sq.next; if (sq.pad != null) D().seqPad = sq.pad; }
+    } catch (e) { /* defaults */ }
 
     // touch bookkeeping: a second finger anywhere = view gesture → abort tool work
     const touchDown = e => {
@@ -1054,9 +1361,15 @@ const Tools = (() => {
       if (S().tool !== 'select') State.clearSelection();
       if (S().tool === 'photo' && !armedPhoto && S().pdf) photoInput.click();
       if (S().tool !== 'photo') armedPhoto = null;
+      if (S().tool !== 'chest') activeChest = null;
     });
     toolCursor();
   }
 
-  return { init, TOOL_HINTS, cancelCreation, editText, closeTextEditor, isDragging: () => dragging, placeDroppedPhoto };
+  return {
+    init, TOOL_HINTS, cancelCreation, editText, closeTextEditor, isDragging: () => dragging, placeDroppedPhoto,
+    copySelection, cutSelection, paste, hasClipboard: () => clipboard.length > 0, duplicateSelection, copyToAllPages,
+    alignSelection, ALIGN_OPS, setLocked, selectionLocked, setStatus, groupSelection, ungroupSelection, setAsDefaults,
+    chestList, chestById, saveToChest, removeChestTool, armChest, activeChest: () => activeChest, seqLabel,
+  };
 })();

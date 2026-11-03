@@ -27,7 +27,7 @@ const Render = (() => {
   }
 
   /** Wrap text to a pixel width; respects explicit newlines. */
-  function wrapText(text, width, fontSize) {
+  function wrapText(text, width, fontSize, bold) {
     const out = [];
     for (const para of String(text || '').split('\n')) {
       const words = para.split(/\s+/).filter(Boolean);
@@ -35,7 +35,7 @@ const Render = (() => {
       let line = '';
       for (const word of words) {
         const test = line ? line + ' ' + word : word;
-        if (line && textWidth(test, fontSize) > width) { out.push(line); line = word; }
+        if (line && textWidth(test, fontSize, bold) > width) { out.push(line); line = word; }
         else line = test;
       }
       out.push(line);
@@ -52,9 +52,25 @@ const Render = (() => {
     }
     if (m.type === 'marea') {
       const a = State.areaFt(m);
-      return a == null ? '' : Units.fmtArea(a, fmt);
+      if (a == null) return '';
+      const p = m.showPerim ? State.perimeterFt(m) : null;
+      return Units.fmtArea(a, fmt) + (p != null ? ' · P ' + Units.fmtLen(p, fmt) : '');
     }
     return '';
+  }
+
+  /** Arrowheads on a line / polyline per m.ends ('end' | 'start' | 'both'); the arrow tool is always 'end'. */
+  function appendEnds(g, m) {
+    const ends = m.type === 'arrow' ? (m.ends === 'both' ? 'both' : 'end') : (m.ends || 'none');
+    if (ends === 'none' || !m.pts || m.pts.length < 2) return;
+    const size = Math.max(7, (m.lineWidth || 2) * 3.4);
+    const n = m.pts.length;
+    if (ends === 'end' || ends === 'both') {
+      g.appendChild(svg('path', { d: Geo.polyPath(Geo.arrowHead(m.pts[n - 2], m.pts[n - 1], size), true), fill: m.color, stroke: 'none' }));
+    }
+    if (ends === 'start' || ends === 'both') {
+      g.appendChild(svg('path', { d: Geo.polyPath(Geo.arrowHead(m.pts[1], m.pts[0], size), true), fill: m.color, stroke: 'none' }));
+    }
   }
 
   function labelEl(x, y, str, m, opts = {}) {
@@ -95,20 +111,24 @@ const Render = (() => {
 
     line(g, m) {
       g.appendChild(buildStrokePath(m, Geo.polyPath(m.pts)));
+      appendEnds(g, m);
     },
 
     arrow(g, m) {
-      const [a, b] = m.pts;
       g.appendChild(buildStrokePath(m, Geo.polyPath(m.pts)));
-      const head = Geo.arrowHead(a, b, Math.max(7, m.lineWidth * 3.4));
-      g.appendChild(svg('path', { d: Geo.polyPath(head, true), fill: m.color, stroke: 'none' }));
+      appendEnds(g, m);
     },
 
     polyline(g, m) {
       const d = m.cloudStyle
-        ? Geo.cloudPath(m.pts, m.arcSize || 14, m.closed)
+        ? Geo.cloudPath(m.pts, m.arcSize || 14, m.closed) + (m.closed ? 'Z' : '')
         : Geo.polyPath(m.pts, m.closed);
       g.appendChild(buildStrokePath(m, d, m.closed));
+      if (!m.closed) appendEnds(g, m);
+      if (m.closed && m.showLabel && m.pts.length > 2) {
+        const p = State.perimeterFt(m);
+        if (p != null) g.appendChild(labelEl(Geo.centroid(m.pts).x, Geo.centroid(m.pts).y, 'P ' + Units.fmtLen(p, State.S.unitFormat), m, { bold: true }));
+      }
     },
 
     pen(g, m) {
@@ -254,10 +274,11 @@ const Render = (() => {
       if (m.border) {
         g.appendChild(svg('rect', { x: m.x, y: m.y, width: m.w, height: m.h, fill: 'none', stroke: m.color, 'stroke-width': m.lineWidth }));
       }
-      const lines = wrapText(m.text, m.w - pad * 2, fs);
+      const lines = wrapText(m.text, m.w - pad * 2, fs, m.bold);
       const t = svg('text', {
         x: m.x + pad, y: m.y + pad + fs * 0.85,
         'font-family': 'Arial, Helvetica, sans-serif', 'font-size': fs, fill: m.color,
+        'font-weight': m.bold ? 'bold' : 'normal',
       });
       lines.forEach((ln, i) => {
         const ts = svg('tspan', { x: m.x + pad, dy: i === 0 ? 0 : fs * 1.25 });
@@ -283,10 +304,11 @@ const Render = (() => {
         x: m.x, y: m.y, width: m.w, height: m.h, rx: 2,
         fill: '#ffffff', 'fill-opacity': 0.9, stroke: m.color, 'stroke-width': m.lineWidth,
       }));
-      const lines = wrapText(m.text, m.w - pad * 2, fs);
+      const lines = wrapText(m.text, m.w - pad * 2, fs, m.bold);
       const t = svg('text', {
         x: m.x + pad, y: m.y + pad + fs * 0.85,
         'font-family': 'Arial, Helvetica, sans-serif', 'font-size': fs, fill: '#111111',
+        'font-weight': m.bold ? 'bold' : 'normal',
       });
       lines.forEach((ln, i) => {
         const ts = svg('tspan', { x: m.x + pad, dy: i === 0 ? 0 : fs * 1.25 });
@@ -504,7 +526,14 @@ const Render = (() => {
         'stroke-dasharray': `${5 / z} ${4 / z}`,
       }));
       if (!withHandles) continue;
-      if (State.zoneLocked(m)) continue; // locked zones show no resize handles
+      if (State.isLocked(m)) {
+        // a locked markup shows a padlock instead of handles
+        const fs = 11 / z;
+        const t = svg('text', { x: b.x + b.w, y: b.y - 3 / z, 'font-size': fs, fill: '#1f6fd0', 'text-anchor': 'end' });
+        t.textContent = '🔒';
+        layer.appendChild(t);
+        continue;
+      }
       // vertex handles
       if (m.pts) {
         m.pts.forEach((p, i) => appendHandle(layer, p.x, p.y, 'pt', m.id, i));

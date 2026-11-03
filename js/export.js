@@ -190,11 +190,20 @@ const Export = (() => {
   /** Wrapped multi-line block matching the SVG text builders. */
   function drawWrapped(page, f, fonts, m, color, opacity) {
     const fs = m.fontSize || 12, pad = fs * 0.35;
-    const lines = Render.wrapText(m.text, m.w - pad * 2, fs);
+    const lines = Render.wrapText(m.text, m.w - pad * 2, fs, m.bold);
     lines.forEach((ln, i) => {
       drawLabel(page, f, fonts, ln, m.x + pad, m.y + pad + fs * 0.85 + i * fs * 1.25,
-        { size: fs, color, anchor: 'start', opacity });
+        { size: fs, color, anchor: 'start', opacity, bold: !!m.bold });
     });
+  }
+
+  /** Arrowheads on lines / open polylines (m.ends) — the Arrow tool's own head is implied. */
+  function drawEnds(page, f, m, col, lw, op) {
+    const ends = m.type === 'arrow' ? (m.ends === 'both' ? 'both' : 'end') : (m.ends || 'none');
+    if (ends === 'none' || m.pts.length < 2) return;
+    const size = Math.max(7, lw * 3.4), n = m.pts.length;
+    if (ends === 'end' || ends === 'both') fillPath(page, f, svgD(Geo.arrowHead(m.pts[n - 2], m.pts[n - 1], size), true, f), col, op);
+    if (ends === 'start' || ends === 'both') fillPath(page, f, svgD(Geo.arrowHead(m.pts[1], m.pts[0], size), true, f), col, op);
   }
 
   /* ---- cloud scallops as beziers (arc flags avoided entirely) ---- */
@@ -323,12 +332,12 @@ const Export = (() => {
 
       case 'line':
         strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op, dash: dashOf(m, lw) });
+        drawEnds(page, f, m, col, lw, op);
         return;
 
       case 'arrow': {
         strokePath(page, f, svgD(m.pts, false, f), col, lw, { opacity: op, dash: dashOf(m, lw) });
-        const head = Geo.arrowHead(m.pts[0], m.pts[1], Math.max(7, lw * 3.4));
-        fillPath(page, f, svgD(head, true, f), col, op);
+        drawEnds(page, f, m, col, lw, op);
         return;
       }
 
@@ -337,6 +346,14 @@ const Export = (() => {
           : svgD(m.pts, m.closed, f);
         if (m.closed && m.fill && m.fill !== 'none') fillPath(page, f, d, rgbOf(m.fill), (m.fillOpacity != null ? m.fillOpacity : 0.2) * op);
         strokePath(page, f, d, col, lw, { opacity: op, dash: dashOf(m, lw) });
+        if (!m.closed) drawEnds(page, f, m, col, lw, op);
+        if (m.closed && m.showLabel && m.pts.length > 2) {
+          const p = State.perimeterFt(m);
+          if (p != null) {
+            const c = Geo.centroid(m.pts);
+            drawLabel(page, f, fonts, 'P ' + Units.fmtLen(p, State.S.unitFormat), c.x, c.y, { size: m.fontSize || 12, bold: true, color: m.color, halo: true, opacity: op });
+          }
+        }
         return;
       }
 
@@ -662,6 +679,98 @@ const Export = (() => {
     App.toast(message, 'ok');
   }
 
+  /* ================= markup summary PDF (Bluebeam's Markup Summary) ================= */
+
+  /**
+   * A standalone PDF table of every markup — page, subject, label/comments,
+   * measurement, review status, layer, work day, author, date — the handover
+   * document that goes with the as-built. opts: { day: 'YYYY-MM-DD' | null, note }.
+   */
+  async function exportSummaryPdf(opts) {
+    const S = State.S;
+    if (!S.pdf) { App.toast('Open a drawing first.', 'warn'); return; }
+    const o = Object.assign({ day: null, note: '' }, opts || {});
+    const progress = App.progress('Building markup summary…');
+    try {
+      const doc = await PDFLib.PDFDocument.create();
+      const reg = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+      const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+      const PW = 842, PH = 595, M = 32;                 // A4 landscape
+      const cols = [
+        { k: 'n', t: '#', w: 28 }, { k: 'page', t: 'Pg', w: 26 }, { k: 'subject', t: 'Subject', w: 110 },
+        { k: 'label', t: 'Label / comments', w: 250 }, { k: 'measure', t: 'Measurement', w: 84 },
+        { k: 'status', t: 'Status', w: 64 }, { k: 'layer', t: 'Layer', w: 70 }, { k: 'day', t: 'Day', w: 62 }, { k: 'author', t: 'Author', w: 84 },
+      ];
+      const fs = 8, lh = fs * 1.3, pad = 3;
+      const sanitizeStr = s => sanitize(s, reg);
+      const wrap = (str, w, font) => {
+        const out = [];
+        for (const para of String(str || '').split('\n')) {
+          const words = para.split(/\s+/).filter(Boolean);
+          let line = '';
+          for (const word of words) {
+            const test = line ? line + ' ' + word : word;
+            if (line && font.widthOfTextAtSize(test, fs) > w - pad * 2) { out.push(line); line = word; }
+            else line = test;
+          }
+          out.push(line);
+        }
+        return out.length ? out : [''];
+      };
+      const rows = [];
+      S.markups.forEach((m, i) => {
+        if (o.day && MarkupList.dayOf(m) !== o.day) return;
+        const r = MarkupList.rowData(m, i);
+        rows.push({
+          n: String(r.idx + 1), page: String(r.page), subject: sanitizeStr(r.subject), label: sanitizeStr(r.label), measure: sanitizeStr(r.measure),
+          status: sanitizeStr(r.statusName), layer: sanitizeStr(r.layer), day: MarkupList.dayOf(m), author: sanitizeStr(r.author),
+          color: m.color,
+        });
+      });
+      const pd = Project.details();
+      const head = [Project.displayName(), S.fileName, o.day ? 'Work day ' + o.day : 'All work', pd.site, S.jobRef].filter(Boolean).join('  ·  ');
+      let page = null, y = 0, pageNo = 0;
+      const colX = []; let x = M; for (const c of cols) { colX.push(x); x += c.w; }
+      const newPage = () => {
+        page = doc.addPage([PW, PH]); pageNo++;
+        y = PH - M;
+        page.drawText(sanitizeStr('Markup summary — ' + head), { x: M, y, size: 11, font: bold, color: PDFLib.rgb(0.1, 0.1, 0.1) });
+        y -= 14;
+        page.drawText(sanitizeStr(`${rows.length} markup${rows.length === 1 ? '' : 's'} · exported ${new Date().toLocaleString()}${o.note ? ' · ' + o.note : ''}`), { x: M, y, size: 8, font: reg, color: PDFLib.rgb(0.4, 0.4, 0.4) });
+        y -= 14;
+        page.drawRectangle({ x: M, y: y - lh - 2, width: PW - 2 * M, height: lh + 4, color: PDFLib.rgb(0.92, 0.93, 0.95) });
+        cols.forEach((c, i) => page.drawText(c.t, { x: colX[i] + pad, y: y - fs - 1, size: fs, font: bold }));
+        y -= lh + 6;
+      };
+      newPage();
+      for (const r of rows) {
+        const cells = cols.map(c => wrap(r[c.k], c.w, reg));
+        const h = Math.max(...cells.map(c => c.length)) * lh + 4;
+        if (y - h < M + 16) newPage();
+        page.drawRectangle({ x: M + 1, y: y - h + 2, width: 3, height: h - 3, color: rgbOf(r.color) });
+        cells.forEach((lines, i) => {
+          lines.forEach((ln, j) => page.drawText(ln, { x: colX[i] + pad + (i === 0 ? 4 : 0), y: y - fs - 1 - j * lh, size: fs, font: reg, color: PDFLib.rgb(0.1, 0.1, 0.1) }));
+        });
+        y -= h;
+        page.drawLine({ start: { x: M, y: y + 1 }, end: { x: PW - M, y: y + 1 }, thickness: 0.4, color: PDFLib.rgb(0.82, 0.84, 0.87) });
+      }
+      for (let i = 0; i < doc.getPageCount(); i++) {
+        doc.getPage(i).drawText(`Page ${i + 1} of ${doc.getPageCount()}  ·  AirMark`, { x: PW - M - 120, y: M - 14, size: 7.5, font: reg, color: PDFLib.rgb(0.5, 0.5, 0.5) });
+      }
+      const bytes = await doc.save();
+      const base = (S.fileName || 'drawing').replace(/\.pdf$/i, '');
+      App.download(new Blob([bytes], { type: 'application/pdf' }), base + (o.day ? ` - markup summary ${o.day}` : ' - markup summary') + '.pdf');
+      progress.close();
+      App.toast(`Markup summary exported — ${rows.length} markup${rows.length === 1 ? '' : 's'} on ${pageNo} page${pageNo === 1 ? '' : 's'}.`, 'ok');
+      return bytes;
+    } catch (err) {
+      console.error(err);
+      progress.close();
+      App.toast('Summary export failed: ' + (err.message || err), 'err', 8000);
+      return null;
+    }
+  }
+
   /** SVG of the given markups over the viewBox rect vb {x,y,w,h}. */
   function pageSvg(markups, vb, pxW, pxH, opts) {
     const holder = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -829,5 +938,5 @@ const Export = (() => {
     }
   }
 
-  return { exportFlattenedPdf, generateSample, openSample };
+  return { exportFlattenedPdf, exportSummaryPdf, generateSample, openSample };
 })();
